@@ -1,0 +1,37 @@
+{
+  "name": "@condux/nextjs",
+  "version": "0.1.0",
+  "description": "Condux SDK for Next.js — report errors from server, edge, and client with a few lines.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "condux-sourcemaps": "dist/sourcemaps.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@condux/core": "link:../core",
+    "@condux/browser": "link:../browser"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tripledownab/condux/tree/main/sdks/nextjs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tripledownab/condux.git",
+    "directory": "sdks/nextjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

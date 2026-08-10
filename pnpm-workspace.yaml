@@ -1,0 +1,6 @@
+# pnpm workspace for the web surfaces. The JS SDK (sdks/js) is deliberately NOT a member - it is a
+# separate publishable artifact with its own lockfile, installed with `pnpm install --ignore-workspace`.
+packages:
+  - web
+  - landing
+  - packages/*

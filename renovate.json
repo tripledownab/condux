@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true },
+  "nuget": { "enabled": true },
+  "npm": { "enabled": true },
+  "dockerfile": { "enabled": true },
+  "packageRules": [
+    {
+      "matchManagers": ["nuget", "npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "non-major dependencies"
+    },
+    {
+      "description": "Relicensing usually rides a major bump — force a human license review.",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major-update", "license-review"]
+    }
+  ]
+}

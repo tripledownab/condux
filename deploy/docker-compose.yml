@@ -1,0 +1,385 @@
+name: condux
+
+# Local dev + small self-host stack: data stores + the three Condux services.
+# Host ports are chosen to avoid collisions (MinIO owns 9000; relay is on 9010).
+#
+# HARD RULE: every published port binds to 127.0.0.1 (loopback), NEVER 0.0.0.0. These ports carry into
+# the prod overlay (Compose concatenates published ports and cannot un-publish them), so a public bind
+# would put Postgres / ClickHouse / Redpanda / Valkey on the internet, protected only by the host
+# firewall. Loopback binding keeps them host-local everywhere (dev access via localhost still works, and
+# in prod the services talk over the private compose network), so the firewall is a backstop, not the
+# sole boundary. Caddy (the public edge, in docker-compose.prod.yml) is the ONLY service that may bind
+# 0.0.0.0, on 80/443.
+#
+# Credentials are supplied via deploy/.env (NOT hardcoded here). Before first run:
+#   cp deploy/.env.example deploy/.env
+#   docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["./.data/postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+    ports: ["127.0.0.1:8123:8123", "127.0.0.1:9002:9000"]
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes: ["./.data/clickhouse:/var/lib/clickhouse"]
+
+  # Kafka-API ingest buffer. Redpanda (C++, no JVM) — lightweight and self-host
+  # friendly. Two listeners: internal (other containers → redpanda:9092) and
+  # external (host → localhost:19092), each advertised at the address its clients
+  # actually use — the piece that has to be right for consumer groups to work.
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container   # single-node sane defaults (overprovisioned, RF=1)
+      - --smp=1
+      - --default-log-level=warn
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports: ["127.0.0.1:19092:19092"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:.+true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+
+  # Valkey (BSD-3) — the permissive, Redis-compatible fork; drop-in for Redis.
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports: ["127.0.0.1:6379:6379"]
+
+  # MinIO is AGPL-3.0 — LOCAL DEV ONLY (S3-compatible target). Not bundled or
+  # redistributed in the product; production targets the S3 API (BYO bucket /
+  # cloud S3). See docs/oss-and-licensing.md.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["./.data/minio:/data"]
+
+  # One-shot: create the source-map bucket in the dev MinIO so uploads work out of the box (ADR-0028).
+  # Dev-only, like minio itself; prod uses a pre-provisioned BYO bucket and parks this behind a profile.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_started }
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-condux-sourcemaps}
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 1; done; mc mb --ignore-existing \"local/$${CONDUX_S3_BUCKET}\""
+
+  # Mailpit (MIT) — a local SMTP catcher for email alerts (#56) + Conductor-pause org notices (#130). The
+  # consumer and control-plane point their CONDUX_SMTP_* at it by default in dev (see below), so email
+  # delivery works with no config; read the caught mail in the web inbox at http://localhost:8025. Dev-only:
+  # the prod override parks it behind a profile so it never starts there (same pattern as minio).
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
+
+  # Keycloak (Apache-2.0) — a local OIDC identity provider to manually verify enterprise SSO (#72, ADR-0032)
+  # end to end without a cloud tenant. Opt-in behind the `sso-test` profile, so it only starts with
+  # `--profile sso-test` and never runs in a normal `pnpm dev` (or in prod). Imports a pre-seeded realm on
+  # boot (deploy/keycloak/condux-test-realm.json): realm `condux-test`, confidential client `condux`
+  # (secret `condux-test-secret`), and a verified test user alice@condux.test / password. The control-plane
+  # reaches it over the compose network at http://keycloak:8080 (the token exchange), the browser at
+  # http://localhost:8180 (the login redirect). See docs/runbooks/sso-local-testing.md for the exact steps
+  # and the SSO-config values to paste into Settings -> SSO. No other service depends_on it (it is optional),
+  # so leaving the profile off cannot affect the rest of the stack.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.0
+    profiles: ["sso-test"]
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Pin the public URL so the id_token `iss` is deterministic (http://localhost:8180/realms/condux-test)
+      # no matter whether the browser (localhost:8180) or the in-network control-plane (keycloak:8080) reached
+      # Keycloak — otherwise the dual-host dev setup would mint tokens whose issuer doesn't match the config.
+      # STRICT=false keeps the in-network backchannel (the token exchange over keycloak:8080) accepted.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_STRICT: "false"
+    volumes:
+      - ./keycloak/condux-test-realm.json:/opt/keycloak/data/import/condux-test-realm.json:ro
+    ports: ["127.0.0.1:8180:8080"]
+
+  relay:
+    build: { context: .., dockerfile: backend/Dockerfile, target: relay }
+    # Run tini as PID 1 so signals reach the app and exited children are reaped. Without it the app is
+    # PID 1 and does neither, so a host that wedges on shutdown becomes an unkillable zombie: docker
+    # refuses to stop it and `compose down` fails part-way, leaving the stack half torn down.
+    init: true
+    environment:
+      ASPNETCORE_URLS: "http://0.0.0.0:9000"
+      CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
+      # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Condux on Condux (#75): report the relay's own errors to a Condux project (opt-in; a project DSN).
+      CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-}
+      # Share the per-project rate-limit budget across relay replicas via Valkey.
+      CONDUX_VALKEY: "valkey:6379"
+      # Authenticate DSNs against the control-plane catalog (Postgres), behind a
+      # short-TTL cache so the hot path rarely hits the DB. DSNs minted via the
+      # provisioning API now authenticate at ingest end-to-end; there is no seeded
+      # in-memory dev key in compose (that fallback only applies when CONDUX_POSTGRES
+      # is unset, e.g. a bare `dotnet run`).
+      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+    ports: ["127.0.0.1:9010:9000"]
+    depends_on:
+      redpanda: { condition: service_healthy }
+      valkey: { condition: service_started }
+      postgres: { condition: service_healthy }
+      postgres-init: { condition: service_completed_successfully }
+
+  controlplane:
+    build: { context: .., dockerfile: backend/Dockerfile, target: controlplane }
+    init: true
+    environment:
+      ASPNETCORE_URLS: "http://0.0.0.0:8080"
+      ASPNETCORE_ENVIRONMENT: Development
+      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      # RequestFix publishes FixJobs to the topic the conductor drains.
+      CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
+      # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Condux on Condux (#75): report the control-plane's own errors to a Condux project (opt-in; a DSN).
+      CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-}
+      # Event store for the issue-detail view (config is env-driven — no hardcoded fallback in code).
+      CONDUX_CLICKHOUSE_URL: "http://clickhouse:8123"
+      CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CONDUX_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # Dev-only admin seed so you can sign in immediately (values from deploy/.env; unset in prod).
+      CONDUX_SEED_ADMIN_EMAIL: ${CONDUX_SEED_ADMIN_EMAIL}
+      CONDUX_SEED_ADMIN_PASSWORD: ${CONDUX_SEED_ADMIN_PASSWORD}
+      # Platform super-admin allowlist (comma-separated emails) gating the /admin console. Dev lists the
+      # seeded admin so you can open /admin locally; unset in prod → no platform admins (see ADR-0014).
+      CONDUX_PLATFORM_ADMIN_EMAILS: ${CONDUX_PLATFORM_ADMIN_EMAILS}
+      # Read-only "view as org" impersonation for the admin console (ADR-0027); opt-in, unset → the
+      # view-as routes 404 and no one can be impersonated.
+      CONDUX_IMPERSONATION_SIGNING_KEY: ${CONDUX_IMPERSONATION_SIGNING_KEY:-}
+      # Secret store master key for the BYO-key registry (#65); opt-in, unset → the llm-config routes 404.
+      CONDUX_SECRET_KEY: ${CONDUX_SECRET_KEY:-}
+      # The dashboard runs on a different origin in dev (web :3000 → API :8080); allow it to send the
+      # session cookie. Prod serves both same-origin, so this stays unset there (no CORS emitted).
+      CONDUX_CORS_ORIGINS: "http://localhost:3000"
+      # Host + scheme baked into the DSNs / ingest URLs the control-plane hands to users. Dev defaults to
+      # the relay's host port (localhost:9010, so an SDK on the host reaches it); prod MUST override this to
+      # the public ingest host (docker-compose.prod.yml sets https + ingest.condux.ai), else minted DSNs
+      # would point at localhost and no customer event could reach the relay.
+      CONDUX_INGEST_SCHEME: ${CONDUX_INGEST_SCHEME:-http}
+      CONDUX_INGEST_HOST: ${CONDUX_INGEST_HOST:-localhost:9010}
+      # GitHub App (the Conductor, #61). Opt-in: leave these unset in deploy/.env and the /api/github/*
+      # routes stay off. The private key is mounted read-only (see volumes) and read from the path below.
+      CONDUX_GITHUB_CLIENT_ID: ${CONDUX_GITHUB_CLIENT_ID}
+      CONDUX_GITHUB_WEBHOOK_SECRET: ${CONDUX_GITHUB_WEBHOOK_SECRET}
+      CONDUX_GITHUB_APP_SLUG: ${CONDUX_GITHUB_APP_SLUG}
+      CONDUX_GITHUB_PRIVATE_KEY_PATH: ${CONDUX_GITHUB_PRIVATE_KEY_PATH:-/run/secrets/github-app.pem}
+      # The user-authorization leg of connect, which is what re-links an already-installed app. Optional
+      # on top of the App config; the redirect URI must match a Callback URL registered on the App.
+      CONDUX_GITHUB_CLIENT_SECRET: ${CONDUX_GITHUB_CLIENT_SECRET}
+      CONDUX_GITHUB_OAUTH_REDIRECT_URI: ${CONDUX_GITHUB_OAUTH_REDIRECT_URI}
+      # "Sign in with Google" (OIDC, #71). Opt-in: leave these unset and the /api/auth/oauth/google/*
+      # routes 404 and the login button stays hidden. The redirect URI must match the Google console.
+      CONDUX_GOOGLE_CLIENT_ID: ${CONDUX_GOOGLE_CLIENT_ID}
+      CONDUX_GOOGLE_CLIENT_SECRET: ${CONDUX_GOOGLE_CLIENT_SECRET}
+      CONDUX_GOOGLE_REDIRECT_URI: ${CONDUX_GOOGLE_REDIRECT_URI}
+      # Stripe billing (#billing). Opt-in: unset -> the billing + webhook routes 404 and the upgrade UI hides.
+      CONDUX_STRIPE_SECRET_KEY: ${CONDUX_STRIPE_SECRET_KEY}
+      CONDUX_STRIPE_WEBHOOK_SECRET: ${CONDUX_STRIPE_WEBHOOK_SECRET}
+      CONDUX_STRIPE_PRICE_TEAM: ${CONDUX_STRIPE_PRICE_TEAM}
+      CONDUX_STRIPE_PRICE_BUSINESS: ${CONDUX_STRIPE_PRICE_BUSINESS}
+      # SMTP for alert emails (#56), org notices (#130), the dashboard channel "Send test", and invite
+      # accept-link emails (#84); the control-plane hosts the notifiers plus the invite mailer. Defaults to
+      # the bundled Mailpit catcher so email works out of the box in dev; override in deploy/.env for a real
+      # relay. Prod resets the host to empty (opt-in via .env.prod).
+      CONDUX_SMTP_HOST: ${CONDUX_SMTP_HOST:-mailpit}
+      CONDUX_SMTP_PORT: ${CONDUX_SMTP_PORT:-1025}
+      CONDUX_SMTP_SSL: ${CONDUX_SMTP_SSL:-false}
+      CONDUX_SMTP_FROM: ${CONDUX_SMTP_FROM:-alerts@condux.dev}
+      CONDUX_SMTP_USER: ${CONDUX_SMTP_USER:-}
+      CONDUX_SMTP_PASSWORD: ${CONDUX_SMTP_PASSWORD:-}
+      # Dashboard's absolute base URL for links inside emails (invite accept links). Split-origin dev falls
+      # back to the first CORS origin, so it can stay unset locally; prod sets https://app.condux.ai.
+      CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-}
+      # Object storage (S3/MinIO) for source-map artifacts (ADR-0028). Dev points at the bundled MinIO so
+      # source-map upload works out of the box (minio-init creates the bucket); prod sets these to a BYO S3
+      # bucket via deploy/.env.prod. Opt-in in code: with the creds unset the /api/sourcemaps routes 404, so
+      # prod (which has no MINIO_ROOT_*) defaults to off until configured.
+      CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-http://minio:9000}
+      CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-condux-sourcemaps}
+      CONDUX_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      CONDUX_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
+    volumes:
+      # Mount the GitHub App private key (your host .pem) read-only at the path above. Defaults to a
+      # committed placeholder so the stack still starts when GitHub is off; set
+      # CONDUX_GITHUB_PRIVATE_KEY_HOST_PATH in deploy/.env (relative to this compose file) to enable it.
+      - ${CONDUX_GITHUB_PRIVATE_KEY_HOST_PATH:-./secrets/.gitkeep}:/run/secrets/github-app.pem:ro
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      # Wait for migrations to finish, not just Postgres to be healthy — else the dev-admin seeder (and
+      # any eager schema use) races the one-shot postgres-init and fails on a not-yet-applied column.
+      postgres-init: { condition: service_completed_successfully }
+      clickhouse: { condition: service_started }
+      # Note: no minio dependency — the S3 client connects lazily on first upload, and minio is a dev-only
+      # (profile-gated) service, so a hard dependency would make the prod overlay an invalid compose project.
+
+  web:
+    # Repo root as context (not ../web) so the workspace dep @condux/brand resolves. The dashboard
+    # calls the API cross-origin in dev, so its base URL is baked at build time (NEXT_PUBLIC_*) and the
+    # control-plane allows that origin via CONDUX_CORS_ORIGINS.
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        NEXT_PUBLIC_CONDUX_API_URL: "http://localhost:8080"
+        # The dashboard reconstructs a key's DSN client-side; in dev the relay is the host port 9010.
+        NEXT_PUBLIC_CONDUX_INGEST_URL: "http://localhost:9010"
+    init: true
+    environment:
+      # Condux on Condux: the dashboard server reports its own errors to the relay when a DSN is
+      # set. Inside compose the DSN host is the relay service (http://<key>@relay:9000/<projectId>).
+      CONDUX_DSN: ${CONDUX_WEB_DSN:-}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [controlplane]
+
+  consumer:
+    build: { context: .., dockerfile: backend/Dockerfile, target: consumer }
+    init: true
+    environment:
+      CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
+      # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-} # Condux on Condux (#75): the worker reports its own errors, opt-in
+      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      CONDUX_CLICKHOUSE_URL: "http://clickhouse:8123"
+      CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CONDUX_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # Per-issue raw-event sampling (a storage cost lever): keep the first N events of each
+      # issue, then store 1-in-M of the repeats. The grouped-issue counter still counts every
+      # event — only redundant raw-event storage is shed. Set CONDUX_SAMPLE_EVERY=1 to store all.
+      CONDUX_SAMPLE_KEEP_FIRST: "50"
+      CONDUX_SAMPLE_EVERY: "20"
+      # Email delivery for alert rules (#56) + Conductor-pause org notices (#130). Defaults to the bundled
+      # Mailpit catcher so email works out of the box in dev (view it at http://localhost:8025). Override any
+      # of these in deploy/.env to point at a real relay (e.g. Resend: smtp.resend.com:587, user "resend",
+      # password = a Resend API key, from an address on the verified domain). Prod resets the host to empty
+      # (see the prod override), so email there is opt-in via .env.prod.
+      CONDUX_SMTP_HOST: ${CONDUX_SMTP_HOST:-mailpit}
+      CONDUX_SMTP_PORT: ${CONDUX_SMTP_PORT:-1025}
+      CONDUX_SMTP_SSL: ${CONDUX_SMTP_SSL:-false}
+      CONDUX_SMTP_FROM: ${CONDUX_SMTP_FROM:-alerts@condux.dev}
+      CONDUX_SMTP_USER: ${CONDUX_SMTP_USER:-}
+      CONDUX_SMTP_PASSWORD: ${CONDUX_SMTP_PASSWORD:-}
+      # Weekly summary email (ADR-0031): the digest's CTA links to the dashboard. Same base-URL resolution as
+      # the control-plane (CONDUX_APP_BASE_URL, else the first CORS origin); prod sets CONDUX_APP_BASE_URL.
+      CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-}
+      CONDUX_CORS_ORIGINS: "http://localhost:3000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      # Wait for migrations to finish (postgres healthy != schema applied); this worker writes to Postgres.
+      postgres-init: { condition: service_completed_successfully }
+      redpanda: { condition: service_healthy }
+      clickhouse: { condition: service_started }
+
+  # The Conductor (AI fix engine): drains the fix-request topic and runs each job through the fake
+  # provider (no real LLM/GitHub yet). Idle until the RequestFix endpoint publishes jobs.
+  conductor:
+    build: { context: .., dockerfile: backend/Dockerfile, target: conductor }
+    init: true
+    environment:
+      CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
+      # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-} # Condux on Condux (#75): the workers report their own errors, opt-in
+      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      # The fix-verification watcher (ADR-0019) reads issue stats from ClickHouse.
+      CONDUX_CLICKHOUSE_URL: "http://clickhouse:8123"
+      CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CONDUX_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # Fix provider: "fake" (default; fabricates a result, no LLM/PR), "simulated-agent" (full start->poll
+      # orchestration against a simulated backend, still no LLM/PR) or "anthropic" (the real thing: Claude
+      # proposes the fix and the Conductor opens a draft PR — needs the Anthropic key + the GitHub App
+      # credentials below). Set CONDUX_CONDUCTOR_PROVIDER in deploy/.env.
+      CONDUX_CONDUCTOR_PROVIDER: ${CONDUX_CONDUCTOR_PROVIDER:-fake}
+      CONDUX_ANTHROPIC_API_KEY: ${CONDUX_ANTHROPIC_API_KEY}
+      # BYO-key registry (#65): when set, a run for an org with a stored config uses that org's key.
+      CONDUX_SECRET_KEY: ${CONDUX_SECRET_KEY:-}
+      # GitHub App credentials for the anthropic provider (same app as the control-plane's install flow):
+      # the Conductor mints installation tokens to read scoped files and open the draft PR.
+      CONDUX_GITHUB_CLIENT_ID: ${CONDUX_GITHUB_CLIENT_ID}
+      CONDUX_GITHUB_WEBHOOK_SECRET: ${CONDUX_GITHUB_WEBHOOK_SECRET}
+      CONDUX_GITHUB_PRIVATE_KEY_PATH: /run/secrets/github-app.pem
+    volumes:
+      - ${CONDUX_GITHUB_PRIVATE_KEY_HOST_PATH:-./secrets/.gitkeep}:/run/secrets/github-app.pem:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      # Wait for migrations to finish (postgres healthy != schema applied); this worker writes to Postgres.
+      postgres-init: { condition: service_completed_successfully }
+      redpanda: { condition: service_healthy }
+      clickhouse: { condition: service_started }
+
+  # One-shot: apply the ClickHouse schema once the server is up.
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:24.8
+    depends_on: [clickhouse]
+    volumes:
+      - ../migrations/clickhouse:/migrations:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        until clickhouse-client --host clickhouse --user "$$CH_USER" --password "$$CH_PASSWORD" --query 'SELECT 1' >/dev/null 2>&1; do sleep 1; done
+        for f in $$(ls /migrations/*.sql | sort); do
+          echo "applying $$f"
+          clickhouse-client --host clickhouse --user "$$CH_USER" --password "$$CH_PASSWORD" --multiquery < "$$f"
+        done
+    environment:
+      CH_USER: ${CLICKHOUSE_USER}
+      CH_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    restart: "no"
+
+  # One-shot: apply all Postgres migrations in filename order (idempotent).
+  postgres-init:
+    image: postgres:17-alpine
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ../migrations/postgres:/migrations:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for f in $$(ls /migrations/*.sql | sort); do
+          echo "applying $$f"
+          PGPASSWORD="$$PG_PASSWORD" psql -v ON_ERROR_STOP=1 -h postgres -U "$$PG_USER" -d "$$PG_DB" -f "$$f"
+        done
+    environment:
+      PG_USER: ${POSTGRES_USER}
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_DB: ${POSTGRES_DB}
+    restart: "no"

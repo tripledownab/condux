@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Password hashing. Core is otherwise dependency-light, but for security-critical crypto we
+         use a vetted, battle-tested library rather than hand-rolling it: Argon2id (OWASP's first
+         choice for password storage). Pure-managed, MIT-licensed. -->
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+  </ItemGroup>
+</Project>

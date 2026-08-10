@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package condux.ingest.v1;
+
+option go_package = "github.com/condux/condux/gen/go/condux/ingest/v1;ingestv1";
+
+// Severity of an event, mirroring the common SDK levels.
+enum Level {
+  LEVEL_UNSPECIFIED = 0;
+  LEVEL_DEBUG = 1;
+  LEVEL_INFO = 2;
+  LEVEL_WARNING = 3;
+  LEVEL_ERROR = 4;
+  LEVEL_FATAL = 5;
+}
+
+// A single stack frame.
+message Frame {
+  string filename = 1;
+  string function = 2;
+  string module = 3;
+  int32 lineno = 4;
+  int32 colno = 5;
+  bool in_app = 6;
+  string context_line = 7;
+}
+
+message Stacktrace {
+  // Ordered from oldest (outermost) to newest (crashing) frame.
+  repeated Frame frames = 1;
+}
+
+// One exception in a (possibly chained) error.
+message ExceptionValue {
+  string type = 1;
+  string value = 2;
+  string module = 3;
+  Stacktrace stacktrace = 4;
+}
+
+// A breadcrumb — a trail of what happened before the error.
+message Breadcrumb {
+  int64 timestamp_unix_ms = 1;
+  string type = 2;
+  string category = 3;
+  string message = 4;
+  Level level = 5;
+}
+
+// The normalized error event produced by the relay after ingest + scrubbing.
+message Event {
+  string event_id = 1; // 32-char hex, client- or server-assigned
+  int64 timestamp_unix_ms = 2;
+  string platform = 3; // "python", "javascript", "go", ...
+  Level level = 4;
+  string logger = 5;
+  string server_name = 6;
+  string release = 7;
+  string environment = 8;
+  string transaction = 9;
+  string message = 10;
+  repeated ExceptionValue exceptions = 11;
+  repeated Breadcrumb breadcrumbs = 12;
+  map<string, string> tags = 13;
+  map<string, string> extra = 14;
+  repeated string fingerprint = 15; // optional client-supplied grouping hint
+  string sdk_name = 16;
+  string sdk_version = 17;
+}

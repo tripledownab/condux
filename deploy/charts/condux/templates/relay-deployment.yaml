@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-relay
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  {{- if not .Values.relay.autoscaling.enabled }}
+  replicas: {{ .Values.relay.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "relay") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "relay") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: relay
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.relay) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.relay.port }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:{{ .Values.relay.port }}"
+            {{- include "condux.postgresEnv" . | nindent 12 }}
+            {{- include "condux.kafkaEnv" . | nindent 12 }}
+            - name: CONDUX_VALKEY
+              value: {{ .Values.externalStores.valkey.url | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.relay.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.relay.port }}
+          resources:
+            {{- toYaml .Values.relay.resources | nindent 12 }}

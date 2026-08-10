@@ -1,0 +1,85 @@
+/* Condux shared design tokens (Tailwind v4, CSS first). Every app imports this right after
+   `@import "tailwindcss"`, so the palette, fonts and radii are defined once - change a token here and
+   the dashboard (web) and landing site update together. The palette IS the shadcn/ui token set (from
+   the shared preset), so shadcn components render against it directly; the apps load the webfonts.
+
+   Theming: the @theme block is the dark palette (dark is the default the utilities compile against).
+   The light palette re-declares the tokens under `:root[data-theme="light"]`; an app flips the theme
+   by setting that attribute on <html> (the dashboard uses next-themes, which also drives "system"). */
+@theme {
+  /* Fonts. Chakra Petch for headings, Fira Code for body and mono - a technical, terminal feel that
+     fits a developer error monitoring tool. Each token prefers the next/font variable the dashboard
+     injects, then the plain family name (so a site that loads the webfont itself still works). */
+  --font-heading: var(--font-chakra-petch, "Chakra Petch"), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-fira-code, "Fira Code"), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: var(--font-fira-code, "Fira Code"), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* shadcn/ui palette - the dark values (the default the utilities compile against). */
+  --color-background: oklch(0.145 0 0);
+  --color-foreground: oklch(0.985 0 0);
+  --color-card: oklch(0.205 0 0);
+  --color-card-foreground: oklch(0.985 0 0);
+  --color-popover: oklch(0.205 0 0);
+  --color-popover-foreground: oklch(0.985 0 0);
+  --color-primary: oklch(0.922 0 0);
+  --color-primary-foreground: oklch(0.205 0 0);
+  --color-secondary: oklch(0.269 0 0);
+  --color-secondary-foreground: oklch(0.985 0 0);
+  --color-muted: oklch(0.269 0 0);
+  --color-muted-foreground: oklch(0.708 0 0);
+  --color-accent: oklch(0.922 0 0);
+  --color-accent-foreground: oklch(0.205 0 0);
+  --color-destructive: oklch(0.704 0.191 22.216);
+  --color-border: oklch(1 0 0 / 10%);
+  --color-input: oklch(1 0 0 / 15%);
+  --color-ring: oklch(0.556 0 0);
+
+  /* Event level colors (map to Condux.Core Level: fatal, error, warning, info, debug) - dark values.
+     Kept alongside the neutral preset because the issue UI colors severity by these. */
+  --color-fatal: #ff4d6d;
+  --color-error: #f87171;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+  --color-debug: #9ca3af;
+
+  /* Outcome color for a verified-good state (e.g. a Conductor fix that held in production). */
+  --color-success: #34d399;
+
+  /* Corner radii (preset: radix-vega, 0.45rem base). */
+  --radius: 0.45rem;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+/* Light theme. Set by next-themes as data-theme="light" on <html>; the higher specificity than
+   @theme's plain :root means these win when light is active. The event-level colors darken to keep
+   at least 4.5:1 contrast on the light background. */
+:root[data-theme="light"] {
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.145 0 0);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.145 0 0);
+  --color-popover: oklch(1 0 0);
+  --color-popover-foreground: oklch(0.145 0 0);
+  --color-primary: oklch(0.205 0 0);
+  --color-primary-foreground: oklch(0.985 0 0);
+  --color-secondary: oklch(0.97 0 0);
+  --color-secondary-foreground: oklch(0.205 0 0);
+  --color-muted: oklch(0.97 0 0);
+  --color-muted-foreground: oklch(0.556 0 0);
+  --color-accent: oklch(0.205 0 0);
+  --color-accent-foreground: oklch(0.985 0 0);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-border: oklch(0.922 0 0);
+  --color-input: oklch(0.922 0 0);
+  --color-ring: oklch(0.708 0 0);
+
+  --color-fatal: #e11d48;
+  --color-error: #dc2626;
+  --color-warning: #b45309;
+  --color-info: #2563eb;
+  --color-debug: #4b5563;
+  --color-success: #059669;
+}

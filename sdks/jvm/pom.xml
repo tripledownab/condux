@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>ai.condux</groupId>
+  <artifactId>condux</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>Condux SDK for the JVM</name>
+  <description>Report errors to a Condux relay (Sentry store wire shape) with a resilient, never-throwing transport. Zero dependencies.</description>
+  <url>https://condux.ai</url>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <name>Condux</name>
+      <organization>Condux</organization>
+      <organizationUrl>https://condux.ai</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/tripledownab/condux.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/tripledownab/condux.git</developerConnection>
+    <url>https://github.com/tripledownab/condux/tree/main/sdks/jvm</url>
+  </scm>
+
+  <!-- Publishing target: GitHub Packages Maven registry (matches the .NET SDK's NuGet GH Packages
+       default). The publish workflow supplies credentials via a generated settings.xml (GITHUB_TOKEN).
+       To publish to Maven Central instead, swap this for the Central repository + add GPG signing. -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/tripledownab/condux</url>
+    </repository>
+  </distributionManagement>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <!-- Zero runtime dependencies: HTTP is java.net.http, JSON is written by hand. The one dependency is
+       compile-only (provided): the servlet API the ConduxExceptionFilter (Spring Boot / servlet adapter)
+       implements, supplied by the container at runtime. -->
+  <dependencies>
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <version>6.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,21 @@
+{
+  "event_id": "3b0e6d2f5a7c4e1b9d8f0a2c4e6b8d01",
+  "timestamp": "2026-01-15T09:30:00.000Z",
+  "platform": "javascript",
+  "level": "warning",
+  "environment": "staging",
+  "release": "web@1.0.0",
+  "sdk": { "name": "sentry.javascript.browser", "version": "8.20.0" },
+  "message": {
+    "formatted": "Payment retried 3 times",
+    "message": "Payment retried %d times",
+    "params": [3]
+  },
+  "tags": { "browser": "Firefox" },
+  "breadcrumbs": {
+    "values": [
+      { "timestamp": 1768469400.0, "type": "http", "category": "fetch", "message": "GET /api/pay", "level": "info" },
+      { "timestamp": 1768469401.0, "type": "default", "category": "ui.click", "message": "button#retry", "level": "info" }
+    ]
+  }
+}

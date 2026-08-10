@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-conductor
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: conductor
+spec:
+  replicas: {{ .Values.conductor.replicas }}
+  selector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "conductor") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "conductor") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: conductor
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.conductor) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "condux.postgresEnv" . | nindent 12 }}
+            {{- include "condux.kafkaEnv" . | nindent 12 }}
+            {{- include "condux.clickhouseEnv" . | nindent 12 }}
+            - name: CONDUX_CONDUCTOR_PROVIDER
+              value: {{ .Values.conductor.provider | quote }}
+            {{- if .Values.secret.anthropicApiKey }}
+            - name: CONDUX_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_ANTHROPIC_API_KEY
+            {{- end }}
+            {{- if .Values.secret.secretKey }}
+            - name: CONDUX_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_SECRET_KEY
+            {{- end }}
+            {{- if .Values.github.enabled }}
+            - name: CONDUX_GITHUB_CLIENT_ID
+              value: {{ .Values.github.clientId | quote }}
+            - name: CONDUX_GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_GITHUB_WEBHOOK_SECRET
+            - name: CONDUX_GITHUB_PRIVATE_KEY_PATH
+              value: /run/secrets/github-app.pem
+            {{- end }}
+          {{- if .Values.github.enabled }}
+          volumeMounts:
+            - name: github-app-key
+              mountPath: /run/secrets
+              readOnly: true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.conductor.resources | nindent 12 }}
+      {{- if .Values.github.enabled }}
+      volumes:
+        - name: github-app-key
+          secret:
+            secretName: {{ include "condux.secretName" . }}
+            items:
+              - key: github-app.pem
+                path: github-app.pem
+      {{- end }}

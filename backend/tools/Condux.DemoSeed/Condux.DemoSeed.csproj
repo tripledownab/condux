@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Condux.Storage/Condux.Storage.csproj" />
+    <ProjectReference Include="../../src/Condux.Core/Condux.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The integration test drives the seeder end-to-end against Testcontainers. -->
+    <InternalsVisibleTo Include="Condux.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

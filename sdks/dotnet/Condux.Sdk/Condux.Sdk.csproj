@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Condux.Sdk</AssemblyName>
+    <RootNamespace>Condux.Sdk</RootNamespace>
+    <!-- Published to NuGet (#81); dependency-free (BCL only). Multi-targeted net8.0;net9.0;net10.0 so
+         apps on .NET 8-10 can consume it. Namespace is Condux.Sdk (not bare Condux) so it never shadows
+         the product's own Condux.* namespaces when a Condux service dogfoods it. -->
+    <PackageId>Condux.Sdk</PackageId>
+    <Description>Report errors to a Condux relay (Sentry store wire shape). Resilient, dependency-free.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

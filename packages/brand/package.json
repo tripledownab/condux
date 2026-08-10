@@ -1,0 +1,12 @@
+{
+  "name": "@condux/brand",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Condux shared brand: Tailwind v4 theme tokens (fonts + palette) and the logo.",
+  "type": "module",
+  "exports": {
+    "./theme.css": "./theme.css",
+    "./logo.svg": "./condux-logo.svg"
+  },
+  "files": ["theme.css", "condux-logo.svg"]
+}

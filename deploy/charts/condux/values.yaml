@@ -1,0 +1,139 @@
+# Condux Helm values.
+#
+# This chart deploys the five Condux services (relay, control-plane, consumer, conductor, web). It does
+# NOT run the data stores — bring your own managed Postgres, ClickHouse, Kafka/Redpanda and Valkey/Redis
+# (recommended for production) and point the chart at them below. Credentials go in a Secret (inline for
+# dev, or reference an existing one for production).
+
+image:
+  registry: ghcr.io/condux
+  tag: latest
+  pullPolicy: IfNotPresent
+  # Per-service image names under the registry (built from backend/Dockerfile targets + web/Dockerfile;
+  # `migrations` is built from deploy/migrations.Dockerfile).
+  controlplane: controlplane
+  relay: relay
+  consumer: consumer
+  conductor: conductor
+  web: web
+  migrations: migrations
+imagePullSecrets: []
+
+# Where the external data stores live (non-secret coordinates; credentials are in `secret`).
+externalStores:
+  clickhouse:
+    url: "http://clickhouse:8123"
+  kafka:
+    bootstrap: "kafka:9092"
+  valkey:
+    url: "valkey:6379"
+
+# Credentials. For production set `existingSecret` to a Secret you created with these keys
+# (CONDUX_POSTGRES, CONDUX_CLICKHOUSE_USER, CONDUX_CLICKHOUSE_PASSWORD, and — if used — CONDUX_SECRET_KEY,
+# CONDUX_ANTHROPIC_API_KEY, CONDUX_GITHUB_WEBHOOK_SECRET, github-app.pem), and leave the inline values
+# empty. For dev you may inline them and the chart creates the Secret.
+secret:
+  existingSecret: ""
+  postgresConnectionString: "" # e.g. Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require
+  clickhouseUser: ""
+  clickhousePassword: ""
+  secretKey: ""        # base64 AES-256 master key for the BYO-key registry (#65); empty → those routes 404
+  anthropicApiKey: ""  # only for conductor.provider=anthropic
+
+# Non-secret app config.
+config:
+  corsOrigins: ""           # leave empty when the dashboard is same-origin (prod); set for split-origin
+  platformAdminEmails: ""   # comma-separated allowlist for the /admin console (empty → none)
+  appBaseUrl: ""            # absolute dashboard URL for links in emails (invite accept); e.g. https://app.example.com
+  sampleKeepFirst: "50"     # consumer: keep the first N raw events per issue
+  sampleEvery: "20"         # then store 1-in-M repeats
+
+# Email (alert rules #56, Conductor-pause org notices #130, invite accept links #84) — opt-in. When
+# enabled, the control-plane and consumer deliver via this SMTP relay (the password lives in the Secret).
+# Leave disabled to keep email off (Slack + webhook alerts still work). For Resend: host smtp.resend.com,
+# port 587, user "resend", password a Resend API key, from an address on the verified domain.
+email:
+  enabled: false
+  host: ""
+  port: 587
+  ssl: true
+  from: "alerts@condux.local"
+  user: ""
+  password: ""
+
+conductor:
+  provider: fake            # fake | simulated-agent | anthropic
+  replicas: 1
+  resources: {}
+
+# GitHub App (the Conductor) — opt-in. When enabled the private key + webhook secret are stored in the
+# Secret and the control-plane's /api/github/* routes + the anthropic provider activate.
+github:
+  enabled: false
+  clientId: ""
+  appSlug: ""
+  webhookSecret: ""
+  privateKey: ""            # the App private key PEM (stored as the Secret key github-app.pem)
+
+# Source-map object store (ADR-0028) — opt-in, BYO S3-compatible bucket. When enabled the control-plane's
+# /api/sourcemaps upload routes activate; the access key + secret are stored in the Secret. Leave the
+# endpoint empty for AWS S3 (set region), or point it at a non-AWS S3 (MinIO, Cloudflare R2, etc.).
+objectStore:
+  enabled: false
+  endpoint: ""
+  bucket: ""
+  region: ""
+  serverSideEncryption: "" # e.g. AES256 for SSE-S3; empty relies on the bucket's default encryption
+  accessKey: ""            # stored in the Secret as CONDUX_S3_ACCESS_KEY
+  secretKey: ""            # stored in the Secret as CONDUX_S3_SECRET_KEY
+
+# A pre-install / pre-upgrade hook Job that applies the Postgres + ClickHouse migrations (baked into the
+# migrations image from the repo — single-sourced, idempotent). Disable if you apply migrations yourself.
+migrations:
+  enabled: true
+
+controlplane:
+  replicas: 2
+  port: 8080
+  resources: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+# The relay is the elastic ingest hot path — autoscale it.
+relay:
+  replicas: 3
+  port: 9000
+  resources: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 65
+
+consumer:
+  replicas: 2
+  resources: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+
+web:
+  replicas: 2
+  port: 3000
+  resources: {}
+  # The dashboard bakes its API base URL at build time (NEXT_PUBLIC_CONDUX_API_URL). Build the web image
+  # with your domain, or serve it same-origin behind the ingress below.
+
+# Ingress: route the dashboard + API host to the web + control-plane, and the ingest host to the relay.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  appHost: app.condux.example       # dashboard (web) + API (control-plane, under /api)
+  ingestHost: ingest.condux.example # SDK/OTLP ingest (relay)
+  tls: []                           # [{ secretName: condux-tls, hosts: [app.condux.example, ingest.condux.example] }]

@@ -1,0 +1,43 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "checkout" } },
+          { "key": "service.version", "value": { "stringValue": "2.4.1" } },
+          { "key": "deployment.environment", "value": { "stringValue": "production" } },
+          { "key": "telemetry.sdk.language", "value": { "stringValue": "nodejs" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": { "name": "checkout.orders", "version": "1.0.0" },
+          "logRecords": [
+            {
+              "timeUnixNano": "1714564800123000000",
+              "severityNumber": 17,
+              "severityText": "ERROR",
+              "body": { "stringValue": "Unhandled error while processing order" },
+              "attributes": [
+                { "key": "exception.type", "value": { "stringValue": "TypeError" } },
+                { "key": "exception.message", "value": { "stringValue": "Cannot read properties of undefined (reading 'price')" } },
+                { "key": "exception.stacktrace", "value": { "stringValue": "TypeError: Cannot read properties of undefined (reading 'price')\n    at total (/app/src/checkout.js:42:18)\n    at handle (/app/node_modules/express/lib/router.js:100:5)" } },
+                { "key": "order.id", "value": { "stringValue": "A-1001" } },
+                { "key": "http.status_code", "value": { "intValue": "500" } }
+              ],
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b174"
+            },
+            {
+              "timeUnixNano": "1714564800500000000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": { "stringValue": "order processed" },
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

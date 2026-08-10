@@ -1,0 +1,20 @@
+<Project>
+
+  <!-- Shared authoring, licensing, and versioning for the publishable Condux .NET SDKs (Condux.Sdk +
+       Condux.Sdk.AspNetCore). Both multi-target net8.0;net9.0;net10.0 so apps on .NET 8-10 can consume
+       them (the Condux backend itself consumes Condux.Sdk on net10). Version defaults to the current dev
+       value and is overridden in CI via -p:Version= from the release tag (sdk-vX.Y.Z). The test projects
+       in this tree inherit these too, which is harmless (they are IsPackable=false). -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Condux</Authors>
+    <Company>Condux</Company>
+    <Product>Condux SDK</Product>
+    <PackageProjectUrl>https://github.com/tripledownab/condux</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tripledownab/condux</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageTags>condux;error-monitoring;sentry;observability;crash-reporting</PackageTags>
+  </PropertyGroup>
+
+</Project>

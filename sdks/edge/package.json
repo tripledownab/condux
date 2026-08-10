@@ -1,0 +1,33 @@
+{
+  "name": "@condux/edge",
+  "version": "0.1.0",
+  "description": "Condux SDK for edge runtimes (Cloudflare Workers, Vercel Edge, Deno) — report errors to Condux.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@condux/core": "link:../core"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tripledownab/condux/tree/main/sdks/edge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tripledownab/condux.git",
+    "directory": "sdks/edge"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

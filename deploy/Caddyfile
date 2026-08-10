@@ -1,0 +1,33 @@
+# Condux production edge (see docs/runbooks/production-deploy.md). Caddy terminates TLS with automatic
+# Let's Encrypt certificates and reverse-proxies to the compose services on the private network. Replace
+# the two hostnames with yours, and set an email for ACME notifications.
+#
+# app.condux.ai serves the dashboard AND the control-plane API on ONE origin, so the session cookie and
+# the Google OAuth callback stay first-party. Requests under /api and /openapi go to the control-plane;
+# everything else to the Next.js dashboard. (The dashboard's own /api/boom dogfood route is superseded by
+# this routing in prod, which is fine — it is a dev-only "throw an error" endpoint.)
+
+{
+	# ACME contact for expiry / issuance notices. Set to a real inbox.
+	email ops@condux.ai
+}
+
+app.condux.ai {
+	encode zstd gzip
+
+	@backend path /api/* /openapi/*
+	handle @backend {
+		reverse_proxy controlplane:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# SDK / OTLP ingest — the stateless relay only. SDKs point their DSN host here; an OpenTelemetry exporter
+# posts to ingest.condux.ai/api/<project-uuid>/v1/logs.
+ingest.condux.ai {
+	encode zstd gzip
+	reverse_proxy relay:9000
+}

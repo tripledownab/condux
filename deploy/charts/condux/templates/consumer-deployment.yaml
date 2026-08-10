@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-consumer
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: consumer
+spec:
+  {{- if not .Values.consumer.autoscaling.enabled }}
+  replicas: {{ .Values.consumer.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "consumer") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "consumer") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: consumer
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.consumer) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "condux.postgresEnv" . | nindent 12 }}
+            {{- include "condux.kafkaEnv" . | nindent 12 }}
+            {{- include "condux.clickhouseEnv" . | nindent 12 }}
+            {{- if .Values.email.enabled }}
+            {{- include "condux.smtpEnv" . | nindent 12 }}
+            {{- end }}
+            - name: CONDUX_SAMPLE_KEEP_FIRST
+              value: {{ .Values.config.sampleKeepFirst | quote }}
+            - name: CONDUX_SAMPLE_EVERY
+              value: {{ .Values.config.sampleEvery | quote }}
+          resources:
+            {{- toYaml .Values.consumer.resources | nindent 12 }}

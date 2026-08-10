@@ -1,0 +1,121 @@
+name: condux
+
+# Production override for a single-VPS deploy. See docs/runbooks/production-deploy.md.
+# Layered on the base file (the base defines the services; this hardens them for prod):
+#
+#   docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What it changes:
+#   - Adds Caddy as the ONLY public service: it terminates TLS (automatic Let's Encrypt) and reverse
+#     proxies app.condux.ai (dashboard + API, same-origin) and ingest.condux.ai (relay).
+#   - restart: unless-stopped on every long-running service.
+#   - Control-plane runs in Production, same-origin (no CORS), with the dev admin seed OFF.
+#   - The web image calls the API with RELATIVE urls (same-origin through Caddy), so it is host-agnostic.
+#   - Redpanda gets a persistent volume (dev leaves the log ephemeral).
+#
+# NOTE ON PORTS: Compose *concatenates* published ports across files, so it cannot un-publish the base
+# datastore ports here. The security boundary is the host firewall — open ONLY 22/80/443 (the runbook
+# shows the cloud-firewall / ufw steps). Everything else stays on the private compose network.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./.data/caddy/data:/data
+      - ./.data/caddy/config:/config
+    depends_on: [web, controlplane, relay]
+
+  # MinIO is AGPL and unused by any service today (S3 is BYO). Park it behind a profile so it never starts
+  # in prod; nothing depends on it. (Dev, which runs the base file alone, is unaffected.)
+  minio:
+    profiles: ["dev-object-store"]
+
+  minio-init:
+    profiles: ["dev-object-store"]
+
+  # Mailpit is a dev-only SMTP catcher; park it so it never starts in prod (prod email uses a real relay
+  # configured in .env.prod). Nothing depends on it.
+  mailpit:
+    profiles: ["dev-mail"]
+
+  postgres:
+    restart: unless-stopped
+
+  clickhouse:
+    restart: unless-stopped
+
+  redpanda:
+    restart: unless-stopped
+    # Persist the Kafka log across restarts (the base runs dev-container mode with an ephemeral store).
+    # A NAMED volume, not a bind mount: Redpanda runs as its own uid and can't write a root-owned host
+    # dir, whereas a named volume inherits the image's mountpoint ownership. (Postgres/ClickHouse chown
+    # their bind-mounted data dirs on startup, so those stay bind mounts for easy backups; Redpanda's log
+    # is a rebuildable buffer, not something you back up.)
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
+
+  valkey:
+    restart: unless-stopped
+
+  relay:
+    restart: unless-stopped # reached via Caddy at ingest.condux.ai
+
+  controlplane:
+    restart: unless-stopped # reached via Caddy at app.condux.ai/api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # Same-origin in prod (Caddy serves the dashboard + API on one host), so no CORS is emitted.
+      CONDUX_CORS_ORIGINS: ""
+      # Absolute base URL for links that leave the browser: invite emails, the SSO redirect URI, and the
+      # Stripe checkout/portal return URLs (Stripe rejects a relative URL). Same-origin prod has no CORS
+      # origin to fall back to. Overridable via .env.prod; defaults to the public dashboard host.
+      CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
+      # DSNs / ingest URLs handed to users must point at the public relay host, not the dev localhost
+      # default (Caddy fronts the relay at ingest.condux.ai over TLS).
+      CONDUX_INGEST_SCHEME: "https"
+      CONDUX_INGEST_HOST: "ingest.condux.ai"
+      # Never seed a dev admin in production.
+      CONDUX_SEED_ADMIN_EMAIL: ""
+      CONDUX_SEED_ADMIN_PASSWORD: ""
+      # The base defaults SMTP to the dev-only Mailpit; clear the host so prod email stays opt-in. Set
+      # CONDUX_SMTP_HOST (+ port/ssl/from/user/password) in .env.prod to a real relay to enable email.
+      CONDUX_SMTP_HOST: ${CONDUX_SMTP_HOST:-}
+      # The base points the source-map object store at the dev MinIO; prod uses a BYO S3 bucket. Off (the
+      # /api/sourcemaps routes 404) until set in .env.prod: a real bucket + access key + secret (endpoint
+      # for a non-AWS S3, region for AWS).
+      CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-}
+      CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-}
+      CONDUX_S3_ACCESS_KEY: ${CONDUX_S3_ACCESS_KEY:-}
+      CONDUX_S3_SECRET_KEY: ${CONDUX_S3_SECRET_KEY:-}
+      CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
+      # Optional at-rest encryption for uploaded maps (e.g. AES256 for SSE-S3); unset relies on the
+      # bucket's default encryption (AWS S3 encrypts new objects by default).
+      CONDUX_S3_SSE: ${CONDUX_S3_SSE:-}
+
+  web:
+    restart: unless-stopped # reached via Caddy at app.condux.ai
+    build:
+      args:
+        # Empty => the dashboard talks to the API with relative URLs, i.e. same-origin through Caddy.
+        # Keeps the image domain-agnostic (no rebuild per host) and keeps the session cookie first-party.
+        NEXT_PUBLIC_CONDUX_API_URL: ""
+        # The DSN shown in the dashboard must point SDKs at the public relay (Caddy fronts it over TLS),
+        # not the dev localhost fallback, so a copied DSN actually reaches ingest.
+        NEXT_PUBLIC_CONDUX_INGEST_URL: "https://ingest.condux.ai"
+
+  consumer:
+    restart: unless-stopped
+    environment:
+      # As with the control-plane: don't inherit the dev Mailpit default; email is opt-in via .env.prod.
+      CONDUX_SMTP_HOST: ${CONDUX_SMTP_HOST:-}
+      # The weekly summary worker runs here (ADR-0031); its digest CTA links to the public dashboard, same
+      # absolute URL the control-plane uses (the dev base default in docker-compose.yml points at localhost).
+      CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
+
+  conductor:
+    restart: unless-stopped
+
+volumes:
+  redpanda-data:

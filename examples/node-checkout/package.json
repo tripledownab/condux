@@ -1,0 +1,13 @@
+{
+  "name": "condux-example-node-checkout",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example: a checkout service reporting realistic errors with @condux/node.",
+  "scripts": {
+    "start": "node checkout.mjs"
+  },
+  "dependencies": {
+    "@condux/node": "file:../../sdks/js"
+  }
+}

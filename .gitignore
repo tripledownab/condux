@@ -1,0 +1,61 @@
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- Secrets / env ----
+.env
+.env.*
+!.env.example
+!.env.prod.example
+*.pem
+*.key
+
+# ---- .NET ----
+[Bb]in/
+[Oo]bj/
+*.user
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+
+# ---- Node / TS ----
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.pnpm-store/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ---- Build / codegen output ----
+/gen/
+**/generated/
+# ...except the orval-generated API client: committed & reviewable, and needed inside the
+# web/ Docker build context (which can't see contracts/ to regenerate). Regen: `pnpm gen:api`.
+!web/src/api/generated/
+!web/src/api/generated/**
+
+# ---- Docker / local data ----
+/deploy/.data*
+# Nightly pg_dump output (backup.sh) — runtime data, never committed
+/deploy/backups/
+
+# Next.js generated type shim (regenerated on build)
+web/next-env.d.ts
+
+# ---- Private / operational docs ----
+# Runbooks and notes that reference infra, tokens, or accounts — kept with the project but never
+# committed to the source-available repo.
+docs/private/

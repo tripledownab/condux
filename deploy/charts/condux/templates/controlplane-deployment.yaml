@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-controlplane
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+spec:
+  {{- if not .Values.controlplane.autoscaling.enabled }}
+  replicas: {{ .Values.controlplane.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "controlplane") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "controlplane") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: controlplane
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.controlplane) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.controlplane.port }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:{{ .Values.controlplane.port }}"
+            {{- include "condux.postgresEnv" . | nindent 12 }}
+            {{- include "condux.kafkaEnv" . | nindent 12 }}
+            {{- include "condux.clickhouseEnv" . | nindent 12 }}
+            {{- if .Values.email.enabled }}
+            {{- include "condux.smtpEnv" . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.config.appBaseUrl }}
+            - name: CONDUX_APP_BASE_URL
+              value: {{ .Values.config.appBaseUrl | quote }}
+            {{- end }}
+            {{- if .Values.config.corsOrigins }}
+            - name: CONDUX_CORS_ORIGINS
+              value: {{ .Values.config.corsOrigins | quote }}
+            {{- end }}
+            {{- if .Values.config.platformAdminEmails }}
+            - name: CONDUX_PLATFORM_ADMIN_EMAILS
+              value: {{ .Values.config.platformAdminEmails | quote }}
+            {{- end }}
+            {{- if .Values.secret.secretKey }}
+            - name: CONDUX_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_SECRET_KEY
+            {{- end }}
+            {{- if .Values.github.enabled }}
+            - name: CONDUX_GITHUB_CLIENT_ID
+              value: {{ .Values.github.clientId | quote }}
+            - name: CONDUX_GITHUB_APP_SLUG
+              value: {{ .Values.github.appSlug | quote }}
+            - name: CONDUX_GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_GITHUB_WEBHOOK_SECRET
+            - name: CONDUX_GITHUB_PRIVATE_KEY_PATH
+              value: /run/secrets/github-app.pem
+            {{- end }}
+            {{- if .Values.objectStore.enabled }}
+            {{- if .Values.objectStore.endpoint }}
+            - name: CONDUX_S3_ENDPOINT
+              value: {{ .Values.objectStore.endpoint | quote }}
+            {{- end }}
+            - name: CONDUX_S3_BUCKET
+              value: {{ .Values.objectStore.bucket | quote }}
+            {{- if .Values.objectStore.region }}
+            - name: CONDUX_S3_REGION
+              value: {{ .Values.objectStore.region | quote }}
+            {{- end }}
+            {{- if .Values.objectStore.serverSideEncryption }}
+            - name: CONDUX_S3_SSE
+              value: {{ .Values.objectStore.serverSideEncryption | quote }}
+            {{- end }}
+            - name: CONDUX_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_S3_ACCESS_KEY
+            - name: CONDUX_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_S3_SECRET_KEY
+            {{- end }}
+          {{- if .Values.github.enabled }}
+          volumeMounts:
+            - name: github-app-key
+              mountPath: /run/secrets
+              readOnly: true
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.controlplane.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.controlplane.port }}
+          resources:
+            {{- toYaml .Values.controlplane.resources | nindent 12 }}
+      {{- if .Values.github.enabled }}
+      volumes:
+        - name: github-app-key
+          secret:
+            secretName: {{ include "condux.secretName" . }}
+            items:
+              - key: github-app.pem
+                path: github-app.pem
+      {{- end }}

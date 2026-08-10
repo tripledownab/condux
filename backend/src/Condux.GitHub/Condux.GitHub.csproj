@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The neutral ISourceHostClient contract lives in Core (#145); this is the GitHub implementation.
+         Core is dependency-light, so Condux.GitHub keeps no external NuGet deps. -->
+    <ProjectReference Include="..\Condux.Core\Condux.Core.csproj" />
+  </ItemGroup>
+</Project>

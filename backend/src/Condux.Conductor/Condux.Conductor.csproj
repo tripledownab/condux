@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Pin 2.5.x: 2.6.0 (librdkafka 2.6.0) requests Fetch API v12 which Redpanda rejects. -->
+    <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The integration suite drives a real VerificationWorker tick against live Postgres + ClickHouse. -->
+    <InternalsVisibleTo Include="Condux.IntegrationTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
+    <ProjectReference Include="../Condux.GitHub/Condux.GitHub.csproj" />
+    <ProjectReference Include="../Condux.Storage/Condux.Storage.csproj" />
+    <ProjectReference Include="../Condux.Telemetry/Condux.Telemetry.csproj" />
+  </ItemGroup>
+</Project>

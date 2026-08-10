@@ -1,0 +1,2 @@
+# The Condux Python SDK, installed from the workspace as an editable path dependency.
+-e ../../sdks/python

@@ -1,0 +1,38 @@
+{
+  "name": "@condux/react",
+  "version": "0.1.0",
+  "description": "Condux SDK for React — report errors to Condux, with an error boundary for render errors.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@condux/browser": "link:../browser"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^5.7.2"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tripledownab/condux/tree/main/sdks/react#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tripledownab/condux.git",
+    "directory": "sdks/react"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

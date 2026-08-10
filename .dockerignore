@@ -1,0 +1,11 @@
+# Build-context excludes for images whose context is the repo root (the web dashboard image). Keeps
+# host-built artifacts out of the context so the image installs and builds cleanly inside Docker.
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/*.tsbuildinfo
+**/bin
+**/obj
+.git
+.data

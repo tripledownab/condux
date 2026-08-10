@@ -1,0 +1,11 @@
+version: v2
+clean: true
+plugins:
+  # C# message types for the .NET backend (Event, Issue, FixSuggestion, ...)
+  - remote: buf.build/protocolbuffers/csharp
+    out: ../backend/src/Condux.Core/Generated
+  # TypeScript types for the dashboard + SDKs
+  - remote: buf.build/bufbuild/es
+    out: ../web/src/gen
+    opt:
+      - target=ts

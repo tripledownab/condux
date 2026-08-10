@@ -1,0 +1,5 @@
+{"event_id":"deadbeefdeadbeefdeadbeefdeadbeef","sdk":{"name":"sentry.javascript.node","version":"8.20.0"}}
+{"type":"session"}
+{"sid":"1f8b9c","status":"ok","errors":1,"started":"2026-01-15T09:31:00Z"}
+{"type":"event","length":163}
+{"event_id":"deadbeefdeadbeefdeadbeefdeadbeef","timestamp":1768469460.0,"platform":"node","level":"error","exception":{"values":[{"type":"Error","value":"boom"}]}}

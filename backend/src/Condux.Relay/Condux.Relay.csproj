@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
+    <ProjectReference Include="../Condux.Messaging/Condux.Messaging.csproj" />
+    <ProjectReference Include="../Condux.Storage/Condux.Storage.csproj" />
+    <ProjectReference Include="../Condux.Telemetry/Condux.Telemetry.csproj" />
+  </ItemGroup>
+</Project>

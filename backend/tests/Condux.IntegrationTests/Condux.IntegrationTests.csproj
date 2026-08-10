@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Testcontainers" Version="4.1.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.1.0" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.101.5" />
+    <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
+    <PackageReference Include="Npgsql" Version="8.0.5" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Condux.Core/Condux.Core.csproj" />
+    <ProjectReference Include="../../src/Condux.Messaging/Condux.Messaging.csproj" />
+    <ProjectReference Include="../../src/Condux.Notifications/Condux.Notifications.csproj" />
+    <ProjectReference Include="../../src/Condux.Storage/Condux.Storage.csproj" />
+    <ProjectReference Include="../../src/Condux.ControlPlane/Condux.ControlPlane.csproj" />
+    <!-- The fix-verification watcher (VerificationWorker) lives here. Alias it (like the relay) so its
+         global `Program` stays out of the way of the control-plane's Program used by WebApplicationFactory. -->
+    <ProjectReference Include="../../src/Condux.Conductor/Condux.Conductor.csproj" Aliases="conductor" />
+    <!-- The consumer's AutoFixDispatcher (#101) is exercised directly; its Program is internal so it
+         does not collide with the control-plane's Program under WebApplicationFactory. -->
+    <ProjectReference Include="../../src/Condux.Consumer/Condux.Consumer.csproj" Aliases="consumer" />
+    <!-- Both the control-plane and the relay expose a global `Program`; alias the relay
+         so tests can host each via WebApplicationFactory<Program> / <relay::Program>. -->
+    <ProjectReference Include="../../src/Condux.Relay/Condux.Relay.csproj" Aliases="relay" />
+    <!-- The demo-seed tool is an Exe with its own global `Program`; alias it so it does not collide. -->
+    <ProjectReference Include="../../tools/Condux.DemoSeed/Condux.DemoSeed.csproj" Aliases="demoseed" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../../migrations/postgres/*.sql" LinkBase="migrations" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../migrations/clickhouse/*.sql" LinkBase="migrations-clickhouse" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Serialize container-based fixtures so they don't all start at once (Docker contention). -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

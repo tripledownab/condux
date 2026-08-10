@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@import "@condux/brand/theme.css";
+@import "tw-animate-css";
+
+/* shadcn/ui components render dark by default (like @condux/brand) and flip to light only when
+   next-themes sets data-theme="light" on <html>, so the dark: variant means "not the light theme". */
+@custom-variant dark (&:is(:root:not([data-theme="light"]) *));
+
+@layer base {
+  /* The preset's --pointer: interactive controls get a pointer cursor. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

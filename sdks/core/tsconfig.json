@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "outDir": "dist",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    // The core is split into small files (~200-line rule), so it imports siblings with an explicit .ts
+    // extension: the strip-types test runner resolves those directly, and tsc rewrites them to .js on
+    // emit. verbatimModuleSyntax forces `type` markers so the runner can erase type-only imports.
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src"]
+}

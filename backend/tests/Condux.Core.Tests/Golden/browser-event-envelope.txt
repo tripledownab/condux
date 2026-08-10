@@ -1,0 +1,3 @@
+{"event_id":"c0ffee00c0ffee00c0ffee00c0ffee00","sent_at":"2026-01-15T09:31:00Z","sdk":{"name":"sentry.javascript.browser","version":"8.20.0"},"dsn":"https://pub@relay.condux.ai/1"}
+{"type":"event","content_type":"application/json","length":389}
+{"event_id":"c0ffee00c0ffee00c0ffee00c0ffee00","timestamp":"2026-01-15T09:31:00Z","platform":"javascript","level":"fatal","environment":"production","sdk":{"name":"sentry.javascript.browser","version":"8.20.0"},"exception":{"values":[{"type":"TypeError","value":"undefined is not a function","stacktrace":{"frames":[{"filename":"app.js","function":"render","lineno":10,"in_app":true}]}}]}}

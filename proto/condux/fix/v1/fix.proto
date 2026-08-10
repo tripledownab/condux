@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package condux.fix.v1;
+
+option go_package = "github.com/condux/condux/gen/go/condux/fix/v1;fixv1";
+
+enum FixStatus {
+  FIX_STATUS_UNSPECIFIED = 0;
+  FIX_STATUS_PENDING = 1;
+  FIX_STATUS_RUNNING = 2;
+  FIX_STATUS_SUCCEEDED = 3;
+  FIX_STATUS_FAILED = 4;
+  FIX_STATUS_CANCELLED = 5;
+}
+
+// Post-merge verification outcome of a fix run: once the draft PR merges the issue is watched
+// against its exact event stats; a silent window auto-resolves it with evidence.
+enum VerifyStatus {
+  VERIFY_STATUS_UNSPECIFIED = 0; // no verification yet - the PR has not merged
+  VERIFY_STATUS_WATCHING = 1;
+  VERIFY_STATUS_HELD = 2;
+  VERIFY_STATUS_DID_NOT_HOLD = 3;
+}
+
+// A fix run orchestrated by "the Conductor" for a given issue.
+message FixSuggestion {
+  string id = 1;
+  string issue_id = 2;
+  string repo_full_name = 3; // "owner/name"
+  FixStatus status = 4;
+  string provider = 5; // "anthropic-managed-agents", "openai-compat", ...
+  string model = 6; // e.g. "claude-opus-4-8"
+  string branch = 7;
+  string pr_url = 8; // populated once the draft PR exists
+  string summary = 9;
+  int64 created_at_unix_ms = 10;
+  int64 updated_at_unix_ms = 11;
+  int64 merged_at_unix_ms = 12; // 0 until the draft PR merges
+  VerifyStatus verify_status = 13;
+  int64 verified_at_unix_ms = 14; // 0 until verification concludes
+}
+
+message RequestFixRequest {
+  string issue_id = 1;
+}
+
+message RequestFixResponse {
+  FixSuggestion suggestion = 1;
+}
+
+message GetFixRequest {
+  string fix_id = 1;
+}
+
+message GetFixResponse {
+  FixSuggestion suggestion = 1;
+}
+
+// The Conductor — internal control-plane API for the AI fix engine.
+service ConductorService {
+  rpc RequestFix(RequestFixRequest) returns (RequestFixResponse);
+  rpc GetFix(GetFixRequest) returns (GetFixResponse);
+}

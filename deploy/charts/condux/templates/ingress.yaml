@@ -1,0 +1,50 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-condux
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    # The dashboard host serves the API under /api (same-origin) and the dashboard at /.
+    - host: {{ .Values.ingress.appHost | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-controlplane
+                port:
+                  number: {{ .Values.controlplane.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-web
+                port:
+                  number: {{ .Values.web.port }}
+    # The ingest host is the relay (SDK /store/ + OTLP /v1/logs).
+    - host: {{ .Values.ingress.ingestHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-relay
+                port:
+                  number: {{ .Values.relay.port }}
+{{- end }}

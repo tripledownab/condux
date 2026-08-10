@@ -1,0 +1,41 @@
+{
+  "event_id": "9ffd7b6a1c1e4b6b8c2f0e3a5d7c9b11",
+  "timestamp": 1714564800.123,
+  "platform": "python",
+  "level": "error",
+  "logger": "django.request",
+  "server_name": "web-01",
+  "environment": "production",
+  "release": "backend@2.4.1",
+  "transaction": "/checkout",
+  "sdk": { "name": "sentry.python.django", "version": "2.14.0" },
+  "tags": { "handled": "no", "mechanism": "django" },
+  "extra": { "order_id": "A-1001" },
+  "exception": {
+    "values": [
+      {
+        "type": "KeyError",
+        "value": "'price'",
+        "module": "builtins",
+        "stacktrace": {
+          "frames": [
+            {
+              "filename": "app/views.py",
+              "function": "checkout",
+              "lineno": 88,
+              "colno": 12,
+              "in_app": true,
+              "context_line": "total = item['price']"
+            },
+            {
+              "filename": "django/core/handlers/base.py",
+              "function": "_get_response",
+              "lineno": 197,
+              "in_app": false
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

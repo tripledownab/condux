@@ -1,0 +1,35 @@
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrations
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrations
+  annotations:
+    # Run before the services start, on install and upgrade. Idempotent SQL, so re-running is safe.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "migrations") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrations
+          # Built from deploy/migrations.Dockerfile: bakes migrations/postgres + migrations/clickhouse
+          # from the repo (single-sourced) and applies both in filename order.
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.migrations) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "condux.postgresEnv" . | nindent 12 }}
+            {{- include "condux.clickhouseEnv" . | nindent 12 }}
+{{- end }}

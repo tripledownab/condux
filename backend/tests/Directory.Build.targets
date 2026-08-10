@@ -1,0 +1,8 @@
+<Project>
+  <!-- Test-only additions. Kept in Directory.Build.targets (not .props) so it does not shadow the repo-wide
+       backend/Directory.Build.props (TFM, nullable, implicit usings) that every project inherits. -->
+  <ItemGroup>
+    <!-- coverlet.collector enables the "XPlat Code Coverage" data collector (Cobertura) in every test project. -->
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+  </ItemGroup>
+</Project>

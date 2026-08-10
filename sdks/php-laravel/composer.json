@@ -1,0 +1,38 @@
+{
+  "name": "condux/condux-laravel",
+  "description": "Laravel integration for the Condux SDK: automatic exception reporting to a Condux relay, zero config beyond a DSN.",
+  "type": "library",
+  "keywords": ["laravel", "error-monitoring", "condux", "sentry", "observability"],
+  "license": "Apache-2.0",
+  "homepage": "https://condux.ai",
+  "authors": [
+    {
+      "name": "Condux",
+      "homepage": "https://condux.ai"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/tripledownab/condux/issues",
+    "source": "https://github.com/tripledownab/condux"
+  },
+  "require": {
+    "php": ">=8.1",
+    "condux/condux": "^0.1",
+    "illuminate/support": "^10.0 || ^11.0 || ^12.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Condux\\Laravel\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Condux\\Laravel\\ConduxServiceProvider"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "php test/run.php"
+  }
+}

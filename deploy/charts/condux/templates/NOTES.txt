@@ -1,0 +1,31 @@
+Condux {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}".
+
+Services (in-cluster):
+  - control-plane (API):  {{ .Release.Name }}-controlplane:{{ .Values.controlplane.port }}
+  - relay (ingest):       {{ .Release.Name }}-relay:{{ .Values.relay.port }}
+  - dashboard (web):      {{ .Release.Name }}-web:{{ .Values.web.port }}
+  - consumer + conductor: workers (no Service)
+
+{{- if .Values.ingress.enabled }}
+
+Ingress:
+  - Dashboard + API: https://{{ .Values.ingress.appHost }}
+  - Ingest (SDK /store/ + OTLP /v1/logs): https://{{ .Values.ingress.ingestHost }}
+{{- else }}
+
+Ingress is disabled — reach the services via port-forward or add your own Ingress/Gateway.
+{{- end }}
+
+Before it works:
+  1. Data stores are BYO — point the chart at your managed Postgres, ClickHouse, Kafka/Redpanda and
+     Valkey/Redis via .Values.externalStores.* and provide credentials via the Secret
+     (.Values.secret.* inline, or .Values.secret.existingSecret in production).
+  2. Migrations run automatically as a pre-install/pre-upgrade hook Job from the `migrations` image
+     (build it from deploy/migrations.Dockerfile). It needs native-protocol (9000) access to ClickHouse.
+     Set .Values.migrations.enabled=false to apply them yourself.
+{{- if .Values.github.enabled }}
+  3. The GitHub App (the Conductor) is enabled — ensure the App is installed on your repos and the
+     control-plane's public URL is set as the App's setup/webhook URL.
+{{- end }}
+
+Docs: docs/architecture.md (topology), docs/runbooks/backup-restore.md (backups).

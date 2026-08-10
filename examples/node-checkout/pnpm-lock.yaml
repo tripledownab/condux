@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@condux/node':
+        specifier: file:../../sdks/js
+        version: file:../../sdks/js
+
+packages:
+
+  '@condux/node@file:../../sdks/js':
+    resolution: {directory: ../../sdks/js, type: directory}
+
+snapshots:
+
+  '@condux/node@file:../../sdks/js': {}

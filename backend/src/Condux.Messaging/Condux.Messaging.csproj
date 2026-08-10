@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Pin 2.5.x: Confluent.Kafka 2.6.0 (librdkafka 2.6.0) requests Fetch API v12,
+         which Redpanda rejects and drops the consumer's fetch connection. 2.5.x works. -->
+    <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,35 @@
+{
+  "realm": "condux-test",
+  "enabled": true,
+  "displayName": "Condux SSO test",
+  "sslRequired": "none",
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "condux",
+      "name": "Condux (test SP)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "condux-test-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/api/auth/sso/callback"],
+      "webOrigins": ["+"]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@condux.dev",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Tester",
+      "requiredActions": [],
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }]
+    }
+  ]
+}
