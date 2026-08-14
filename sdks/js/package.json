@@ -1,7 +1,7 @@
 {
   "name": "@condux/node",
   "version": "0.1.0",
-  "description": "Condux SDK for Node.js — report errors to Condux.",
+  "description": "Condux SDK for Node.js \u2014 report errors to Condux.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,5 +29,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "bin": {
+    "condux": "./dist/cli.js"
   }
 }

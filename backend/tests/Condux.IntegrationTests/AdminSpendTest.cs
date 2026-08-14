@@ -11,7 +11,8 @@ namespace Condux.IntegrationTests;
 /// Cross-org Conductor spend (ADR-0027). Seeds issue fixes + CVE bumps across two orgs with a priced
 /// (Anthropic) and a bring-your-own (unpriced) model, then checks the rollup sums only priced tokens, the
 /// per-model / per-org breakdowns are right, and the per-run drill-down lists both kinds (including a
-/// failed 0-token run with null cost) and honors its filters.
+/// failed 0-token run with null cost) and honors its filters. Runner-executed runs of both kinds are in
+/// the drill-down but out of every total — their tokens are the customer's own model bill (ADR-0033).
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -33,6 +34,11 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
         await SeedIssueFixAsync(cs, projectA, Byo, 2_000_000, 0, status: 3);
         await SeedCveFixAsync(cs, projectA, Priced, 500_000, 0, status: 3);
         await SeedIssueFixAsync(cs, projectA, Priced, 0, 0, status: 4);
+        // Runner-executed runs of both kinds (they carry a job_context): billed to the customer's own
+        // model account, so their tokens must not move any spend total below — only the drill-down
+        // lists them (ADR-0033 slice 4c).
+        await SeedIssueFixAsync(cs, projectA, Priced, 2_000_000, 2_000_000, status: 3, runner: true);
+        await SeedCveFixAsync(cs, projectA, Priced, 1_000_000, 0, status: 3, runner: true);
         // Org B: one priced issue fix ($5).
         var (_, projectB) = await SeedOrgProjectAsync(cs, "B");
         await SeedIssueFixAsync(cs, projectB, Priced, 1_000_000, 0, status: 3);
@@ -55,9 +61,10 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
         var orgSpend = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/orgs/{orgA}/spend?days=30");
         Assert.Equal(32.50m, orgSpend.GetProperty("totalUsd").GetDecimal());
 
-        // Drill-down lists all runs, including the failed 0-token one (kept, unlike the rollup) and the
-        // BYO run whose unpriced model yields a null cost.
+        // Drill-down lists all runs, including the failed 0-token one and the two runner-executed ones
+        // (kept, unlike the rollup) and the BYO run whose unpriced model yields a null cost.
         var runs = await admin.GetFromJsonAsync<JsonElement>("/api/admin/spend/runs?days=30");
+        Assert.Equal(7, runs.GetArrayLength());
         Assert.Contains(runs.EnumerateArray(), r => r.GetProperty("status").GetInt32() == 4);
         Assert.Contains(runs.EnumerateArray(), r =>
             r.GetProperty("model").GetString() == Byo && r.GetProperty("costUsd").ValueKind == JsonValueKind.Null);
@@ -78,7 +85,7 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
     }
 
     private static async Task SeedIssueFixAsync(
-        string cs, long projectId, string model, long input, long output, int status)
+        string cs, long projectId, string model, long input, long output, int status, bool runner = false)
     {
         await using var conn = new NpgsqlConnection(cs);
         await conn.OpenAsync();
@@ -87,31 +94,37 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
             ("p", projectId), ("f", Guid.NewGuid().ToString("N")));
         await ExecAsync(conn,
             """
-            INSERT INTO fix_suggestions (id, issue_id, repo_full_name, status, model, input_tokens, output_tokens)
-            VALUES (@id, @issue, 'acme/app', @status, @model, @in, @out);
+            INSERT INTO fix_suggestions
+                (id, issue_id, repo_full_name, status, model, input_tokens, output_tokens, job_context)
+            VALUES (@id, @issue, 'acme/app', @status, @model, @in, @out, @ctx::jsonb);
             """,
             ("id", Guid.NewGuid()), ("issue", issueId), ("status", (short)status),
-            ("model", model), ("in", input), ("out", output));
+            ("model", model), ("in", input), ("out", output),
+            ("ctx", runner ? "{}" : DBNull.Value));
     }
 
     private static async Task SeedCveFixAsync(
-        string cs, long projectId, string model, long input, long output, int status)
+        string cs, long projectId, string model, long input, long output, int status, bool runner = false)
     {
         await using var conn = new NpgsqlConnection(cs);
         await conn.OpenAsync();
+        // Unique per call: repo_links is UNIQUE (project_id, repo_full_name), and a project seeds
+        // several bumps here.
         var repoLinkId = Guid.NewGuid();
         await ExecAsync(conn,
-            "INSERT INTO repo_links (id, project_id, repo_full_name) VALUES (@id, @p, 'acme/app');",
-            ("id", repoLinkId), ("p", projectId));
+            "INSERT INTO repo_links (id, project_id, repo_full_name) VALUES (@id, @p, @repo);",
+            ("id", repoLinkId), ("p", projectId), ("repo", $"acme/app-{repoLinkId:N}"));
         await ExecAsync(conn,
             """
             INSERT INTO cve_fix_runs
                 (id, repo_link_id, ghsa_id, package, ecosystem, from_range, to_version, status, model,
-                 input_tokens, output_tokens)
-            VALUES (@id, @repo, 'GHSA-x', 'left-pad', 'npm', '<1.0', '1.0', @status, @model, @in, @out);
+                 input_tokens, output_tokens, job_context)
+            VALUES (@id, @repo, 'GHSA-x', 'left-pad', 'npm', '<1.0', '1.0', @status, @model, @in, @out,
+                    @ctx::jsonb);
             """,
             ("id", Guid.NewGuid()), ("repo", repoLinkId), ("status", (short)status),
-            ("model", model), ("in", input), ("out", output));
+            ("model", model), ("in", input), ("out", output),
+            ("ctx", runner ? "{}" : DBNull.Value));
     }
 
     private static async Task ExecAsync(NpgsqlConnection conn, string sql, params (string, object)[] ps)

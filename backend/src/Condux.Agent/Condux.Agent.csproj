@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Sandbox settings are read from the environment, in both deployments. Abstractions only: this
+         project describes how to read config, never how a host is built. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Docker's exec stream framing and the sandbox tar writer are worth testing without a daemon. -->
+    <InternalsVisibleTo Include="Condux.Conductor.Tests" />
+    <InternalsVisibleTo Include="Condux.IntegrationTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Core only, deliberately. This is what a customer deploys on their own machines, so it must not
+         drag in Kafka, Postgres, ClickHouse or object storage: the loop talks to the neutral source-host
+         and model seams and nothing else. That constraint is the point of the project boundary, so adding
+         a reference here is a decision, not a detail. -->
+    <ProjectReference Include="..\Condux.Core\Condux.Core.csproj" />
+  </ItemGroup>
+</Project>

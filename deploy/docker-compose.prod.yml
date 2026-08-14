@@ -104,6 +104,22 @@ services:
         # The DSN shown in the dashboard must point SDKs at the public relay (Caddy fronts it over TLS),
         # not the dev localhost fallback, so a copied DSN actually reaches ingest.
         NEXT_PUBLIC_CONDUX_INGEST_URL: "https://ingest.condux.ai"
+        # Client-side self-reporting (#75): same key as CONDUX_WEB_DSN but with the public ingest host
+        # (events tunnel through /monitoring; the DSN's key is public by design). Optional.
+        NEXT_PUBLIC_CONDUX_DSN: ${CONDUX_WEB_PUBLIC_DSN:-}
+        # The signup acceptance notice links the published terms + privacy policy on the marketing site.
+        # This is the hosted service, so there ARE terms to accept and clause 1 of them says signing up
+        # accepts them. Unset would silently hide the notice and leave that clause resting on nothing.
+        NEXT_PUBLIC_CONDUX_LEGAL_URL: "https://condux.ai"
+        # Source-map upload (ADR-0028, Condux on Condux): the deploy's commit sha is the release the
+        # dashboard reports AND the release its maps upload under — one value, derived from the checkout
+        # by deploy-app.yml, so the two cannot disagree. The upload goes through the public app URL.
+        NEXT_PUBLIC_CONDUX_RELEASE: ${CONDUX_COMMIT:-}
+        CONDUX_URL: "https://app.condux.ai"
+      secrets: [condux_release_token]
+    environment:
+      # The server half of the dashboard reports the same release as the baked client one above.
+      CONDUX_RELEASE: ${CONDUX_COMMIT:-}
 
   consumer:
     restart: unless-stopped
@@ -119,3 +135,11 @@ services:
 
 volumes:
   redpanda-data:
+
+secrets:
+  # The scoped release token the web image build uploads source maps with (ADR-0028). A BuildKit secret
+  # rather than a build arg so it never lands in the image history. Sourced from .env.prod, which MUST
+  # define the key (an empty value is fine and means stamp-only) — compose refuses to start when an
+  # environment-sourced secret's variable is missing entirely.
+  condux_release_token:
+    environment: CONDUX_RELEASE_TOKEN

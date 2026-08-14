@@ -12,6 +12,10 @@ using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// A crash must end the process. As PID 1 in a container it otherwise survives its own unhandled
+// exception and spins, looking healthy while doing nothing.
+ProcessTermination.ExitOnUnhandledException();
+
 // OpenTelemetry (traces + metrics over OTLP; opt-in via OTEL_EXPORTER_OTLP_ENDPOINT).
 builder.AddConduxTelemetry("condux-consumer");
 builder.AddConduxSelfReporting(); // Condux on Condux (#75): the consumer reports its own errors, opt-in
@@ -42,6 +46,11 @@ builder.Services.AddSingleton<IAiFixQuota>(new PostgresAiFixQuota(pg));
 builder.Services.AddSingleton<IAiFixSpend>(new PostgresAiFixSpend(pg));
 builder.Services.AddSingleton<IFixRequestPublisher>(
     new KafkaFixRequestPublisher(builder.Configuration["CONDUX_KAFKA_BOOTSTRAP"] ?? "localhost:9092"));
+// The other destination: an org that runs its own runner gets a leasable row instead of a topic message
+// (ADR-0033 slice 4c), so auto-fix routes the same way the manual request does. The fix store comes with
+// it, because a run queued here never reaches the orchestrator that would otherwise open its audit trail.
+builder.Services.AddSingleton(new PostgresJobLeaseStore(pg));
+builder.Services.AddSingleton<IFixStore>(new PostgresFixStore(pg));
 
 // Conductor-pause notices (#130): when auto-fix is skipped because the org's cost cap or allowance is
 // reached, notify the org's channels once per window (throttled) via the same notifiers as alerts.

@@ -1037,7 +1037,7 @@
             "auth": null,
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"aiFixMode\": \"<integer>\",\n  \"aiFixCostCapUsd\": \"<double>\"\n}",
+              "raw": "{\n  \"aiFixMode\": \"<integer>\",\n  \"aiFixCostCapUsd\": \"<double>\",\n  \"fixExecution\": \"<integer>\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2377,6 +2377,151 @@
                   "type": "any",
                   "value": "<long>",
                   "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "tokenId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "method": "DELETE",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        }
+      ],
+      "event": []
+    },
+    {
+      "name": "RunnerTokens",
+      "description": {
+        "content": "",
+        "type": "text/plain"
+      },
+      "item": [
+        {
+          "name": "create Runner Token",
+          "request": {
+            "name": "create Runner Token",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "orgs",
+                ":orgId",
+                "runner-tokens"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "orgId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "auth": null,
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "list Runner Tokens",
+          "request": {
+            "name": "list Runner Tokens",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "orgs",
+                ":orgId",
+                "runner-tokens"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "orgId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "revoke Runner Token",
+          "request": {
+            "name": "revoke Runner Token",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "orgs",
+                ":orgId",
+                "runner-tokens",
+                ":tokenId"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "orgId",
                   "description": "(Required) "
                 },
                 {
@@ -4662,7 +4807,7 @@
             "auth": null,
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"emailDomain\": \"<string>\",\n  \"issuer\": \"<string>\",\n  \"authorizationEndpoint\": \"<string>\",\n  \"tokenEndpoint\": \"<string>\",\n  \"clientId\": \"<string>\",\n  \"clientSecret\": \"<string>\"\n}",
+              "raw": "{\n  \"emailDomain\": \"<string>\",\n  \"issuer\": \"<string>\",\n  \"protocol\": \"<integer>\",\n  \"authorizationEndpoint\": \"<string>\",\n  \"tokenEndpoint\": \"<string>\",\n  \"clientId\": \"<string>\",\n  \"clientSecret\": \"<string>\",\n  \"samlSsoUrl\": \"<string>\",\n  \"samlCertificate\": \"<string>\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

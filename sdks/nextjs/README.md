@@ -21,7 +21,10 @@ Client — capture uncaught errors + unhandled rejections in the browser:
 // instrumentation-client.ts
 import { initClient } from "@condux/nextjs";
 
-initClient();
+// Pass the DSN explicitly: Next inlines NEXT_PUBLIC_* only where YOUR code references the variable,
+// so a bare initClient() cannot see it from inside this package and client reporting stays off
+// (initClient warns when that happens).
+initClient({ dsn: process.env.NEXT_PUBLIC_CONDUX_DSN });
 ```
 
 Configure with env vars (both inert until set, so installing ahead of configuring never breaks a build):
@@ -29,6 +32,32 @@ Configure with env vars (both inert until set, so installing ahead of configurin
 ```dotenv
 CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId>              # server + edge (kept server-only)
 NEXT_PUBLIC_CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId>  # client (exposed to the browser)
+```
+
+React **render** errors never reach the global handlers — they go to error boundaries. Wrap your app
+(or any subtree) in the re-exported boundary so they are reported too:
+
+```tsx
+import { ConduxErrorBoundary } from "@condux/nextjs/react";
+
+<ConduxErrorBoundary fallback={<p>Something went wrong.</p>}>{children}</ConduxErrorBoundary>
+```
+
+Attach who and what to every event, and the trail leading up to it:
+
+```ts
+import { addBreadcrumb, setContext, setTag, setUser } from "@condux/nextjs";
+
+setUser({ id: user.id, email: user.email }); // null on sign-out
+setTag("plan", org.plan);
+setContext("subscription", { seats: 12 });
+addBreadcrumb({ message: "opened checkout", category: "navigation" });
+```
+
+Verify the pipeline end to end before waiting for a real error:
+
+```bash
+CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx condux test-event
 ```
 
 Server errors reach `onRequestError` and are reported **unhandled**; `captureRequestError` is a safe no-op

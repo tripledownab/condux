@@ -8,8 +8,17 @@
 export interface SetSsoConfigRequest {
   emailDomain: string;
   issuer: string;
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  clientId: string;
-  clientSecret: string;
+  protocol: number;
+  /** @nullable */
+  authorizationEndpoint: string | null;
+  /** @nullable */
+  tokenEndpoint: string | null;
+  /** @nullable */
+  clientId: string | null;
+  /** @nullable */
+  clientSecret: string | null;
+  /** @nullable */
+  samlSsoUrl: string | null;
+  /** @nullable */
+  samlCertificate: string | null;
 }

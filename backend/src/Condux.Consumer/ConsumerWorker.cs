@@ -104,14 +104,7 @@ public sealed class ConsumerWorker(
                         // failure never interrupts the drain (the badge also polls as a safety net).
                         if (upsert.Occurrence == 1 || upsert.Reopened)
                         {
-                            try
-                            {
-                                await projectEvents.NotifyAsync(projectId, stoppingToken);
-                            }
-                            catch (Exception ex)
-                            {
-                                logger.LogWarning(ex, "project-event notify failed for project {ProjectId}", projectId);
-                            }
+                            await ProjectEventNudge.TrySendAsync(projectEvents, logger, projectId, stoppingToken);
                         }
                         // Count EVERY event in the hourly rollup (exact time series, #102); only the raw
                         // payload row below is subject to sampling.

@@ -10,3 +10,6 @@ export type { ConduxOptions, FetchLike, FetchResponse, SendResult } from "./type
 export { sendEvent } from "./transport.ts";
 export { normalizeFramePath } from "./stack.ts";
 export { captureException, captureMessage, init } from "./client.ts";
+export { addBreadcrumb, clearScope, setContext, setTag, setUser } from "./scope.ts";
+export type { Breadcrumb, ConduxUser } from "./scope.ts";
+export { parseDsn } from "./dsn.ts";

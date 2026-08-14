@@ -146,6 +146,7 @@ services:
       # provisioning API now authenticate at ingest end-to-end; there is no seeded
       # in-memory dev key in compose (that fallback only applies when CONDUX_POSTGRES
       # is unset, e.g. a bare `dotnet run`).
+      # checked-out commit; unset in dev, where the process reports its own placeholder. Worth having
       CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
     ports: ["127.0.0.1:9010:9000"]
     depends_on:
@@ -160,6 +161,11 @@ services:
     environment:
       ASPNETCORE_URLS: "http://0.0.0.0:8080"
       ASPNETCORE_ENVIRONMENT: Development
+      # Which build is answering, surfaced by /version and /api/readyz. The deploy derives both
+      # from the checkout it just reset to; unset in dev, where the process reports its own
+      # placeholder. The first question of any incident is which build this is.
+      CONDUX_VERSION: ${CONDUX_VERSION:-}
+      CONDUX_COMMIT: ${CONDUX_COMMIT:-}
       CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
       # RequestFix publishes FixJobs to the topic the conductor drains.
       CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
@@ -259,6 +265,13 @@ services:
         NEXT_PUBLIC_CONDUX_API_URL: "http://localhost:8080"
         # The dashboard reconstructs a key's DSN client-side; in dev the relay is the host port 9010.
         NEXT_PUBLIC_CONDUX_INGEST_URL: "http://localhost:9010"
+        # Client-side self-reporting (#75): same key as CONDUX_WEB_DSN but with the public relay host
+        # (the browser cannot resolve relay:9000; events tunnel through /monitoring anyway). Optional.
+        NEXT_PUBLIC_CONDUX_DSN: ${CONDUX_WEB_PUBLIC_DSN:-}
+        # The signup acceptance notice links the terms + privacy policy, which live on the landing site.
+        # The landing is not in compose (`pnpm dev:landing` runs it on 3002), so this is only live
+        # locally when that is running. Set anyway, so the notice itself is exercised in dev.
+        NEXT_PUBLIC_CONDUX_LEGAL_URL: "http://localhost:3002"
     init: true
     environment:
       # Condux on Condux: the dashboard server reports its own errors to the relay when a DSN is
@@ -326,6 +339,18 @@ services:
       # proposes the fix and the Conductor opens a draft PR — needs the Anthropic key + the GitHub App
       # credentials below). Set CONDUX_CONDUCTOR_PROVIDER in deploy/.env.
       CONDUX_CONDUCTOR_PROVIDER: ${CONDUX_CONDUCTOR_PROVIDER:-fake}
+      # The agentic loop (ADR-0033) on the anthropic provider: on, the model explores and edits the scoped
+      # checkout over several turns; off (the default), it makes the single ADR-0016 patch-proposal call.
+      CONDUX_CONDUCTOR_AGENTIC: ${CONDUX_CONDUCTOR_AGENTIC:-false}
+      # The sandbox the agent runs build/test/scan commands in (ADR-0033 slice 2). Off unless an image is
+      # set, in which case the workspace reports it cannot execute and the loop drops the command tool.
+      # The endpoint decides WHERE containers run, so a deployment can keep the container runtime on
+      # separate hardware; unset means the local Docker socket.
+      CONDUX_SANDBOX_IMAGE: ${CONDUX_SANDBOX_IMAGE:-}
+      CONDUX_SANDBOX_DOCKER_ENDPOINT: ${CONDUX_SANDBOX_DOCKER_ENDPOINT:-}
+      CONDUX_SANDBOX_MEMORY_MB: ${CONDUX_SANDBOX_MEMORY_MB:-}
+      CONDUX_SANDBOX_PIDS: ${CONDUX_SANDBOX_PIDS:-}
+      CONDUX_SANDBOX_TIMEOUT_SECONDS: ${CONDUX_SANDBOX_TIMEOUT_SECONDS:-}
       CONDUX_ANTHROPIC_API_KEY: ${CONDUX_ANTHROPIC_API_KEY}
       # BYO-key registry (#65): when set, a run for an org with a stored config uses that org's key.
       CONDUX_SECRET_KEY: ${CONDUX_SECRET_KEY:-}

@@ -8,18 +8,19 @@ using Microsoft.AspNetCore.Http.HttpResults;
 namespace Condux.ControlPlane.Endpoints;
 
 /// <summary>
-/// Enterprise SSO sign-in (per-org OIDC, #72). Email-first: the user enters their work email and we route
-/// to their org's IdP by the globally-unique <c>sso_configs.email_domain</c>, run the same OIDC
-/// authorization-code flow as Google sign-in (shared <see cref="OidcExchange"/> + <see cref="OidcFlow"/>),
-/// then provision them into the org under the single-org invariant (<see cref="MembershipProvisioning"/>).
-/// Opt-in behind <see cref="SecretsConfig"/> (the per-org client secret is sealed at rest); when unset the
-/// routes 404 and the login page hides the SSO option. Every refuse path is a redirect back to login with an
-/// error code (a browser flow can't return the JSON 409s the config API uses).
+/// Enterprise SSO sign-in (per-org, #72 + ADR-0032/0037). Email-first: the user enters their work email
+/// and we route to their org's IdP by the globally-unique <c>sso_configs.email_domain</c> — an OIDC config
+/// runs the same authorization-code flow as Google sign-in (shared <see cref="OidcExchange"/> +
+/// <see cref="OidcFlow"/>), a SAML config redirects via <see cref="SamlSsoEndpoints"/>. Both land in the
+/// shared provisioning tail (<see cref="SsoSignIn"/>). Opt-in behind <see cref="SecretsConfig"/>; when
+/// unset the routes 404 and the login page hides the SSO option. Every refuse path is a redirect back to
+/// login with an error code (a browser flow can't return the JSON 409s the config API uses).
 /// </summary>
 internal static class SsoEndpoints
 {
     private const string StateCookie = "condux_sso_state";
-    private const string OrgCookie = "condux_sso_org";
+    // Which org's IdP the in-flight login belongs to — shared with the SAML ACS.
+    internal const string OrgCookie = "condux_sso_org";
 
     public static void MapSsoEndpoints(this IEndpointRouteBuilder app)
     {
@@ -41,22 +42,16 @@ internal static class SsoEndpoints
                         return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_not_available"));
                     }
 
-                    var state = OidcFlow.RandomToken();
-                    http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions(http));
-                    http.Response.Cookies.Append(OrgCookie, config.OrgId.ToString(), OidcFlow.StateCookieOptions(http));
-
-                    var url = config.AuthorizationEndpoint
-                        + (config.AuthorizationEndpoint.Contains('?') ? "&" : "?")
-                        + "response_type=code"
-                        + "&client_id=" + Uri.EscapeDataString(config.ClientId)
-                        + "&redirect_uri=" + Uri.EscapeDataString(RedirectUri(cfg))
-                        + "&scope=" + Uri.EscapeDataString("openid email")
-                        + "&state=" + Uri.EscapeDataString(state);
-                    return TypedResults.Redirect(url);
+                    // A null means the stored row is not a usable config for its protocol (the columns are
+                    // nullable because the registry holds both shapes) — refuse cleanly rather than 500.
+                    var idpRedirect = config.Protocol == SsoProtocol.Saml
+                        ? SamlSsoEndpoints.Start(config, cfg, http)
+                        : StartOidc(config, cfg, http);
+                    return TypedResults.Redirect(idpRedirect ?? OidcFlow.LoginUrl(cfg, "sso_failed"));
                 })
             .WithName("ssoStart").WithTags("Auth");
 
-        // Callback: verify state, exchange the code against the org's IdP, domain-check, provision + sign in.
+        // OIDC callback: verify state, exchange the code against the org's IdP, then the shared tail.
         app.MapGet("/api/auth/sso/callback",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     SecretsConfig secrets, SsoOidcClient oidc, UserRepository users,
@@ -86,7 +81,8 @@ internal static class SsoEndpoints
                     // returned email must match this org's domain below — so a tampered orgId dead-ends.
                     var store = http.RequestServices.GetRequiredService<PostgresSsoConfigStore>();
                     var box = http.RequestServices.GetRequiredService<SecretBox>();
-                    if (await store.GetAsync(orgId, http.RequestAborted) is not { } config)
+                    if (await store.GetAsync(orgId, http.RequestAborted) is not { } config
+                        || config.Protocol != SsoProtocol.Oidc || config.ClientSecretEncrypted is null)
                     {
                         return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_failed"));
                     }
@@ -99,31 +95,33 @@ internal static class SsoEndpoints
                         return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_failed"));
                     }
 
-                    // The IdP-verified email must belong to the org's configured domain — otherwise a
-                    // misconfigured or hostile IdP could inject an unrelated account into the org.
-                    var email = Emails.Normalize(identity.Email);
-                    if (!string.Equals(Emails.Domain(email), config.EmailDomain, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_domain_mismatch"));
-                    }
-
-                    var user = await users.GetByEmailAsync(email, http.RequestAborted)
-                        ?? await users.CreateFederatedAsync(email, http.RequestAborted);
-                    var outcome = await MembershipProvisioning.JoinSingleOrgAsync(
-                        members, orgs, user.Id, config.OrgId, OrgRole.Member, http.RequestAborted);
-                    if (outcome == JoinOutcome.BlockedSharedOrg)
-                    {
-                        return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "already_in_org"));
-                    }
-
-                    await users.MarkOnboardedAsync(user.Id, http.RequestAborted);
-                    await Sessions.IssueAsync(user, sessions, http);
-                    return TypedResults.Redirect(OidcFlow.DashboardUrl(cfg));
+                    return TypedResults.Redirect(await SsoSignIn.CompleteAsync(
+                        config, identity.Email, users, members, orgs, sessions, cfg, http));
                 })
             .WithName("ssoCallback").WithTags("Auth");
     }
 
-    // Our own well-known callback URL, registered in each org's IdP. Absolute (the token exchange must send
-    // an identical redirect_uri), built from the app base URL like invite links.
+    private static string? StartOidc(StoredSsoConfig config, IConfiguration cfg, HttpContext http)
+    {
+        if (config.AuthorizationEndpoint is null || config.ClientId is null)
+        {
+            return null;
+        }
+
+        var state = OidcFlow.RandomToken();
+        http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions(http));
+        http.Response.Cookies.Append(OrgCookie, config.OrgId.ToString(), OidcFlow.StateCookieOptions(http));
+
+        return config.AuthorizationEndpoint
+            + (config.AuthorizationEndpoint.Contains('?') ? "&" : "?")
+            + "response_type=code"
+            + "&client_id=" + Uri.EscapeDataString(config.ClientId)
+            + "&redirect_uri=" + Uri.EscapeDataString(RedirectUri(cfg))
+            + "&scope=" + Uri.EscapeDataString("openid email")
+            + "&state=" + Uri.EscapeDataString(state);
+    }
+
+    // Our own well-known OIDC callback URL, registered in each org's IdP. Absolute (the token exchange must
+    // send an identical redirect_uri), built from the app base URL like invite links.
     private static string RedirectUri(IConfiguration cfg) => $"{AppUrls.BaseUrl(cfg)}/api/auth/sso/callback";
 }

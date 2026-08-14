@@ -9,7 +9,9 @@ using Condux.Core.SourceControl;
 namespace Condux.GitHub;
 
 /// <summary>An open Dependabot alert (CVE) on a repo (#117): the advisory ids + severity, the vulnerable
-/// package and range, and the first patched version to bump to (null when none is published yet).</summary>
+/// package and range, the first patched version to bump to (null when none is published yet), and the
+/// repo-relative manifest the dependency is declared in (null when GitHub omits it) — what lets a bump
+/// target a monorepo workspace member instead of assuming the repo root (#41).</summary>
 public sealed record DependabotAlert(
     string GhsaId,
     string? CveId,
@@ -19,7 +21,8 @@ public sealed record DependabotAlert(
     string Ecosystem,
     string VulnerableRange,
     string? FixedVersion,
-    string HtmlUrl);
+    string HtmlUrl,
+    string? ManifestPath = null);
 
 /// <summary>
 /// The GitHub implementation of <see cref="ISourceHostClient"/> (#145): the repo operations a fix run
@@ -141,7 +144,8 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
                 alert.SecurityVulnerability.Package.Ecosystem,
                 alert.SecurityVulnerability.VulnerableVersionRange,
                 alert.SecurityVulnerability.FirstPatchedVersion?.Identifier,
-                alert.HtmlUrl)),
+                alert.HtmlUrl,
+                alert.Dependency?.ManifestPath)),
         ];
     }
 
@@ -255,7 +259,12 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
     private sealed record AlertResponse(
         [property: JsonPropertyName("security_advisory")] AdvisoryJson SecurityAdvisory,
         [property: JsonPropertyName("security_vulnerability")] VulnerabilityJson SecurityVulnerability,
-        [property: JsonPropertyName("html_url")] string HtmlUrl);
+        [property: JsonPropertyName("html_url")] string HtmlUrl,
+        // The schema marks dependency.manifest_path optional, so both levels stay nullable.
+        [property: JsonPropertyName("dependency")] DependencyJson? Dependency = null);
+
+    private sealed record DependencyJson(
+        [property: JsonPropertyName("manifest_path")] string? ManifestPath);
 
     private sealed record AdvisoryJson(
         [property: JsonPropertyName("ghsa_id")] string GhsaId,

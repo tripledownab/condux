@@ -21,7 +21,7 @@ namespace Condux.Conductor;
 public sealed class VerificationWorker(
     IConfiguration config, ILogger<VerificationWorker> logger, IServiceScopeFactory scopes,
     PostgresFixVerification verification, IssueRepository issues, IFixStore fixes,
-    ConduxSelfReporter selfReport)
+    ProjectEventNotifier projectEvents, ConduxSelfReporter selfReport)
     : BackgroundService
 {
     private const int ResolvedStatus = 2;
@@ -116,6 +116,9 @@ public sealed class VerificationWorker(
         await fixes.AppendAuditAsync(fix.FixId, "conductor", "fix_verified", detail, ct);
         logger.LogInformation("fix held id={FixId} issue={IssueId} resolved={Resolved}",
             fix.FixId, fix.IssueId, resolved);
+        // The verdict resolved an issue and concluded a fix with nobody watching; nudge the project's
+        // open dashboards so both surfaces refetch (ADR-0030).
+        await ProjectEventNudge.TrySendAsync(projectEvents, logger, fix.ProjectId, ct);
     }
 
     private async Task ConcludeDidNotHoldAsync(
@@ -130,5 +133,6 @@ public sealed class VerificationWorker(
         await fixes.AppendAuditAsync(fix.FixId, "conductor", "fix_did_not_hold", detail, ct);
         logger.LogInformation("fix did not hold id={FixId} issue={IssueId} occurrences={Occurrences}",
             fix.FixId, fix.IssueId, occurrences);
+        await ProjectEventNudge.TrySendAsync(projectEvents, logger, fix.ProjectId, ct);
     }
 }

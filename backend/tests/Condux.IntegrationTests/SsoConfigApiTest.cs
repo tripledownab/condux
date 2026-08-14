@@ -141,6 +141,55 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     }
 
     [Fact]
+    public async Task A_saml_config_round_trips_and_clears_the_oidc_half()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var client = CreateApp().CreateClient();
+        await ApiAuth.SignUpAsync(client);
+        var orgId = await CreateOrgAsync(client, tier: 2);
+
+        // Start on OIDC, then switch the org to SAML — the stale client credentials must not linger.
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", ConfigBody("saml.test"))).StatusCode);
+        var put = await client.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
+        {
+            emailDomain = "saml.test",
+            issuer = "https://idp.example/saml",
+            protocol = 1,
+            samlSsoUrl = "https://idp.example/sso",
+            samlCertificate = SsoFlow.MakeCertificate().ExportCertificatePem(),
+        });
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var got = await client.GetFromJsonAsync<JsonElement>($"/api/orgs/{orgId}/sso-config");
+        Assert.Equal(1, got.GetProperty("protocol").GetInt32());
+        Assert.Equal("https://idp.example/sso", got.GetProperty("samlSsoUrl").GetString());
+        Assert.Contains("BEGIN CERTIFICATE", got.GetProperty("samlCertificate").GetString());
+        Assert.Equal(JsonValueKind.Null, got.GetProperty("clientId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, got.GetProperty("tokenEndpoint").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_saml_config_with_an_unparseable_certificate_is_rejected()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var client = CreateApp().CreateClient();
+        await ApiAuth.SignUpAsync(client);
+        var orgId = await CreateOrgAsync(client, tier: 2);
+
+        var put = await client.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
+        {
+            emailDomain = "acme.test",
+            issuer = "https://idp.example/saml",
+            protocol = 1,
+            samlSsoUrl = "https://idp.example/sso",
+            samlCertificate = "not a certificate",
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+    }
+
+
+    [Fact]
     public async Task The_routes_404_when_the_secret_store_is_not_configured()
     {
         await Migrations.ApplyAllAsync(pg.ConnectionString);

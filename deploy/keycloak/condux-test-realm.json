@@ -18,6 +18,32 @@
       "serviceAccountsEnabled": false,
       "redirectUris": ["http://localhost:8080/api/auth/sso/callback"],
       "webOrigins": ["+"]
+    },
+    {
+      "clientId": "http://localhost:8080/api/auth/sso/saml",
+      "name": "Condux (test SP, SAML)",
+      "enabled": true,
+      "protocol": "saml",
+      "redirectUris": ["http://localhost:8080/api/auth/sso/saml/acs"],
+      "attributes": {
+        "saml.assertion.signature": "true",
+        "saml.client.signature": "false",
+        "saml.force.post.binding": "true",
+        "saml_assertion_consumer_url_post": "http://localhost:8080/api/auth/sso/saml/acs",
+        "saml_name_id_format": "email"
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "config": {
+            "user.attribute": "email",
+            "attribute.name": "email",
+            "attribute.nameformat": "Basic"
+          }
+        }
+      ]
     }
   ],
   "users": [

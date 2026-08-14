@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Condux.Core.CveFix;
+using Condux.Storage.Postgres;
 using Condux.Telemetry;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
@@ -18,7 +19,7 @@ namespace Condux.Conductor;
 /// </summary>
 public sealed class CveFixWorker(
     IConfiguration config, ILogger<CveFixWorker> logger, CveFixOrchestrator orchestrator,
-    ConduxSelfReporter selfReport)
+    RepoLinkRepository repoLinks, ProjectEventNotifier projectEvents, ConduxSelfReporter selfReport)
     : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
@@ -52,6 +53,7 @@ public sealed class CveFixWorker(
                     logger.LogInformation(
                         "cve fix run repo={RepoLinkId} ghsa={Ghsa} id={RunId} status={Status} pr={PrUrl}",
                         job.RepoLinkId, job.GhsaId, run.Id, run.Status, run.PrUrl);
+                    await NotifyProjectAsync(job.RepoLinkId, stoppingToken);
                 }
             }
             catch (OperationCanceledException)
@@ -74,6 +76,24 @@ public sealed class CveFixWorker(
         }
 
         consumer.Close();
+    }
+
+    // A concluded bump happened outside any browser, so the dashboard learns of it only through this
+    // nudge (ADR-0030). The job carries the repo link, not its project, so resolve it first — all
+    // best-effort, because the run itself is already recorded.
+    private async Task NotifyProjectAsync(Guid repoLinkId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await repoLinks.GetProjectIdAsync(repoLinkId, cancellationToken) is { } projectId)
+            {
+                await ProjectEventNudge.TrySendAsync(projectEvents, logger, projectId, cancellationToken);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "project lookup for nudge failed repo={RepoLinkId}", repoLinkId);
+        }
     }
 
     // Create the topic up front (with retry until the broker is reachable) so the consumer never

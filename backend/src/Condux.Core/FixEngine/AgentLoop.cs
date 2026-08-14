@@ -1,3 +1,5 @@
+using Condux.Core.Scrub;
+
 namespace Condux.Core.FixEngine;
 
 /// <summary>What the model did on one turn: either it asked for tools, or it answered. Token usage rides
@@ -22,8 +24,12 @@ public interface IAgentConversation
     Task<AgentTurn> NextAsync(IReadOnlyList<AgentToolResult> results, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Bounds on a run. These are load bearing, not advisory: an agent that loops burns the
-/// customer's tokens, so every run is capped in both steps and tokens.</summary>
+/// <summary>
+/// Bounds on a run. These are load bearing, not advisory: an agent that loops burns the customer's tokens,
+/// so every run is capped in both steps and tokens. The third budget the design calls for, wall clock, is
+/// the caller's cancellation token rather than a field here: the loop already honours one, and a per
+/// command timeout belongs to the workspace that owns the process.
+/// </summary>
 public sealed record AgentLoopOptions(int MaxSteps = 16, long MaxTotalTokens = 400_000)
 {
     public static AgentLoopOptions Default { get; } = new();
@@ -115,6 +121,9 @@ public sealed class AgentLoop(
                     await workspace.WriteFileAsync(target, RequireArgument(call, "contents"), cancellationToken);
                     return new AgentToolResult(call.Id, $"Wrote {target}.");
 
+                case AgentToolNames.RunCommand:
+                    return await RunCommandAsync(call, cancellationToken);
+
                 default:
                     return new AgentToolResult(call.Id, $"Unknown tool: {call.Name}", IsError: true);
             }
@@ -125,6 +134,35 @@ public sealed class AgentLoop(
             // agent retry. Infrastructure faults are not caught here and end the run.
             return new AgentToolResult(call.Id, error.Message, IsError: true);
         }
+    }
+
+    /// <summary>
+    /// Authorize, run, and report one command. A workspace that cannot execute and a command outside the
+    /// allow list are both reported to the model rather than thrown: the agent asked for something it may
+    /// not have, which is a step it can recover from, not a fault.
+    /// </summary>
+    private async Task<AgentToolResult> RunCommandAsync(AgentToolCall call, CancellationToken cancellationToken)
+    {
+        if (!workspace.CanRunCommands)
+        {
+            return new AgentToolResult(call.Id, "This workspace cannot run commands.", IsError: true);
+        }
+
+        if (!CommandPolicy.TryAuthorize(RequireArgument(call, "command"), out var argv, out var refusal))
+        {
+            return new AgentToolResult(call.Id, refusal, IsError: true);
+        }
+
+        var run = await workspace.RunCommandAsync(argv, cancellationToken);
+
+        // Scrub before bounding, not after: bounding drops the middle, and a secret straddling a cut would
+        // survive as a fragment that no longer matches a token pattern. A build that echoes an environment
+        // variable must not put it into the next model request.
+        var output = CommandPolicy.BoundOutput(Scrubber.ScrubString(run.Output));
+
+        // A non-zero exit is reported as an error result so the model sees the failure it must react to,
+        // while the output rides along either way — a failing test run is the useful case.
+        return new AgentToolResult(call.Id, $"exit {run.ExitCode}\n{output}", IsError: !run.Succeeded);
     }
 
     private static string RequireArgument(AgentToolCall call, string name) =>
@@ -138,7 +176,11 @@ public sealed class AgentLoop(
     {
         if (workspace.ChangedFiles.Count == 0)
         {
-            throw new InvalidOperationException("Agent finished without changing any file.");
+            // The agent is asked to change nothing when it finds the code already correct, so its
+            // reasoning is the useful half of this failure rather than a footnote to it.
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(summary)
+                ? "Agent finished without changing any file."
+                : $"The agent proposed no change: {summary.Trim()}");
         }
 
         return new AgentLoopResult(

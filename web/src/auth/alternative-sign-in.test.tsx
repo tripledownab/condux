@@ -52,4 +52,24 @@ describe("AlternativeSignIn", () => {
 
     expect((screen.getByRole("button", { name: /sso/i }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("says why the SSO button is disabled, and stops saying it once an email is typed", () => {
+    providers.mockReturnValue({ google: false, sso: true });
+
+    // The disabled button read as broken because the only explanation was a title tooltip, which a
+    // disabled element never fires. Assert the reason is real text, and that it describes the button.
+    // Unmount rather than rerender between the two states: rerender swaps the whole tree for what it is
+    // given, which would drop the intl provider renderWithIntl wraps around it.
+    const { unmount } = renderWithIntl(<AlternativeSignIn email="" />);
+
+    const hint = screen.getByText(/enter your work email/i);
+    expect(screen.getByRole("button", { name: /sso/i }).getAttribute("aria-describedby")).toBe(
+      hint.id,
+    );
+
+    unmount();
+    renderWithIntl(<AlternativeSignIn email="dev@acme.test" />);
+
+    expect(screen.queryByText(/enter your work email/i)).toBeNull();
+  });
 });

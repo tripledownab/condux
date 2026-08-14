@@ -60,7 +60,7 @@ describe("OrgGeneral AI-fix settings", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /Automatic/ }));
     expect(mutate).toHaveBeenCalledWith(
-      { orgId: 3, data: { aiFixMode: 1, aiFixCostCapUsd: null } },
+      { orgId: 3, data: { aiFixMode: 1, aiFixCostCapUsd: null, fixExecution: 0 } },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -83,7 +83,7 @@ describe("OrgGeneral AI-fix settings", () => {
     fireEvent.change(screen.getByLabelText(/Budget \(USD\)/), { target: { value: "50" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(mutate).toHaveBeenCalledWith(
-      { orgId: 3, data: { aiFixMode: 1, aiFixCostCapUsd: 50 } },
+      { orgId: 3, data: { aiFixMode: 1, aiFixCostCapUsd: 50, fixExecution: 0 } },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
@@ -123,6 +123,44 @@ describe("OrgGeneral AI-fix settings", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Cap \(USD\)/)).not.toBeInTheDocument();
     expect(screen.getByText("Automatic")).toBeInTheDocument();
+  });
+
+  it("lets an admin move fix execution to their own runner, preserving mode and cap", () => {
+    const mutate = vi.fn();
+    useUpdateOrgMock.mockReturnValue({ ...idleUpdate, mutate });
+    renderWithIntl(<OrgGeneral />); // Business by default, which includes self-hosting
+
+    fireEvent.click(screen.getByRole("radio", { name: /Your own runner/ }));
+    expect(mutate).toHaveBeenCalledWith(
+      { orgId: 3, data: { aiFixMode: 0, aiFixCostCapUsd: null, fixExecution: 1 } },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("disables the runner option below the tier that includes it", () => {
+    // The gate comes from @condux/plans (generated from the catalog), not a hand-kept mirror, so this
+    // follows the plan facts. Disabled rather than hidden: a Free org should learn the option exists.
+    // The disabled attribute is the whole mechanism (a real browser will not deliver the click), so it
+    // is what gets asserted; firing a synthetic click would only measure jsdom, which ignores disabled.
+    asOrg("admin", 0, null, 0); // Free
+    renderWithIntl(<OrgGeneral />);
+
+    expect(screen.getByRole("radio", { name: /Your own runner/ })).toBeDisabled();
+    expect(screen.getByText(/available from the Team plan/)).toBeInTheDocument();
+  });
+
+  it("explains the runner gate distinctly when that switch 409s", () => {
+    // Two different 409s with two different remedies; showing the auto-fix message for a runner
+    // refusal would send the user to the wrong setting.
+    useUpdateOrgMock.mockReturnValue({
+      ...idleUpdate,
+      isError: true,
+      error: new ConduxApiError("PATCH", "/orgs/3", 409, "self_hosted_runner_requires_upgrade"),
+    });
+    renderWithIntl(<OrgGeneral />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/runner/i);
+    expect(alert).not.toHaveTextContent(/automatic/i);
   });
 
   it("explains the plan gate when the update 409s", () => {

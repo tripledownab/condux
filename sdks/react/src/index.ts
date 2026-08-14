@@ -1,3 +1,4 @@
+"use client";
 /**
  * Condux SDK for React — report errors to a Condux relay.
  *

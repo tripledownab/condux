@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Condux.Agent;
 using Condux.Core.FixEngine;
 using Condux.GitHub;
 using Xunit;
@@ -23,52 +24,38 @@ public class AnthropicAgentGatewayTests
             InstallationId = 7,
         };
 
-    private sealed class RoutingHandler : HttpMessageHandler
+
+    /// <summary>A provider that cannot drive a tool loop, to prove such an org still gets fixes.</summary>
+    private sealed class ToollessClient(IModelClient inner) : IModelClient
     {
-        public List<(string Key, string Body)> Requests { get; } = [];
-        public Dictionary<string, (HttpStatusCode Status, string Body)> Routes { get; } = [];
+        public string Provider => inner.Provider;
 
-        /// <summary>Replies for a route that is called repeatedly, in order. An agentic run posts to the
-        /// same messages endpoint every turn, so a single canned response cannot drive it.</summary>
-        public Dictionary<string, Queue<string>> Sequences { get; } = [];
+        public bool SupportsTools => false;
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        {
-            var key = $"{request.Method} {request.RequestUri!.PathAndQuery}";
-            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
-            Requests.Add((key, body));
-
-            if (Sequences.TryGetValue(key, out var queued) && queued.Count > 0)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(queued.Dequeue()) };
-            }
-
-            var (status, responseBody) = Routes.TryGetValue(key, out var route)
-                ? route
-                : (HttpStatusCode.NotFound, """{"message":"Not Found"}""");
-            return new HttpResponseMessage(status) { Content = new StringContent(responseBody) };
-        }
+        public Task<ModelOutput> CreateAsync(
+            string model, string system, string user, string apiKey, string baseUrl,
+            CancellationToken ct = default) =>
+            inner.CreateAsync(model, system, user, apiKey, baseUrl, ct);
     }
 
-    private static (AnthropicAgentGateway Gateway, RoutingHandler GitHub, RoutingHandler Anthropic) Create(
-        bool agentic = false)
+    private static (AnthropicAgentGateway Gateway, StubHttpHandler GitHub, StubHttpHandler Anthropic) Create(
+        bool agentic = false, bool supportsTools = true)
     {
-        var github = new RoutingHandler();
-        var anthropic = new RoutingHandler();
+        var github = new StubHttpHandler();
+        var anthropic = new StubHttpHandler();
         var options = new GitHubAppOptions("Iv1.test", RSA.Create(2048).ExportRSAPrivateKeyPem(), "")
         {
             ApiBaseUrl = "https://gh.test",
         };
+        IModelClient anthropicClient = new AnthropicMessagesClient(
+            new HttpClient(anthropic),
+            new AnthropicOptions("sk-ant-test") { BaseUrl = "https://anthropic.test" });
         var gateway = new AnthropicAgentGateway(
-            [
-                new AnthropicMessagesClient(
-                    new HttpClient(anthropic),
-                    new AnthropicOptions("sk-ant-test") { BaseUrl = "https://anthropic.test" }),
-            ],
+            [supportsTools ? anthropicClient : new ToollessClient(anthropicClient)],
             new GitHubInstallationTokens(new HttpClient(github), options, () => DateTimeOffset.UtcNow),
             new GitHubRepoClient(new HttpClient(github), "https://gh.test"),
             // No secret store configured, so every run uses the platform default key.
-            new ConductorKeyResolver("sk-ant-test", configs: null, box: null),
+            new ModelKeyResolver("sk-ant-test", configs: null, box: null),
             new HttpClient(anthropic),
             agentic)
         {
@@ -113,11 +100,11 @@ public class AnthropicAgentGatewayTests
         github.Routes[$"POST /repos/{Repo}/pulls"] =
             (HttpStatusCode.Created, """{"html_url":"https://gh.test/acme/api/pull/11"}""");
 
-        anthropic.Sequences["POST /v1/messages"] = new Queue<string>(
+        anthropic.Sequences["POST /v1/messages"] = new Queue<(HttpStatusCode, string)>(
         [
-            ToolUse("t1", AgentToolNames.ReadFile, new { path = "src/cart.js" }, 500, 40),
-            ToolUse("t2", AgentToolNames.WriteFile, new { path = "src/cart.js", contents = "fixed()\n" }, 600, 60),
-            ToolUse("t3", AgentToolNames.Finish, new { summary = "Guard the empty cart." }, 300, 20),
+            (HttpStatusCode.OK, ToolUse("t1", AgentToolNames.ReadFile, new { path = "src/cart.js" }, 500, 40)),
+            (HttpStatusCode.OK, ToolUse("t2", AgentToolNames.WriteFile, new { path = "src/cart.js", contents = "fixed()\n" }, 600, 60)),
+            (HttpStatusCode.OK, ToolUse("t3", AgentToolNames.Finish, new { summary = "Guard the empty cart." }, 300, 20)),
         ]);
 
         var run = await gateway.StartAsync(Spec);
@@ -142,6 +129,32 @@ public class AnthropicAgentGatewayTests
         Assert.Equal(
             "fixed()\n",
             Encoding.UTF8.GetString(Convert.FromBase64String(put.RootElement.GetProperty("content").GetString()!)));
+    }
+
+    // Either the frames never resolved (nothing scoped) or the mapping points somewhere wrong (scoped but
+    // missing). Both reach the model with nothing to show it, so both must stop.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task A_run_that_could_read_no_file_fails_without_calling_the_model_or_opening_a_pr(
+        bool agentic, bool scoped)
+    {
+        var (gateway, github, anthropic) = Create(agentic);
+        github.Routes["POST /app/installations/7/access_tokens"] =
+            (HttpStatusCode.Created,
+             $$"""{"token":"ghs_x","expires_at":"{{DateTimeOffset.UtcNow.AddHours(1):O}}"}""");
+        // The contents route is left unstubbed, so a scoped path 404s.
+
+        var run = await gateway.StartAsync(scoped ? Spec : Spec with { ScopedPaths = [] });
+        var done = await PollToCompletionAsync(gateway, run.RunId);
+
+        Assert.Equal(AgentRunStatus.Failed, done.Status);
+        // The three things that used to happen anyway, and are the real cost of guessing.
+        Assert.DoesNotContain(anthropic.Requests, r => r.Key == "POST /v1/messages");
+        Assert.DoesNotContain(github.Requests, r => r.Key == $"POST /repos/{Repo}/git/refs");
+        Assert.DoesNotContain(github.Requests, r => r.Key == $"POST /repos/{Repo}/pulls");
+        Assert.Contains("code mapping", done.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ToolUse(string id, string name, object input, long inputTokens, long outputTokens) =>
@@ -210,6 +223,12 @@ public class AnthropicAgentGatewayTests
         github.Routes["POST /app/installations/7/access_tokens"] =
             (HttpStatusCode.Created,
              $$"""{"token":"ghs_x","expires_at":"{{DateTimeOffset.UtcNow.AddHours(1):O}}"}""");
+        // The scoped file has to actually resolve, or the run now fails before the model is reached and
+        // this asserts the wrong failure. It previously passed without this stub, which is precisely how
+        // the guess-with-no-context path stayed invisible.
+        github.Routes[$"GET /repos/{Repo}/contents/src/cart.js?ref=main"] =
+            (HttpStatusCode.OK,
+             $$"""{"content":"{{Convert.ToBase64String(Encoding.UTF8.GetBytes("broken()\n"))}}","sha":"blob-sha"}""");
         anthropic.Routes["POST /v1/messages"] = (HttpStatusCode.OK, JsonSerializer.Serialize(new
         {
             content = new[] { new { type = "text", text = "I cannot fix this." } },
@@ -229,5 +248,45 @@ public class AnthropicAgentGatewayTests
         var (gateway, _, _) = Create();
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => gateway.StartAsync(Spec with { InstallationId = 0 }));
+    }
+
+    [Fact]
+    public async Task A_model_that_cannot_drive_tools_still_gets_a_fix_through_the_single_shot_path()
+    {
+        // The reason the single-shot path is kept rather than replaced: tool-calling quality varies
+        // sharply, and an org on a weaker or self-hosted model must not lose the Conductor entirely.
+        var (gateway, github, anthropic) = Create(agentic: true, supportsTools: false);
+        var cartJs = Convert.ToBase64String(Encoding.UTF8.GetBytes("broken()\n"));
+        github.Routes["POST /app/installations/7/access_tokens"] =
+            (HttpStatusCode.Created,
+             $$"""{"token":"ghs_x","expires_at":"{{DateTimeOffset.UtcNow.AddHours(1):O}}"}""");
+        github.Routes[$"GET /repos/{Repo}/contents/src/cart.js?ref=main"] =
+            (HttpStatusCode.OK, $$"""{"content":"{{cartJs}}","sha":"blob-sha"}""");
+        github.Routes[$"GET /repos/{Repo}/git/ref/heads/main"] =
+            (HttpStatusCode.OK, """{"object":{"sha":"base-sha"}}""");
+        github.Routes[$"POST /repos/{Repo}/git/refs"] = (HttpStatusCode.Created, "{}");
+        github.Routes[$"PUT /repos/{Repo}/contents/src/cart.js"] = (HttpStatusCode.OK, "{}");
+        github.Routes[$"POST /repos/{Repo}/pulls"] =
+            (HttpStatusCode.Created, """{"html_url":"https://gh.test/acme/api/pull/12"}""");
+        anthropic.Routes["POST /v1/messages"] = (HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            content = new[]
+            {
+                new
+                {
+                    type = "text",
+                    text = """{"summary":"Guard the cart.","files":[{"path":"src/cart.js","contents":"fixed()"}]}""",
+                },
+            },
+            usage = new { input_tokens = 400, output_tokens = 30 },
+        }));
+
+        var run = await gateway.StartAsync(Spec);
+        var done = await PollToCompletionAsync(gateway, run.RunId);
+
+        Assert.Equal(AgentRunStatus.Succeeded, done.Status);
+        Assert.Equal("https://gh.test/acme/api/pull/12", done.PrUrl);
+        // One call, not a loop: the agentic path was never entered despite agentic being on.
+        Assert.Single(anthropic.Requests, r => r.Key == "POST /v1/messages");
     }
 }

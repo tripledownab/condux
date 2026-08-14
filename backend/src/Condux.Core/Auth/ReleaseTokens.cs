@@ -1,35 +1,21 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace Condux.Core.Auth;
 
 /// <summary>
-/// Scoped release tokens: a per-project machine credential so CI can record a release through the API
-/// without a cookie login or knowledge of internal ids. The raw token is a prefixed 256-bit random value
-/// handed to the operator once; only its SHA-256 hash is persisted, so a leak of the table can't be
-/// replayed. The <see cref="Prefix"/> makes the token identifiable and secret-scannable. Mirrors
-/// <see cref="SessionTokens"/>.
+/// The per-project credential CI presents to record a release or upload a source map, with no cookie login.
+///
+/// Minting, hashing and shape-checking are <see cref="ScopedToken"/>'s; this type only names the prefix.
 /// </summary>
 public static class ReleaseTokens
 {
-    /// <summary>The stable prefix every release token carries (for identification + secret scanning).</summary>
+    /// <summary>The stable prefix every token of this kind carries, for identification and secret scanning.</summary>
     public const string Prefix = "condux_rel_";
-    private const int TokenBytes = 32;
 
     /// <summary>Creates a fresh token: <c>Raw</c> is shown to the operator once, <c>Hash</c> is stored.</summary>
-    public static (string Raw, string Hash) Create()
-    {
-        var raw = Prefix + Base64Url(RandomNumberGenerator.GetBytes(TokenBytes));
-        return (raw, HashToken(raw));
-    }
+    public static (string Raw, string Hash) Create() => ScopedToken.Create(Prefix);
 
-    /// <summary>Hashes a presented raw token (from an Authorization header) for lookup against the store.</summary>
-    public static string HashToken(string raw)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(raw);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
-    }
+    /// <summary>Hashes a presented raw token for lookup against the store.</summary>
+    public static string HashToken(string raw) => ScopedToken.Hash(raw);
 
-    private static string Base64Url(byte[] bytes) =>
-        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    /// <summary>Whether a presented value is shaped like a token of this kind.</summary>
+    public static bool LooksLikeToken(string? raw) => ScopedToken.LooksLike(raw, Prefix);
 }

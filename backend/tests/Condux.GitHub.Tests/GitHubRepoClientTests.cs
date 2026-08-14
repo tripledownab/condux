@@ -169,12 +169,25 @@ public class GitHubRepoClientTests
                     "vulnerable_version_range": "< 4.17.12",
                     "first_patched_version": { "identifier": "4.17.12" }
                   },
+                  "dependency": { "manifest_path": "web/package.json", "scope": "runtime" },
                   "html_url": "https://gh.test/acme/api/security/dependabot/1"
+                },{
+                  "security_advisory": {
+                    "ghsa_id": "GHSA-aaaa-bbbb-cccc", "cve_id": null,
+                    "severity": "low", "summary": "No dependency block"
+                  },
+                  "security_vulnerability": {
+                    "package": { "ecosystem": "npm", "name": "left-pad" },
+                    "vulnerable_version_range": "< 1.3.0",
+                    "first_patched_version": null
+                  },
+                  "html_url": "https://gh.test/acme/api/security/dependabot/2"
                 }]
                 """),
         });
 
-        var alert = Assert.Single(await client.ListDependabotAlertsAsync(Token, Repo));
+        var alerts = await client.ListDependabotAlertsAsync(Token, Repo);
+        var alert = alerts[0];
         Assert.Equal("GHSA-jf85-cpcp-j695", alert.GhsaId);
         Assert.Equal("CVE-2019-10744", alert.CveId);
         Assert.Equal("high", alert.Severity);
@@ -182,6 +195,10 @@ public class GitHubRepoClientTests
         Assert.Equal("npm", alert.Ecosystem);
         Assert.Equal("< 4.17.12", alert.VulnerableRange);
         Assert.Equal("4.17.12", alert.FixedVersion);
+        // The manifest the dependency is declared in (#41 — points a bump at a monorepo member); an
+        // alert without the optional dependency block reads as unknown, never as an error.
+        Assert.Equal("web/package.json", alert.ManifestPath);
+        Assert.Null(alerts[1].ManifestPath);
         Assert.Equal("Bearer", handler.Requests[0].Request.Headers.Authorization?.Scheme);
     }
 

@@ -1,21 +1,11 @@
+using Condux.Core.Llm;
 using Npgsql;
 
 namespace Condux.Storage.Postgres;
 
-/// <summary>An org's stored LLM provider config (#65). <c>KeyEncrypted</c> is the sealed API key
-/// (never the plaintext); only the Conductor decrypts it at fix time.</summary>
-public sealed record StoredLlmConfig(
-    long OrgId, string Provider, string Model, string BaseUrl, byte[] KeyEncrypted, DateTimeOffset UpdatedAt);
-
-/// <summary>Read side of the LLM config, so the Conductor can resolve an org's BYO key without
-/// depending on the full store (and unit-test the resolution with a fake).</summary>
-public interface ILlmConfigReader
-{
-    Task<StoredLlmConfig?> GetAsync(long orgId, CancellationToken cancellationToken = default);
-}
-
 /// <summary>Postgres-backed store for the BYO-key registry: one LLM config per org, the API key held
-/// encrypted at rest (<c>llm_configs.key_encrypted</c>).</summary>
+/// encrypted at rest (<c>llm_configs.key_encrypted</c>). The contract lives in Core, so resolving a
+/// provider does not require this project.</summary>
 public sealed class PostgresLlmConfigStore(string connectionString) : ILlmConfigReader
 {
     private const string GetSql = """

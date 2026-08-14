@@ -21,12 +21,14 @@ internal static class OidcFlow
     public static bool FixedTimeEquals(string a, string b) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 
-    // SameSite=Lax still rides the top-level GET redirect back from the identity provider.
-    public static CookieOptions StateCookieOptions(HttpContext http) => new()
+    // SameSite=Lax still rides the top-level GET redirect back from the identity provider. A flow whose
+    // return leg is a cross-site POST (the SAML ACS) needs crossSite: Lax cookies do not accompany those,
+    // and SameSite=None requires Secure even in dev (browsers accept Secure on http://localhost).
+    public static CookieOptions StateCookieOptions(HttpContext http, bool crossSite = false) => new()
     {
         HttpOnly = true,
-        Secure = http.Request.IsHttps,
-        SameSite = SameSiteMode.Lax,
+        Secure = crossSite || http.Request.IsHttps,
+        SameSite = crossSite ? SameSiteMode.None : SameSiteMode.Lax,
         Expires = DateTimeOffset.UtcNow.Add(StateLifetime),
         Path = "/",
     };

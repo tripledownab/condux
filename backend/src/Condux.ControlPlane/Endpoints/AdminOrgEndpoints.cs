@@ -87,7 +87,11 @@ internal static class AdminOrgEndpoints
                         });
                     }
 
-                    return await orgs.UpdateSettingsAsync(orgId, req.AiFixMode, req.AiFixCostCapUsd, ct) is { } org
+                    // Where the org's fixes execute is carried through unchanged. This endpoint edits the
+                    // AI-fix settings, and passing anything else here would silently move a self-hosting
+                    // org's work back onto our compute as a side effect of an unrelated admin edit.
+                    return await orgs.UpdateSettingsAsync(
+                            orgId, req.AiFixMode, req.AiFixCostCapUsd, current.FixExecution, ct) is { } org
                         ? TypedResults.Ok(org)
                         : TypedResults.NotFound();
                 })

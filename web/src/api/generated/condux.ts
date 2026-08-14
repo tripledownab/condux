@@ -62,9 +62,10 @@ import type {
   CreateOrgRequest,
   CreateProjectRequest,
   CreateReleaseTokenRequest,
+  CreateRunnerTokenRequest,
   Credentials,
+  CveFinding,
   CveFixRun,
-  DependabotAlert,
   DerivedMapping,
   DsnKey,
   ErrorResponse,
@@ -104,6 +105,7 @@ import type {
   McpTokenResponse,
   MintedMcpTokenResponse,
   MintedReleaseTokenResponse,
+  MintedRunnerTokenResponse,
   NewIssueCountResponse,
   NoteResponse,
   NotificationChannelResponse,
@@ -119,6 +121,7 @@ import type {
   ReleaseTokenResponse,
   RepoLink,
   RequestFixRequest,
+  RunnerTokenResponse,
   SavedView,
   SavedViewRequest,
   SetLlmConfigRequest,
@@ -3996,7 +3999,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     }
     
 export type cveFindingsResponse200 = {
-  data: DependabotAlert[]
+  data: CveFinding[]
   status: 200
 }
 
@@ -5057,6 +5060,278 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getRevokeMcpTokenMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type createRunnerTokenResponse200 = {
+  data: MintedRunnerTokenResponse
+  status: 200
+}
+    
+export type createRunnerTokenResponseSuccess = (createRunnerTokenResponse200) & {
+  headers: Headers;
+};
+;
+
+export type createRunnerTokenResponse = (createRunnerTokenResponseSuccess)
+
+export const getCreateRunnerTokenUrl = (orgId: number,) => {
+
+
+  
+
+  return `/api/orgs/${orgId}/runner-tokens`
+}
+
+export const createRunnerToken = async (orgId: number,
+    createRunnerTokenRequest: CreateRunnerTokenRequest, options?: RequestInit): Promise<createRunnerTokenResponse> => {
+  
+  return conduxFetch<createRunnerTokenResponse>(getCreateRunnerTokenUrl(orgId),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createRunnerTokenRequest,)
+  }
+);}
+
+
+
+
+export const getCreateRunnerTokenMutationOptions = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRunnerToken>>, TError,{orgId: number;data: CreateRunnerTokenRequest}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createRunnerToken>>, TError,{orgId: number;data: CreateRunnerTokenRequest}, TContext> => {
+
+const mutationKey = ['createRunnerToken'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createRunnerToken>>, {orgId: number;data: CreateRunnerTokenRequest}> = (props) => {
+          const {orgId,data} = props ?? {};
+
+          return  createRunnerToken(orgId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateRunnerTokenMutationResult = NonNullable<Awaited<ReturnType<typeof createRunnerToken>>>
+    export type CreateRunnerTokenMutationBody = CreateRunnerTokenRequest
+    export type CreateRunnerTokenMutationError = unknown
+
+    export const useCreateRunnerToken = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRunnerToken>>, TError,{orgId: number;data: CreateRunnerTokenRequest}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createRunnerToken>>,
+        TError,
+        {orgId: number;data: CreateRunnerTokenRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateRunnerTokenMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type listRunnerTokensResponse200 = {
+  data: RunnerTokenResponse[]
+  status: 200
+}
+    
+export type listRunnerTokensResponseSuccess = (listRunnerTokensResponse200) & {
+  headers: Headers;
+};
+;
+
+export type listRunnerTokensResponse = (listRunnerTokensResponseSuccess)
+
+export const getListRunnerTokensUrl = (orgId: number,) => {
+
+
+  
+
+  return `/api/orgs/${orgId}/runner-tokens`
+}
+
+export const listRunnerTokens = async (orgId: number, options?: RequestInit): Promise<listRunnerTokensResponse> => {
+  
+  return conduxFetch<listRunnerTokensResponse>(getListRunnerTokensUrl(orgId),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getListRunnerTokensQueryKey = (orgId?: number,) => {
+    return [
+    `/api/orgs/${orgId}/runner-tokens`
+    ] as const;
+    }
+
+    
+export const getListRunnerTokensQueryOptions = <TData = Awaited<ReturnType<typeof listRunnerTokens>>, TError = unknown>(orgId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRunnerTokensQueryKey(orgId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRunnerTokens>>> = ({ signal }) => listRunnerTokens(orgId, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(orgId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRunnerTokensQueryResult = NonNullable<Awaited<ReturnType<typeof listRunnerTokens>>>
+export type ListRunnerTokensQueryError = unknown
+
+
+export function useListRunnerTokens<TData = Awaited<ReturnType<typeof listRunnerTokens>>, TError = unknown>(
+ orgId: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRunnerTokens>>,
+          TError,
+          Awaited<ReturnType<typeof listRunnerTokens>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunnerTokens<TData = Awaited<ReturnType<typeof listRunnerTokens>>, TError = unknown>(
+ orgId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRunnerTokens>>,
+          TError,
+          Awaited<ReturnType<typeof listRunnerTokens>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRunnerTokens<TData = Awaited<ReturnType<typeof listRunnerTokens>>, TError = unknown>(
+ orgId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListRunnerTokens<TData = Awaited<ReturnType<typeof listRunnerTokens>>, TError = unknown>(
+ orgId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRunnerTokens>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRunnerTokensQueryOptions(orgId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type revokeRunnerTokenResponse204 = {
+  data: void
+  status: 204
+}
+
+export type revokeRunnerTokenResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type revokeRunnerTokenResponseSuccess = (revokeRunnerTokenResponse204) & {
+  headers: Headers;
+};
+export type revokeRunnerTokenResponseError = (revokeRunnerTokenResponse404) & {
+  headers: Headers;
+};
+
+export type revokeRunnerTokenResponse = (revokeRunnerTokenResponseSuccess | revokeRunnerTokenResponseError)
+
+export const getRevokeRunnerTokenUrl = (orgId: number,
+    tokenId: string,) => {
+
+
+  
+
+  return `/api/orgs/${orgId}/runner-tokens/${tokenId}`
+}
+
+export const revokeRunnerToken = async (orgId: number,
+    tokenId: string, options?: RequestInit): Promise<revokeRunnerTokenResponse> => {
+  
+  return conduxFetch<revokeRunnerTokenResponse>(getRevokeRunnerTokenUrl(orgId,tokenId),
+  {      
+    ...options,
+    method: 'DELETE'
+    
+    
+  }
+);}
+
+
+
+
+export const getRevokeRunnerTokenMutationOptions = <TError = void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeRunnerToken>>, TError,{orgId: number;tokenId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeRunnerToken>>, TError,{orgId: number;tokenId: string}, TContext> => {
+
+const mutationKey = ['revokeRunnerToken'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeRunnerToken>>, {orgId: number;tokenId: string}> = (props) => {
+          const {orgId,tokenId} = props ?? {};
+
+          return  revokeRunnerToken(orgId,tokenId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeRunnerTokenMutationResult = NonNullable<Awaited<ReturnType<typeof revokeRunnerToken>>>
+    
+    export type RevokeRunnerTokenMutationError = void
+
+    export const useRevokeRunnerToken = <TError = void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeRunnerToken>>, TError,{orgId: number;tokenId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revokeRunnerToken>>,
+        TError,
+        {orgId: number;tokenId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevokeRunnerTokenMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

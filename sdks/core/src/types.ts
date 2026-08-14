@@ -8,6 +8,13 @@ export interface ConduxOptions {
   dsn: string;
   environment?: string;
   release?: string;
+  /**
+   * Send events to this URL (typically a same-origin path like "/monitoring") instead of the DSN's
+   * ingest endpoint, so ad blockers that cut third-party monitoring hosts cannot drop reports. A server
+   * route forwards the body to the relay (see conduxTunnelRoute in the Next.js SDK). The DSN is still
+   * required — it names the project, and the forwarding route authenticates with its own copy.
+   */
+  tunnel?: string;
   /** Extra delivery attempts after the first (default 3, so up to 4 attempts). */
   maxRetries?: number;
   /** Advanced/testing hooks; default to the global fetch and real timers. */

@@ -19,6 +19,21 @@ public interface IAgentWorkspace
 
     /// <summary>The staged edits, repo-relative path to full contents. What the host commits.</summary>
     IReadOnlyDictionary<string, string> ChangedFiles { get; }
+
+    /// <summary>
+    /// Whether this workspace can execute commands. False on the in-memory default, and the loop offers
+    /// the command tool only when it is true: a model told about a tool that always fails spends its
+    /// budget discovering that, so the capability decides the tool set rather than the error message.
+    /// </summary>
+    bool CanRunCommands => false;
+
+    /// <summary>
+    /// Run an already-authorized argument vector in the workspace and capture its output. Implementations
+    /// execute it directly, never through a shell. Only called when <see cref="CanRunCommands"/> is true.
+    /// </summary>
+    Task<CommandResult> RunCommandAsync(
+        IReadOnlyList<string> argv, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This workspace cannot run commands.");
 }
 
 /// <summary>

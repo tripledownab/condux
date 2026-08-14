@@ -20,7 +20,8 @@ public readonly record struct Limits(
     bool Sso,
     bool ByoKey,
     int AiFixesLifetime = 0,
-    decimal? FixComputeCapUsd = null)
+    decimal? FixComputeCapUsd = null,
+    bool SelfHostedRunner = false)
 {
     /// <summary>
     /// True when the tier uses custom/unlimited event volume (Enterprise), which
@@ -73,11 +74,13 @@ public static class PlanCatalog
         [Tier.Free] = new Limits(50_000, 10, 50, 30,
             AiFixesPerMonth: 3, AutoFix: false, Sso: false, ByoKey: false, FixComputeCapUsd: 2m),
         [Tier.Team] = new Limits(1_000_000, 100, 500, 90,
-            AiFixesPerMonth: 25, AutoFix: true, Sso: false, ByoKey: false, FixComputeCapUsd: 10m),
+            AiFixesPerMonth: 25, AutoFix: true, Sso: false, ByoKey: false, FixComputeCapUsd: 10m,
+            SelfHostedRunner: true),
         [Tier.Business] = new Limits(10_000_000, 1_000, 5_000, 90,
-            AiFixesPerMonth: 100, AutoFix: true, Sso: true, ByoKey: false, FixComputeCapUsd: 40m),
+            AiFixesPerMonth: 100, AutoFix: true, Sso: true, ByoKey: false, FixComputeCapUsd: 40m,
+            SelfHostedRunner: true),
         [Tier.Enterprise] = new Limits(0, 0, 0, 90,
-            AiFixesPerMonth: 0, AutoFix: true, Sso: true, ByoKey: true),
+            AiFixesPerMonth: 0, AutoFix: true, Sso: true, ByoKey: true, SelfHostedRunner: true),
     };
 
     /// <summary>Limits for a tier, falling back to Free for unknown tiers.</summary>

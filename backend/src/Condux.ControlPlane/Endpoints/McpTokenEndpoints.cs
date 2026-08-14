@@ -43,6 +43,6 @@ internal static class McpTokenEndpoints
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Admin));
     }
 
-    private static McpTokenResponse ToResponse(McpToken t) =>
+    private static McpTokenResponse ToResponse(ScopedTokenRow t) =>
         new(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.RevokedAt is not null);
 }

@@ -82,6 +82,6 @@ internal static class ReleaseTokenEndpoints
             ? links.Count == 1 ? links[0] : null
             : links.FirstOrDefault(l => l.RepoFullName.Equals(repo.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    private static ReleaseTokenResponse ToResponse(ReleaseToken t) =>
+    private static ReleaseTokenResponse ToResponse(ScopedTokenRow t) =>
         new(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.RevokedAt is not null);
 }

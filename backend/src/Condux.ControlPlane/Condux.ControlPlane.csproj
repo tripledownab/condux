@@ -3,6 +3,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="ITfoxtec.Identity.Saml2.MvcCore" Version="4.20.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <!-- Pin past the vulnerable Microsoft.OpenApi 2.0.0 that AspNetCore.OpenApi 10.0.10 pulls in
          transitively (GHSA-v5pm-xwqc-g5wc, patched in 2.7.5); NuGetAudit flags it as an error. -->

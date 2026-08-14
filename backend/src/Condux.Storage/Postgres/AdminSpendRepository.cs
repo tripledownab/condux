@@ -34,7 +34,11 @@ public sealed class AdminSpendRepository(string connectionString)
     public const int MaxRows = 500;
 
     // Per (org, model) token sums. Only runs that consumed tokens count toward spend (matches the
-    // FixCostRollup / PostgresAiFixSpend semantics); an @org of NULL means every org.
+    // FixCostRollup / PostgresAiFixSpend semantics); an @org of NULL means every org. Runner-executed
+    // runs (they carry a job_context, ADR-0033 slice 4c) are excluded like PostgresAiFixSpend excludes
+    // them: their tokens were billed to the customer's own model account, and pricing them here would
+    // report the customer's money as our cost — and disagree with the org's own capped meter. The
+    // per-run drill-down below keeps them, being an activity list rather than a spend total.
     private const string RollupSql = """
         SELECT org_id, org_name, model,
                count(*), coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)
@@ -45,6 +49,7 @@ public sealed class AdminSpendRepository(string connectionString)
             JOIN projects p ON p.id = i.project_id
             JOIN orgs o ON o.id = p.org_id
             WHERE f.created_at >= @since AND (@org::bigint IS NULL OR o.id = @org::bigint)
+              AND f.job_context IS NULL
               AND (f.input_tokens > 0 OR f.output_tokens > 0)
             UNION ALL
             SELECT o.id, o.name, c.model, c.input_tokens, c.output_tokens
@@ -53,6 +58,7 @@ public sealed class AdminSpendRepository(string connectionString)
             JOIN projects p ON p.id = r.project_id
             JOIN orgs o ON o.id = p.org_id
             WHERE c.created_at >= @since AND (@org::bigint IS NULL OR o.id = @org::bigint)
+              AND c.job_context IS NULL
               AND (c.input_tokens > 0 OR c.output_tokens > 0)
         ) runs
         GROUP BY org_id, org_name, model;

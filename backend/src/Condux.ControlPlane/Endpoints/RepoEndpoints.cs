@@ -5,6 +5,7 @@ using Condux.ControlPlane.Setup;
 using Condux.Core.Auth;
 using Condux.Core.Events;
 using Condux.Core.Repos;
+using Condux.Core.CveScanning;
 using Condux.Core.SourceControl;
 using Condux.GitHub;
 using Condux.Storage.ClickHouse;
@@ -128,7 +129,7 @@ internal static class RepoEndpoints
         // org's GitHub installation token. Member+, best-effort — returns empty when GitHub is not
         // connected, the App lacks the Dependabot-alerts permission, or the repo has none.
         app.MapGet("/api/projects/{projectId:long}/repos/{repoId:guid}/cve-findings",
-                async Task<Results<Ok<IReadOnlyList<DependabotAlert>>, NotFound>> (
+                async Task<Results<Ok<IReadOnlyList<CveFinding>>, NotFound>> (
                     long projectId, Guid repoId, HttpContext http, RepoLinkRepository repos,
                     ProjectRepository projects, GithubInstallationRepository installations,
                     ILoggerFactory loggerFactory) =>
@@ -139,27 +140,28 @@ internal static class RepoEndpoints
                         return TypedResults.NotFound();
                     }
 
+                    // Findings come from a scanner, never from one forge's API directly (ADR-0022), so the
+                    // shape stays the same whichever produced them.
                     var tokens = http.RequestServices.GetService<ISourceHostTokens>();
-                    var repoClient = http.RequestServices.GetService<GitHubRepoClient>();
+                    var scanner = http.RequestServices.GetService<ICveScanner>();
                     var installs = await installations.GetByOrgAsync(project.OrgId, http.RequestAborted);
-                    if (tokens is null || repoClient is null || installs.Count == 0)
+                    if (tokens is null || scanner is null || installs.Count == 0)
                     {
-                        return TypedResults.Ok<IReadOnlyList<DependabotAlert>>([]);
+                        return TypedResults.Ok<IReadOnlyList<CveFinding>>([]);
                     }
 
                     try
                     {
                         var token = await tokens.GetAsync(installs[0].InstallationId, http.RequestAborted);
-                        var alerts = await repoClient.ListDependabotAlertsAsync(
-                            token, repo.RepoFullName, http.RequestAborted);
-                        return TypedResults.Ok(alerts);
+                        return TypedResults.Ok(
+                            await scanner.ScanAsync(token, repo.RepoFullName, http.RequestAborted));
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         // Advisory feature: a GitHub hiccup or a missing permission yields no findings, not a 500.
                         loggerFactory.CreateLogger(nameof(RepoEndpoints))
                             .LogWarning(ex, "cve-findings failed project={ProjectId} repo={RepoId}", projectId, repoId);
-                        return TypedResults.Ok<IReadOnlyList<DependabotAlert>>([]);
+                        return TypedResults.Ok<IReadOnlyList<CveFinding>>([]);
                     }
                 })
             .WithName("cveFindings").WithTags("Repos")

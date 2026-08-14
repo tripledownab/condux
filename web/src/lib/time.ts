@@ -22,6 +22,13 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
   return iso.slice(0, 10);
 }
 
+// Whole days between an ISO timestamp and now, floored, never negative. `now` is injectable so callers
+// stay deterministic in tests.
+export function daysSince(iso: string, now: Date = new Date()): number {
+  const ms = now.getTime() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
+
 // An ISO timestamp trimmed to "YYYY-MM-DD HH:MM:SS" (UTC) - readable and deterministic (no locale or
 // timezone drift). Returns the input unchanged if it is not the expected shape.
 export function formatTimestamp(iso: string): string {

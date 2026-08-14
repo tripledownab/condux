@@ -11,4 +11,22 @@ public interface ISourceHostTokens
 {
     /// <summary>A valid access token for the given installation, minted or served from cache.</summary>
     Task<string> GetAsync(long installationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Whether minting needs a real installation id. True for the GitHub App (no installation means no
+    /// token, so a zero id is refused up front with a message about connecting GitHub); false for a
+    /// source that holds its own credential — a customer's runner brings its own token and has no
+    /// installation at all, which is not an error but the design.
+    /// </summary>
+    bool RequiresInstallation => true;
+
+    /// <summary>
+    /// A token downscoped to READ-ONLY on exactly one repository, for handing to an execution
+    /// environment outside our boundary (the Managed Agents sandbox mount, ADR-0038) — it must be able
+    /// to clone and nothing else. Default throws: a host that cannot downscope must fail loudly here
+    /// rather than silently hand its full-permission token to a vendor.
+    /// </summary>
+    Task<string> GetReadOnlyAsync(long installationId, string repoFullName, CancellationToken ct = default) =>
+        throw new NotSupportedException(
+            $"{GetType().Name} cannot mint a read-only repo-scoped token, which the managed-agents backend requires.");
 }

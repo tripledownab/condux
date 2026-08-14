@@ -15,6 +15,9 @@ interface SentryFrame {
   lineno: number;
   colno: number;
   in_app: boolean;
+  /** The raw frame path before normalization (a browser chunk's full URL). The server keys source-map
+   * symbolication on it (ADR-0028), matching it against the debug_meta images' code_file. */
+  abs_path?: string;
 }
 
 export interface SentryException {
@@ -50,13 +53,15 @@ function parseStack(stack: string | undefined): SentryFrame[] {
     if (!match?.groups) {
       continue;
     }
-    const filename = normalizeFramePath(match.groups.file);
+    const raw = match.groups.file;
+    const filename = normalizeFramePath(raw);
     frames.push({
       filename,
       function: match.groups.fn ?? ANONYMOUS_FRAME,
       lineno: Number(match.groups.line),
       colno: Number(match.groups.col),
       in_app: isInApp(filename),
+      abs_path: raw,
     });
   }
   frames.reverse();
@@ -86,6 +91,20 @@ export function normalizeFramePath(raw: string): string {
     .replace(/^\[[^\]]+\]\//, "");
   // A leading "./" the bundler kept on a relative source path.
   return path.replace(/^\.\//, "");
+}
+
+/**
+ * The raw file of a stack's innermost frame — for a registration snippet appended to a chunk, the chunk's
+ * own URL. What the debug-id registry (ADR-0028) keys a chunk by; V8 format, like the parser above.
+ */
+export function firstRawFile(stack: string): string | undefined {
+  for (const line of stack.split("\n")) {
+    const match = STACK_FRAME_PATTERN.exec(line);
+    if (match?.groups) {
+      return match.groups.file;
+    }
+  }
+  return undefined;
 }
 
 // Application frames drive grouping and the culprit; library and runtime frames are noise. Runs on the

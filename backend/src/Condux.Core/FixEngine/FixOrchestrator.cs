@@ -85,8 +85,14 @@ public sealed class FixOrchestrator(IFixStore store, IFixProvider provider, IAiF
     private Task AuditAsync(Guid fixId, string actor, string eventName, object detail, CancellationToken ct) =>
         store.AppendAuditAsync(fixId, actor, eventName, JsonSerializer.Serialize(detail), ct);
 
-    // A stable fingerprint of the exact context sent to the provider, so the audit records which prompt was
-    // used without persisting the (potentially sensitive) prompt text.
-    private static string PromptHash(string prompt) =>
+    /// <summary>
+    /// A stable fingerprint of the exact context sent to the provider, so the audit records which prompt
+    /// was used without persisting the (potentially sensitive) prompt text.
+    ///
+    /// Public because the request path writes the same entry when it queues a run for a customer's runner
+    /// rather than for this orchestrator. A second hash implementation there would be free to drift, and
+    /// then the same prompt would fingerprint differently depending on where it ran.
+    /// </summary>
+    public static string PromptHash(string prompt) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(prompt)));
 }

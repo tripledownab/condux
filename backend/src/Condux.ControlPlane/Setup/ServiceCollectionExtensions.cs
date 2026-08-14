@@ -2,6 +2,7 @@ using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Llm;
 using Condux.Core.Auth;
 using Condux.Core.CveFix;
+using Condux.Core.CveScanning;
 using Condux.Core.FixEngine;
 using Condux.Core.Secrets;
 using Condux.Core.SourceControl;
@@ -44,6 +45,14 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(new ReleaseRepository(postgres));
         services.AddSingleton(new ReleaseTokenRepository(postgres));
         services.AddSingleton(new McpTokenRepository(postgres));
+        // Customer-hosted runners (ADR-0033 slice 4): the credential they authenticate with, and the
+        // store they lease work from.
+        services.AddSingleton(new RunnerTokenRepository(postgres));
+        services.AddSingleton(new PostgresJobLeaseStore(postgres));
+        // Live-badge nudges (ADR-0030): fired when a fix run changes outside any browser — queued for a
+        // runner, claimed, or reported — so open dashboards refetch instead of waiting for a poll. The
+        // consumer fires the same channel for issue events; the listener below fans both out over SSE.
+        services.AddSingleton(new ProjectEventNotifier(postgres));
         services.AddSingleton(new SourceMapArtifactRepository(postgres));
         services.AddSingleton(new AlertRuleRepository(postgres));
         services.AddSingleton(new OrgNotificationChannelRepository(postgres));
@@ -52,6 +61,11 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(new AdminAuditRepository(postgres));
         services.AddSingleton(new AdminSpendRepository(postgres));
         services.AddSingleton(new GithubInstallationRepository(postgres));
+
+        // The readiness probe's own client (/api/readyz), with a timeout well under any monitor's: a probe
+        // that hangs is worse than one that fails, because a monitor cannot tell it apart from its own
+        // network trouble. StoreReadiness bounds each check too; this is the backstop.
+        services.AddHttpClient("readiness", c => c.Timeout = StoreReadiness.Timeout);
 
         // The alert/org-notification delivery layer, so a channel can be test-sent from the dashboard
         // (the same notifiers the consumer uses; webhook/slack always on, email opt-in via CONDUX_SMTP_HOST).
@@ -84,6 +98,10 @@ internal static class ServiceCollectionExtensions
             var githubRepoClient = new GitHubRepoClient(new HttpClient());
             services.AddSingleton(githubRepoClient);
             services.AddSingleton<ISourceHostClient>(githubRepoClient);
+            // GitHub's CVE fast path (ADR-0022): Dependabot has already scanned, so findings are a read.
+            // The neutral scanner runs a container and queries an advisory database, which is too slow for
+            // a page load and belongs behind a job — so it is not the one registered here.
+            services.AddSingleton<ICveScanner>(new DependabotCveScanner(githubRepoClient));
         }
 
         // "Sign in with Google" (OIDC, #71). Opt-in: enabled only when CONDUX_GOOGLE_* are set; a partial

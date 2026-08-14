@@ -58,6 +58,10 @@ internal static class ProvisioningEndpoints
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_cost_cap"));
                     }
+                    if (req.FixExecution is { } requested && !Enum.IsDefined((FixExecution)requested))
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_fix_execution"));
+                    }
                     if (await orgs.GetAsync(orgId) is not { } current)
                     {
                         return TypedResults.NotFound();
@@ -77,7 +81,21 @@ internal static class ProvisioningEndpoints
                     var capUsd = PlanCatalog.For((Tier)current.Tier).ByoKey
                         ? req.AiFixCostCapUsd
                         : current.AiFixCostCapUsd;
-                    return await orgs.UpdateSettingsAsync(orgId, req.AiFixMode, capUsd) is { } org
+
+                    // Omitted means unchanged, so a client that predates runners cannot move an org's work
+                    // by not mentioning it.
+                    var execution = req.FixExecution ?? current.FixExecution;
+
+                    // Running fixes on your own machines is a self-host capability (ADR-0033 slice 4c).
+                    // Refused rather than ignored: silently keeping the hosted setting would leave an org
+                    // watching a runner that is never given work, with nothing saying why.
+                    if ((FixExecution)execution == FixExecution.Runner
+                        && !PlanCatalog.For((Tier)current.Tier).SelfHostedRunner)
+                    {
+                        return TypedResults.Conflict(new ErrorResponse("self_hosted_runner_requires_upgrade"));
+                    }
+
+                    return await orgs.UpdateSettingsAsync(orgId, req.AiFixMode, capUsd, execution) is { } org
                         ? TypedResults.Ok(org)
                         : TypedResults.NotFound();
                 })
@@ -99,10 +117,12 @@ internal static class ProvisioningEndpoints
                         : await RemainingFixesAsync(org, quota, now, http.RequestAborted);
                     // The meter shows the EFFECTIVE ceiling: the org's own cap if set, else the tier's
                     // fair-use compute default (ADR-0020/0027) — so a Team/Business org sees its plan
-                    // ceiling, not "no cap".
+                    // ceiling, not "no cap". It follows the org's execution mode, so an org running its own
+                    // runner is not shown a ceiling that no longer gates it.
                     var capUsd = org is null
                         ? null
-                        : AiFixBudget.EffectiveCapUsd(org.AiFixCostCapUsd, PlanCatalog.For((Tier)org.Tier));
+                        : AiFixBudget.EffectiveCapUsd(
+                            org.AiFixCostCapUsd, PlanCatalog.For((Tier)org.Tier), (FixExecution)org.FixExecution);
                     return TypedResults.Ok(new AiFixUsageResponse(monthToDate, capUsd, remaining, uncapped));
                 })
             .WithName("aiFixUsage").WithTags("Provisioning")

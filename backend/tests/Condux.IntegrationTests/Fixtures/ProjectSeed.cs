@@ -9,12 +9,19 @@ namespace Condux.IntegrationTests.Fixtures;
 /// </summary>
 public static class ProjectSeed
 {
-    public static async Task<long> CreateProjectAsync(string connectionString)
+    public static async Task<long> CreateProjectAsync(string connectionString) =>
+        (await CreateOrgAndProjectAsync(connectionString)).ProjectId;
+
+    /// <summary>
+    /// Both ids, for tests that reach work through its org rather than its project — the runner lease
+    /// claims per org, since a runner serves everything its org produces.
+    /// </summary>
+    public static async Task<(long OrgId, long ProjectId)> CreateOrgAndProjectAsync(string connectionString)
     {
         var org = await new OrgRepository(connectionString)
             .CreateAsync($"org-{Guid.NewGuid():N}", "Test Org", 0);
         var project = await new ProjectRepository(connectionString)
             .CreateAsync(org.Id, "Test Project", "other");
-        return project.Id;
+        return (org.Id, project.Id);
     }
 }

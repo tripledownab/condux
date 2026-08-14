@@ -92,6 +92,18 @@ public sealed class RepoLinkRepository(string connectionString)
         return await reader.ReadAsync(cancellationToken) ? MapRepo(reader) : null;
     }
 
+    /// <summary>The project a repo link belongs to, or null. What the CVE worker needs to nudge the
+    /// project's live dashboard after a run — its job carries only the repo link id (ADR-0030).</summary>
+    public async Task<long?> GetProjectIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT project_id FROM repo_links WHERE id = @id;", conn);
+        cmd.Parameters.AddWithValue("id", id);
+        return await cmd.ExecuteScalarAsync(cancellationToken) is long projectId ? projectId : null;
+    }
+
     /// <summary>Unlink a repo from its project. Its code mappings and releases cascade away
     /// (FK ON DELETE CASCADE). False when the link is not in the project (the caller 404s).</summary>
     public async Task<bool> DeleteAsync(long projectId, Guid id, CancellationToken cancellationToken = default)

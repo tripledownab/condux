@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Condux.Core.FixEngine;
+using Condux.Storage.Postgres;
 using Condux.Telemetry;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
@@ -17,7 +18,7 @@ namespace Condux.Conductor;
 /// </summary>
 public sealed class ConductorWorker(
     IConfiguration config, ILogger<ConductorWorker> logger, FixOrchestrator orchestrator,
-    ConduxSelfReporter selfReport)
+    IssueRepository issues, ProjectEventNotifier projectEvents, ConduxSelfReporter selfReport)
     : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
@@ -51,6 +52,7 @@ public sealed class ConductorWorker(
                     logger.LogInformation(
                         "fix run issue={IssueId} id={FixId} status={Status} pr={PrUrl}",
                         job.IssueId, suggestion.Id, suggestion.Status, suggestion.PrUrl);
+                    await NotifyProjectAsync(job.IssueId, stoppingToken);
                 }
             }
             catch (OperationCanceledException)
@@ -73,6 +75,26 @@ public sealed class ConductorWorker(
         }
 
         consumer.Close();
+    }
+
+    // A concluded run happened outside any browser, so the dashboard learns of it only through this
+    // nudge (ADR-0030). The job carries the issue's internal id, not its project, so resolve it first —
+    // all best-effort, because the run itself is already recorded.
+    private async Task NotifyProjectAsync(long issueId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var summaries = await issues.SummariesByInternalIdsAsync([issueId], cancellationToken);
+            if (summaries.TryGetValue(issueId, out var summary))
+            {
+                await ProjectEventNudge.TrySendAsync(
+                    projectEvents, logger, summary.ProjectId, cancellationToken);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "project lookup for nudge failed issue={IssueId}", issueId);
+        }
     }
 
     // Create the topic up front (with retry until the broker is reachable) so the consumer never

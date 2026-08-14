@@ -77,4 +77,23 @@ describe("AuthForm", () => {
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
+
+  // Clause 1 of the terms says creating an account accepts them, which only holds if the person was
+  // shown them at that moment. Signup is where the contract forms, so that is where the notice goes.
+  it("shows the acceptance notice on signup", () => {
+    vi.stubEnv("NEXT_PUBLIC_CONDUX_LEGAL_URL", "https://condux.ai");
+    renderWithIntl(<AuthForm mode={AuthMode.Signup} />);
+
+    expect(screen.getByRole("link", { name: "Terms of Service" })).toHaveAttribute(
+      "href",
+      "https://condux.ai/terms",
+    );
+  });
+
+  it("does not repeat the acceptance notice on login, which forms no contract", () => {
+    vi.stubEnv("NEXT_PUBLIC_CONDUX_LEGAL_URL", "https://condux.ai");
+    renderWithIntl(<AuthForm mode={AuthMode.Login} />);
+
+    expect(screen.queryByRole("link", { name: "Terms of Service" })).not.toBeInTheDocument();
+  });
 });

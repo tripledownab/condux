@@ -1,3 +1,4 @@
+using Condux.Core.FixEngine;
 using Condux.Core.Plans;
 
 namespace Condux.Core.Quotas;
@@ -25,7 +26,14 @@ public static class AiFixBudget
     /// (<see cref="Limits.FixComputeCapUsd"/>). This is what unifies the two purposes: platform-billed
     /// tiers (Team/Business) get a fair-use compute ceiling by default that ops can raise per org, while
     /// Enterprise/BYO has a null tier default so the org's own value is a pure customer budget (null =
-    /// uncapped, their money). Null result never blocks.</summary>
-    public static decimal? EffectiveCapUsd(decimal? orgOverrideUsd, Limits limits) =>
-        orgOverrideUsd ?? limits.FixComputeCapUsd;
+    /// uncapped, their money). Null result never blocks.
+    ///
+    /// <para>A run executed on the org's own runner (ADR-0033 slice 4c) is billed to the org's own model
+    /// account, so the tier ceiling does not apply to it: enforcing a fair-use limit on compute we do not
+    /// pay for would refuse a customer their own money. Their own override still binds, because that one
+    /// is a budget they set. <paramref name="execution"/> has no default so the question has to be
+    /// answered at each call site — a forgotten argument here silently caps the wrong spend.</para>
+    /// </summary>
+    public static decimal? EffectiveCapUsd(decimal? orgOverrideUsd, Limits limits, FixExecution execution) =>
+        execution == FixExecution.Runner ? orgOverrideUsd : orgOverrideUsd ?? limits.FixComputeCapUsd;
 }

@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
   "files": {
-    "includes": ["**", "!src/api/generated", "!public", "!.next", "!tsconfig.json"]
+    "includes": [
+      "**",
+      "!src/api/generated",
+      "!public",
+      "!.next",
+      "!tsconfig.json",
+      "!test-results",
+      "!playwright-report"
+    ]
   },
   "assist": {
     "actions": {

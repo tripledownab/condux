@@ -21,6 +21,10 @@ using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// A crash must end the process. As PID 1 in a container it otherwise survives its own unhandled
+// exception and spins, looking healthy while doing nothing.
+ProcessTermination.ExitOnUnhandledException();
+
 // OpenTelemetry (traces + metrics over OTLP; opt-in via OTEL_EXPORTER_OTLP_ENDPOINT).
 builder.AddConduxTelemetry("condux-relay",
     tracing => tracing.AddAspNetCoreInstrumentation(),
@@ -117,7 +121,31 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
 // and ahead of the ingest endpoints, which read an already-decompressed body.
 app.UseRequestDecompression();
 
+// Liveness: is the process answering. Deliberately checks nothing, because a container probe that fails
+// on a dependency outage restarts a healthy process and makes the outage worse.
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+
+// Readiness for an uptime monitor. The relay is the one service whose outage loses data rather than
+// merely blocking a page: it answers an SDK "accepted" and then has nowhere to put the event. Liveness
+// alone would report healthy through exactly that, so this checks what ingest actually needs — the broker
+// it publishes to, and the catalog it authenticates DSNs against — and answers 503 when either is gone.
+app.MapGet("/readyz", async (IEventPublisher publisher, CancellationToken ct) =>
+{
+    var broker = publisher is KafkaEventPublisher kafka
+        ? kafka.CanReachBroker(StoreReadiness.Timeout)
+        : true;
+    // Postgres is optional here: without it the relay falls back to the seeded dev store, which is a
+    // working configuration rather than a fault, so it is only required when it is configured.
+    var catalog = string.IsNullOrEmpty(relayPostgres)
+        || await StoreReadiness.PostgresAsync(relayPostgres, ct);
+
+    // Same single token as the control-plane's, so one monitor rule covers both services.
+    var ready = broker && catalog;
+    var body = new { status = ready ? "ready" : "degraded", broker, catalog };
+    return ready
+        ? Results.Ok(body)
+        : Results.Json(body, statusCode: StatusCodes.Status503ServiceUnavailable);
+});
 
 // Sentry-compatible ingest path so existing SDKs work by swapping the DSN.
 // Shared ingest pipeline for the two Sentry-compatible endpoints: auth → per-tier rate-limit → spike →

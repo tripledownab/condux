@@ -12,6 +12,7 @@ import { ROUTES } from "@/src/routes";
 import { AlternativeSignIn } from "./alternative-sign-in";
 import { authErrorKey, redirectErrorKey } from "./auth-error";
 import { AuthMode } from "./auth-mode";
+import { LegalNotice } from "./legal-notice";
 
 // Non-text, per-mode config. All copy comes from the "auth" catalog namespace keyed by mode
 // (auth.login.*, auth.signup.*), so signup and login share this one declarative form.
@@ -139,6 +140,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           {translate(`${mode}.altLabel`)}
         </Link>
       </p>
+
+      {mode === AuthMode.Signup ? <LegalNotice /> : null}
     </div>
   );
 }

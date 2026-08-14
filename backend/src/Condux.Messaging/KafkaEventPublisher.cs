@@ -41,5 +41,28 @@ public sealed class KafkaEventPublisher : IEventPublisher, IDisposable
         await _producer.ProduceAsync(_topic, message, cancellationToken);
     }
 
+    /// <summary>
+    /// Whether the broker answers. Asking the producer we already hold for cluster metadata, rather than
+    /// standing up an admin client, so the probe exercises the same connection publishing uses: a
+    /// reachable broker that this producer cannot talk to would otherwise still read as ready.
+    ///
+    /// The relay accepts events whether or not this is true, and a failure here means they are dropped
+    /// after the customer's SDK was told they were accepted, which is the outage worth catching early.
+    /// </summary>
+    public bool CanReachBroker(TimeSpan timeout)
+    {
+        try
+        {
+            // A dependent admin client shares this producer's connection rather than opening its own.
+            using var admin = new DependentAdminClientBuilder(_producer.Handle).Build();
+            admin.GetMetadata(timeout);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     public void Dispose() => _producer.Dispose();
 }

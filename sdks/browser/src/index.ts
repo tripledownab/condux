@@ -7,13 +7,25 @@
  */
 
 export {
+  addBreadcrumb,
   captureException,
   captureMessage,
+  clearScope,
   sendEvent,
+  setContext,
+  setTag,
+  setUser,
   Level,
   normalizeFramePath,
 } from "@condux/core";
-export type { ConduxOptions, FetchLike, FetchResponse, SendResult } from "@condux/core";
+export type {
+  Breadcrumb,
+  ConduxOptions,
+  ConduxUser,
+  FetchLike,
+  FetchResponse,
+  SendResult,
+} from "@condux/core";
 
 import { type ConduxOptions, type SendResult, captureException, init as coreInit } from "@condux/core";
 

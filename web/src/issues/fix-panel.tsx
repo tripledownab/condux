@@ -19,10 +19,12 @@ export function FixPanel({
   projectId,
   issueId,
   orgId,
+  lastSeen,
 }: {
   projectId: number;
   issueId: string;
   orgId: number;
+  lastSeen?: string;
 }) {
   const translate = useTranslations("issues.fix");
   const queryClient = useQueryClient();
@@ -106,6 +108,7 @@ export function FixPanel({
         onOpenChange={setShowConfirm}
         orgId={orgId}
         projectId={projectId}
+        lastSeen={lastSeen}
         pending={requestFix.isPending}
         onConfirm={(repoId, baseBranch) => {
           setShowConfirm(false);

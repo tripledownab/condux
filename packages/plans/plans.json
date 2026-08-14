@@ -1,0 +1,62 @@
+{
+  "Free": {
+    "tier": 0,
+    "monthlyEvents": 50000,
+    "unlimitedEvents": false,
+    "ratePerSecond": 10,
+    "burst": 50,
+    "retentionDays": 30,
+    "aiFixesPerMonth": 3,
+    "unlimitedAiFixes": false,
+    "autoFix": false,
+    "sso": false,
+    "byoKey": false,
+    "selfHostedRunner": false,
+    "fixComputeCapUsd": 2
+  },
+  "Team": {
+    "tier": 1,
+    "monthlyEvents": 1000000,
+    "unlimitedEvents": false,
+    "ratePerSecond": 100,
+    "burst": 500,
+    "retentionDays": 90,
+    "aiFixesPerMonth": 25,
+    "unlimitedAiFixes": false,
+    "autoFix": true,
+    "sso": false,
+    "byoKey": false,
+    "selfHostedRunner": true,
+    "fixComputeCapUsd": 10
+  },
+  "Business": {
+    "tier": 2,
+    "monthlyEvents": 10000000,
+    "unlimitedEvents": false,
+    "ratePerSecond": 1000,
+    "burst": 5000,
+    "retentionDays": 90,
+    "aiFixesPerMonth": 100,
+    "unlimitedAiFixes": false,
+    "autoFix": true,
+    "sso": true,
+    "byoKey": false,
+    "selfHostedRunner": true,
+    "fixComputeCapUsd": 40
+  },
+  "Enterprise": {
+    "tier": 3,
+    "monthlyEvents": 0,
+    "unlimitedEvents": true,
+    "ratePerSecond": 0,
+    "burst": 0,
+    "retentionDays": 90,
+    "aiFixesPerMonth": 0,
+    "unlimitedAiFixes": true,
+    "autoFix": true,
+    "sso": true,
+    "byoKey": true,
+    "selfHostedRunner": true,
+    "fixComputeCapUsd": null
+  }
+}

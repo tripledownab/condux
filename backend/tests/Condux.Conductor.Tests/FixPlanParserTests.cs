@@ -1,3 +1,4 @@
+using Condux.Agent;
 using Xunit;
 
 namespace Condux.Conductor.Tests;

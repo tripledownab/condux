@@ -22,4 +22,5 @@ export interface Org {
   weeklySummaryDow?: number;
   weeklySummaryHour?: number;
   weeklySummaryTz?: string;
+  fixExecution?: number;
 }

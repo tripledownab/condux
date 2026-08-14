@@ -28,8 +28,11 @@ public sealed class OrgMemberRepository(string connectionString)
         WHERE m.org_id = @org ORDER BY m.created_at, m.user_id;
         """;
 
-    private const string ListOrgsSql = """
-        SELECT o.id, o.slug, o.name, o.tier, o.created_at, o.ai_fix_mode, o.ai_fix_cost_cap_usd, m.role
+    // The full org column list, shared with OrgRepository, then the role. A hand-picked subset here is
+    // how the dashboard came to see fix_execution as hosted regardless of the row: every column the
+    // select forgot silently became the record's default.
+    private static readonly string ListOrgsSql = $"""
+        SELECT {OrgRepository.QualifiedColumns("o")}, m.role
         FROM org_members m JOIN orgs o ON o.id = m.org_id
         WHERE m.user_id = @user ORDER BY o.id;
         """;
@@ -93,13 +96,15 @@ public sealed class OrgMemberRepository(string connectionString)
 
         var list = new List<OrgMembership>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var roleOrdinal = -1;
         while (await reader.ReadAsync(ct))
         {
-            var org = new Org(
-                reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt16(3),
-                reader.GetFieldValue<DateTimeOffset>(4), reader.GetInt16(5),
-                reader.IsDBNull(6) ? null : reader.GetDecimal(6));
-            list.Add(new OrgMembership(org, (OrgRole)reader.GetInt16(7)));
+            if (roleOrdinal < 0)
+            {
+                roleOrdinal = reader.GetOrdinal("role");
+            }
+            list.Add(new OrgMembership(
+                OrgRepository.Read(reader), (OrgRole)reader.GetInt16(roleOrdinal)));
         }
         return list;
     }

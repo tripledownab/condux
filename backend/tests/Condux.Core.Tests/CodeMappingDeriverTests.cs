@@ -54,6 +54,44 @@ public class CodeMappingDeriverTests
     }
 
     [Fact]
+    public void DerivesTheBuildRootRewrite_ForACompiledAppWhoseFramesCarryItsBuildPath()
+    {
+        // The most common mapping a real project needs, and the one nothing covered: a container image
+        // builds under some root, the compiled artifacts record that root, and every runtime frame carries
+        // it. The rewrite that fixes it is a bare prefix strip, so the source root is empty.
+        var derived = CodeMappingDeriver.Derive(
+            [
+                "/src/backend/src/Condux.ControlPlane/Program.cs",
+                "/src/backend/src/Condux.Storage/Postgres/IssueRepository.cs",
+            ],
+            [
+                "backend/src/Condux.ControlPlane/Program.cs",
+                "backend/src/Condux.Storage/Postgres/IssueRepository.cs",
+                "web/src/app/page.tsx",
+            ]);
+
+        var rule = Assert.Single(derived);
+        Assert.Equal("/src/", rule.StackRoot);
+        Assert.Equal("", rule.SourceRoot);
+        Assert.Equal(2, rule.MatchCount);
+    }
+
+    [Fact]
+    public void TheDerivedBuildRootRewrite_IsOneCodeMapperCanActuallyApply()
+    {
+        // The deriver and the resolver have to agree on the leading separator or the suggestion is
+        // plausible and inert: it would list in the UI, add cleanly, and silently match no frame.
+        const string frame = "/src/backend/src/Condux.ControlPlane/Program.cs";
+        var rule = Assert.Single(CodeMappingDeriver.Derive(
+            [frame], ["backend/src/Condux.ControlPlane/Program.cs"]));
+
+        var resolved = CodeMapper.Resolve(
+            frame, [new CodeMapping(Guid.Empty, Guid.Empty, rule.StackRoot, rule.SourceRoot)]);
+
+        Assert.Equal("backend/src/Condux.ControlPlane/Program.cs", resolved);
+    }
+
+    [Fact]
     public void SkipsFramesThatAreAlreadyRepoRelative()
     {
         Assert.Empty(CodeMappingDeriver.Derive(["src/app.js"], ["src/app.js", "src/other.js"]));

@@ -1727,7 +1727,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/DependabotAlert"
+                    "$ref": "#/components/schemas/CveFinding"
                   }
                 }
               }
@@ -2092,6 +2092,115 @@
         "parameters": [
           {
             "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/runner-tokens": {
+      "post": {
+        "tags": [
+          "RunnerTokens"
+        ],
+        "operationId": "createRunnerToken",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunnerTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MintedRunnerTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "RunnerTokens"
+        ],
+        "operationId": "listRunnerTokens",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunnerTokenResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/runner-tokens/{tokenId}": {
+      "delete": {
+        "tags": [
+          "RunnerTokens"
+        ],
+        "operationId": "revokeRunnerToken",
+        "parameters": [
+          {
+            "name": "orgId",
             "in": "path",
             "required": true,
             "schema": {
@@ -6235,6 +6344,17 @@
           }
         }
       },
+      "CreateRunnerTokenRequest": {
+        "required": [
+          "label"
+        ],
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "Credentials": {
         "required": [
           "email",
@@ -6247,6 +6367,62 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "CveFinding": {
+        "required": [
+          "advisoryId",
+          "cveId",
+          "severity",
+          "summary",
+          "package",
+          "ecosystem",
+          "vulnerableRange",
+          "fixedVersion",
+          "url",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "advisoryId": {
+            "type": "string"
+          },
+          "cveId": {
+            "type": "string",
+            "nullable": true
+          },
+          "severity": {
+            "$ref": "#/components/schemas/CveSeverity"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "ecosystem": {
+            "type": "string"
+          },
+          "vulnerableRange": {
+            "type": "string"
+          },
+          "fixedVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "isFixable": {
+            "type": "boolean"
+          },
+          "manifestPath": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
@@ -6342,50 +6518,8 @@
           }
         }
       },
-      "DependabotAlert": {
-        "required": [
-          "ghsaId",
-          "cveId",
-          "severity",
-          "summary",
-          "package",
-          "ecosystem",
-          "vulnerableRange",
-          "fixedVersion",
-          "htmlUrl"
-        ],
-        "type": "object",
-        "properties": {
-          "ghsaId": {
-            "type": "string"
-          },
-          "cveId": {
-            "type": "string",
-            "nullable": true
-          },
-          "severity": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          },
-          "package": {
-            "type": "string"
-          },
-          "ecosystem": {
-            "type": "string"
-          },
-          "vulnerableRange": {
-            "type": "string"
-          },
-          "fixedVersion": {
-            "type": "string",
-            "nullable": true
-          },
-          "htmlUrl": {
-            "type": "string"
-          }
-        }
+      "CveSeverity": {
+        "type": "integer"
       },
       "DerivedMapping": {
         "required": [
@@ -7415,6 +7549,31 @@
           }
         }
       },
+      "MintedRunnerTokenResponse": {
+        "required": [
+          "id",
+          "label",
+          "token",
+          "createdAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "NewIssueCountResponse": {
         "required": [
           "count"
@@ -7544,6 +7703,11 @@
           "weeklySummaryTz": {
             "type": "string",
             "default": "UTC"
+          },
+          "fixExecution": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
           }
         }
       },
@@ -7822,6 +7986,37 @@
           }
         }
       },
+      "RunnerTokenResponse": {
+        "required": [
+          "id",
+          "label",
+          "createdAt",
+          "lastUsedAt",
+          "revoked"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
       "SavedView": {
         "required": [
           "id",
@@ -7893,10 +8088,13 @@
         "required": [
           "emailDomain",
           "issuer",
+          "protocol",
           "authorizationEndpoint",
           "tokenEndpoint",
           "clientId",
-          "clientSecret"
+          "clientSecret",
+          "samlSsoUrl",
+          "samlCertificate"
         ],
         "type": "object",
         "properties": {
@@ -7906,17 +8104,33 @@
           "issuer": {
             "type": "string"
           },
+          "protocol": {
+            "type": "integer",
+            "format": "int32"
+          },
           "authorizationEndpoint": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "tokenEndpoint": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "clientId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "clientSecret": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
+          },
+          "samlSsoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "samlCertificate": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
@@ -7964,9 +8178,12 @@
         "required": [
           "emailDomain",
           "issuer",
+          "protocol",
           "authorizationEndpoint",
           "tokenEndpoint",
           "clientId",
+          "samlSsoUrl",
+          "samlCertificate",
           "updatedAt"
         ],
         "type": "object",
@@ -7977,14 +8194,29 @@
           "issuer": {
             "type": "string"
           },
+          "protocol": {
+            "type": "integer",
+            "format": "int32"
+          },
           "authorizationEndpoint": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "tokenEndpoint": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "clientId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
+          },
+          "samlSsoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "samlCertificate": {
+            "type": "string",
+            "nullable": true
           },
           "updatedAt": {
             "type": "string",
@@ -8158,7 +8390,8 @@
       "UpdateOrgRequest": {
         "required": [
           "aiFixMode",
-          "aiFixCostCapUsd"
+          "aiFixCostCapUsd",
+          "fixExecution"
         ],
         "type": "object",
         "properties": {
@@ -8169,6 +8402,11 @@
           "aiFixCostCapUsd": {
             "type": "number",
             "format": "double",
+            "nullable": true
+          },
+          "fixExecution": {
+            "type": "integer",
+            "format": "int32",
             "nullable": true
           }
         }
@@ -8285,6 +8523,9 @@
     },
     {
       "name": "McpTokens"
+    },
+    {
+      "name": "RunnerTokens"
     },
     {
       "name": "SourceMaps"

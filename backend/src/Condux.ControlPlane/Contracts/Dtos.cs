@@ -11,7 +11,11 @@ using Condux.Storage.Postgres;
 internal sealed record CreateOrgRequest(string Slug, string Name, Tier? Tier);
 // The org's AI-fix settings, submitted together from Settings → General. AiFixCostCapUsd is the optional
 // monthly Conductor spend ceiling (null clears it — no cap; #120 budgets).
-internal sealed record UpdateOrgRequest(int AiFixMode, decimal? AiFixCostCapUsd);
+// FixExecution is nullable and means "leave it as it is" when omitted (ADR-0033 slice 4c). It has to be:
+// a client that does not know the field yet — an older dashboard, a script, anything written before
+// runners existed — would otherwise send no value, bind 0, and silently move a self-hosting org's work
+// back onto our compute as a side effect of changing something else.
+internal sealed record UpdateOrgRequest(int AiFixMode, decimal? AiFixCostCapUsd, int? FixExecution);
 internal sealed record CreateProjectRequest(string Name, string? Platform);
 internal sealed record UpdateProjectRequest(string Name, string? Platform);
 internal sealed record CreateKeyRequest(string? Label);
@@ -35,6 +39,29 @@ internal sealed record ReleaseTokenResponse(
     Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool Revoked);
 internal sealed record RecordReleaseViaTokenRequest(string Version, string CommitSha, string? Repo);
 
+// Runner tokens (ADR-0033 slice 4). Org-scoped rather than project-scoped: a runner serves whatever work
+// its org produces, across every project in it.
+internal sealed record CreateRunnerTokenRequest(string Label);
+internal sealed record MintedRunnerTokenResponse(Guid Id, string Label, string Token, DateTimeOffset CreatedAt);
+internal sealed record RunnerTokenResponse(
+    Guid Id, string Label, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool Revoked);
+
+// The lease protocol. Deliberately small and additive-only: a customer's runner lags our deploys, so a
+// field added here must never be required by an older runner, and one removed breaks every runner at once.
+// LeaseId is what proves the caller holds this job. Runners in one org share a token, so a name they
+// choose would let any of them act on another's work.
+// Ref is the work's display identifier (the issue id, or the GHSA id of a CVE bump) for branch names
+// and pull-request copy. IssueId stays for runners that predate it; a CVE bump carries IssueId 0.
+internal sealed record LeasedJobResponse(
+    Guid FixId, long IssueId, string RepoFullName, string BaseBranch, string Prompt,
+    IReadOnlyList<string> ScopedPaths, DateTimeOffset LeaseExpiresAt, string LeaseId, string Ref);
+internal sealed record HeartbeatRequest(string LeaseId);
+// Model is reported rather than assigned: a runner resolves its own, so until it answers we do not know
+// which one ran, and an empty model on the run would price and display as if none had.
+internal sealed record ReportRequest(
+    string LeaseId, int Status, string Branch, string PrUrl, string Summary, string Model,
+    long InputTokens, long OutputTokens);
+
 // Scoped MCP tokens (ADR-0029): a per-project read-only credential an AI agent presents as a bearer to
 // the MCP endpoint. Mirrors the release-token DTOs; the raw token is returned once, on mint.
 internal sealed record CreateMcpTokenRequest(string Name);
@@ -50,14 +77,19 @@ internal sealed record UnviewedFixCountResponse(int Count);
 internal sealed record SetLlmConfigRequest(string Provider, string Model, string? BaseUrl, string ApiKey);
 internal sealed record LlmConfigResponse(string Provider, string Model, string BaseUrl, DateTimeOffset UpdatedAt);
 internal sealed record ListLlmModelsRequest(string Provider, string? BaseUrl, string? ApiKey);
-// Enterprise SSO (#72): the org's OIDC IdP config. The client secret is write-only (sealed at rest, never
-// echoed back), so it rides the request but not the response — mirrors the BYO-key SetLlmConfig/LlmConfig pair.
+// Enterprise SSO (#72): the org's IdP config. Protocol is the SsoProtocol enum (0 OIDC, 1 SAML); each
+// protocol fills its own fields and issuer is shared (the OIDC issuer / the SAML IdP entity ID). The OIDC
+// client secret is write-only (sealed at rest, never echoed back), so it rides the request but not the
+// response — mirrors the BYO-key SetLlmConfig/LlmConfig pair. The SAML certificate is the IdP's public
+// signing certificate (not a secret), so it echoes back for the admin to verify.
 internal sealed record SetSsoConfigRequest(
-    string EmailDomain, string Issuer, string AuthorizationEndpoint, string TokenEndpoint,
-    string ClientId, string ClientSecret);
+    string EmailDomain, string Issuer, int Protocol,
+    string? AuthorizationEndpoint, string? TokenEndpoint, string? ClientId, string? ClientSecret,
+    string? SamlSsoUrl, string? SamlCertificate);
 internal sealed record SsoConfigResponse(
-    string EmailDomain, string Issuer, string AuthorizationEndpoint, string TokenEndpoint,
-    string ClientId, DateTimeOffset UpdatedAt);
+    string EmailDomain, string Issuer, int Protocol,
+    string? AuthorizationEndpoint, string? TokenEndpoint, string? ClientId,
+    string? SamlSsoUrl, string? SamlCertificate, DateTimeOffset UpdatedAt);
 internal sealed record LlmModelsResponse(IReadOnlyList<Condux.ControlPlane.Llm.LlmModel> Models);
 internal sealed record CreateAlertRuleRequest(
     string Name, IReadOnlyList<int> Events, IReadOnlyList<int> Levels);

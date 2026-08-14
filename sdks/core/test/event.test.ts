@@ -1,20 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type FetchLike, Level, captureException, captureMessage, init } from "../src/index.ts";
+import { recordingFetch } from "./helpers.ts";
+import { Level, captureException, captureMessage, init } from "../src/index.ts";
 
 const DSN = "http://pub123@relay.test/7";
 
-// A fetch that records the last request body and reports success, so a test can inspect exactly
-// what the SDK put on the wire. This is the coverage the transport-only suite lacked: it asserts
-// the emitted JSON is the Sentry store shape the relay parses.
-function recordingFetch() {
-  const sent: { url: string; body: string }[] = [];
-  const fetch: FetchLike = async (url, init) => {
-    sent.push({ url, body: init.body });
-    return { status: 202, headers: { get: () => null } };
-  };
-  return { fetch, last: () => JSON.parse(sent[sent.length - 1].body) };
-}
 
 test("captureException emits the Sentry store shape with a stack trace", async () => {
   const { fetch, last } = recordingFetch();
@@ -54,6 +44,8 @@ test("captureException emits the Sentry store shape with a stack trace", async (
   assert.equal(top.function, "boom");
   assert.equal(top.in_app, true);
   assert.equal(typeof top.lineno, "number");
+  // The raw pre-normalization path rides as abs_path — the source-map match key (ADR-0028).
+  assert.equal(typeof top.abs_path, "string");
 });
 
 test("captureMessage emits a message event at the given level, no exception", async () => {

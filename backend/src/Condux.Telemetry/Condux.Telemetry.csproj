@@ -9,6 +9,11 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.16.0" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The crash handler's exit code and its stderr write are asserted directly; the seam that makes
+         that possible without ending the test run is internal. -->
+    <InternalsVisibleTo Include="Condux.Conductor.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Condux-on-Condux (#75): the services self-report their own errors via the first-party .NET SDK. -->
     <ProjectReference Include="..\..\..\sdks\dotnet\Condux.Sdk\Condux.Sdk.csproj" />
   </ItemGroup>

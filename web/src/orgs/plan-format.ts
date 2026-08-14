@@ -1,22 +1,26 @@
-// Org tier (Condux.Core.Plans.Tier: 0 Free, 1 Team, 2 Business, 3 Enterprise) -> a display name.
-const PLAN_NAMES: Record<number, string> = {
-  0: "Free",
-  1: "Team",
-  2: "Business",
-  3: "Enterprise",
-};
+import { PLANS, planFor } from "@condux/plans";
 
+// Tier names and capabilities come from @condux/plans, generated from Condux.Core.Plans.PlanCatalog —
+// the code that enforces them. Nothing here restates a limit.
+//
+// The reason this file no longer hardcodes anything: a mirror of the catalog silently went stale when
+// Free changed, hiding a Free org's own allowance from it, and the same shape sold Business a
+// bring-your-own key the API refuses. Both were invisible because nothing compared the copy to the
+// source. A backend test now fails when the generated facts drift from the catalog.
+//
+// The per-org allowance and ceiling still come from the usage endpoint rather than from here: those are
+// live counters, not tier facts.
 export function planName(tier: number): string {
-  return PLAN_NAMES[tier] ?? "Free";
+  return Object.entries(PLANS).find(([, plan]) => plan.tier === tier)?.[0] ?? "Free";
 }
 
-// Tier capabilities, mirroring Condux.Core.Plans.PlanCatalog (the backend is the source of truth; these
-// gate UI only). BYO-key (own provider, own spend budget) is Enterprise only.
-//
-// There is deliberately no tierHasAiFixes here any more: every tier now includes a monthly Conductor
-// allowance, so the question the old helper answered no longer has a false case. It is also why the
-// allowance and ceiling are read from the usage endpoint rather than derived from the tier — a mirror
-// of the catalog silently went stale once Free changed, hiding a Free org's own allowance from it.
+/** Whether the tier may bring its own LLM key, which is what makes the cost cap the customer's budget. */
 export function tierIsByo(tier: number): boolean {
-  return tier === 3; // Enterprise
+  return planFor(tier).byoKey;
+}
+
+/** Whether the tier may run the Conductor on its own machines (ADR-0033). The API refuses the switch
+ * below this, so the UI disables the option instead of inviting a click that cannot succeed. */
+export function tierHasSelfHostedRunner(tier: number): boolean {
+  return planFor(tier).selfHostedRunner;
 }

@@ -178,7 +178,12 @@ export function IssueDetail({ issueId }: { issueId: string }) {
           orgId={orgId}
           assigneeUserId={detail.issue.assigneeUserId ?? null}
         />
-        <FixPanel projectId={current.project.id} issueId={issueId} orgId={orgId} />
+        <FixPanel
+          projectId={current.project.id}
+          issueId={issueId}
+          orgId={orgId}
+          lastSeen={detail.issue.lastSeen}
+        />
         <IssueNotes
           projectId={current.project.id}
           issueId={issueId}

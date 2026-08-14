@@ -20,6 +20,9 @@
     <ProjectReference Include="../../src/Condux.Notifications/Condux.Notifications.csproj" />
     <ProjectReference Include="../../src/Condux.Storage/Condux.Storage.csproj" />
     <ProjectReference Include="../../src/Condux.ControlPlane/Condux.ControlPlane.csproj" />
+    <!-- The agent execution core: the sandbox tests drive it directly. A library with no entry point, so
+         unlike the workers below it needs no alias. -->
+    <ProjectReference Include="../../src/Condux.Agent/Condux.Agent.csproj" />
     <!-- The fix-verification watcher (VerificationWorker) lives here. Alias it (like the relay) so its
          global `Program` stays out of the way of the control-plane's Program used by WebApplicationFactory. -->
     <ProjectReference Include="../../src/Condux.Conductor/Condux.Conductor.csproj" Aliases="conductor" />

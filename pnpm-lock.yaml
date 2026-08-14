@@ -22,6 +22,9 @@ importers:
       '@condux/brand':
         specifier: workspace:*
         version: link:../packages/brand
+      '@condux/plans':
+        specifier: workspace:*
+        version: link:../packages/plans
       '@remixicon/react':
         specifier: ^4.9.0
         version: 4.9.0(react@19.2.7)
@@ -68,6 +71,8 @@ importers:
 
   packages/brand: {}
 
+  packages/plans: {}
+
   web:
     dependencies:
       '@condux/brand':
@@ -76,6 +81,9 @@ importers:
       '@condux/nextjs':
         specifier: link:../sdks/nextjs
         version: link:../sdks/nextjs
+      '@condux/plans':
+        specifier: workspace:*
+        version: link:../packages/plans
       '@remixicon/react':
         specifier: ^4.9.0
         version: 4.9.0(react@19.2.7)

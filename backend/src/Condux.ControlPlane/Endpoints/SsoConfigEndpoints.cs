@@ -58,14 +58,24 @@ internal static class SsoConfigEndpoints
                     }
 
                     var domain = (request.EmailDomain ?? "").Trim().TrimStart('@').ToLowerInvariant();
-                    // The two endpoints must be absolute http(s) URLs — we build the authorize redirect from
-                    // one and POST the code exchange to the other, so a scheme-less value would break the flow.
-                    if (domain.Length == 0 || !domain.Contains('.')
-                        || string.IsNullOrWhiteSpace(request.Issuer)
-                        || !IsHttpUrl(request.AuthorizationEndpoint)
-                        || !IsHttpUrl(request.TokenEndpoint)
-                        || string.IsNullOrWhiteSpace(request.ClientId)
-                        || string.IsNullOrWhiteSpace(request.ClientSecret))
+                    var protocol = (SsoProtocol)request.Protocol;
+                    // Per protocol: OIDC needs absolute http(s) endpoints (we build the authorize redirect
+                    // from one and POST the code exchange to the other) + the client credentials; SAML needs
+                    // the SSO URL + a parseable IdP signing certificate (issuer holds the IdP entity ID).
+                    var valid = domain.Length > 0 && domain.Contains('.')
+                        && !string.IsNullOrWhiteSpace(request.Issuer)
+                        && protocol switch
+                        {
+                            SsoProtocol.Oidc => IsHttpUrl(request.AuthorizationEndpoint)
+                                && IsHttpUrl(request.TokenEndpoint)
+                                && !string.IsNullOrWhiteSpace(request.ClientId)
+                                && !string.IsNullOrWhiteSpace(request.ClientSecret),
+                            SsoProtocol.Saml => IsHttpUrl(request.SamlSsoUrl)
+                                && !string.IsNullOrWhiteSpace(request.SamlCertificate)
+                                && SamlSso.TryLoadCertificate(request.SamlCertificate) is not null,
+                            _ => false,
+                        };
+                    if (!valid)
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_request"));
                     }
@@ -78,10 +88,17 @@ internal static class SsoConfigEndpoints
                         return TypedResults.Conflict(new ErrorResponse("email_domain_taken"));
                     }
 
+                    // Only the chosen protocol's fields are stored — a protocol switch clears the other
+                    // half rather than leaving stale credentials behind.
                     var box = http.RequestServices.GetRequiredService<SecretBox>();
-                    var stored = new StoredSsoConfig(
-                        orgId, domain, request.Issuer, request.AuthorizationEndpoint, request.TokenEndpoint,
-                        request.ClientId, box.Seal(request.ClientSecret), DateTimeOffset.UtcNow);
+                    var stored = protocol == SsoProtocol.Saml
+                        ? new StoredSsoConfig(
+                            orgId, protocol, domain, request.Issuer, null, null, null, null,
+                            request.SamlSsoUrl, request.SamlCertificate!.Trim(), DateTimeOffset.UtcNow)
+                        : new StoredSsoConfig(
+                            orgId, protocol, domain, request.Issuer,
+                            request.AuthorizationEndpoint, request.TokenEndpoint, request.ClientId,
+                            box.Seal(request.ClientSecret!), null, null, DateTimeOffset.UtcNow);
                     await store.UpsertAsync(stored, http.RequestAborted);
                     return TypedResults.Ok(ToResponse(stored));
                 })
@@ -109,7 +126,9 @@ internal static class SsoConfigEndpoints
     private static bool IsHttpUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
 
-    // The client secret is never returned — write-only, like the LLM key.
+    // The client secret is never returned — write-only, like the LLM key. The SAML certificate is the
+    // IdP's public signing certificate, so it echoes back for the admin to verify.
     private static SsoConfigResponse ToResponse(StoredSsoConfig c) => new(
-        c.EmailDomain, c.Issuer, c.AuthorizationEndpoint, c.TokenEndpoint, c.ClientId, c.UpdatedAt);
+        c.EmailDomain, c.Issuer, (int)c.Protocol, c.AuthorizationEndpoint, c.TokenEndpoint, c.ClientId,
+        c.SamlSsoUrl, c.SamlCertificate, c.UpdatedAt);
 }

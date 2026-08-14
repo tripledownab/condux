@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Condux.Agent;
 using Xunit;
 
 namespace Condux.Conductor.Tests;

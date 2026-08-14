@@ -14,11 +14,28 @@
  * ```
  */
 
-import { type ConduxOptions, captureException, init as initServer } from "@condux/core";
+import { type ConduxOptions, captureException, init as initServer, parseDsn } from "@condux/core";
 import { type BrowserOptions, init as initBrowser } from "@condux/browser";
 
-export { captureException, captureMessage, Level, normalizeFramePath } from "@condux/core";
-export type { ConduxOptions, FetchLike, FetchResponse, SendResult } from "@condux/core";
+export {
+  addBreadcrumb,
+  captureException,
+  captureMessage,
+  clearScope,
+  setContext,
+  setTag,
+  setUser,
+  Level,
+  normalizeFramePath,
+} from "@condux/core";
+export type {
+  Breadcrumb,
+  ConduxOptions,
+  ConduxUser,
+  FetchLike,
+  FetchResponse,
+  SendResult,
+} from "@condux/core";
 
 /**
  * Initialize server-side reporting. Call from `register()` in instrumentation.ts (Next runs it on the
@@ -61,12 +78,24 @@ export async function captureRequestError(
 
 /**
  * Initialize client-side reporting and the global browser handlers (uncaught errors + unhandled
- * rejections). Call from instrumentation-client.ts. Reads the DSN from options or the client-exposed
- * `NEXT_PUBLIC_CONDUX_DSN`; inert if neither is set.
+ * rejections). Call from instrumentation-client.ts, passing the DSN EXPLICITLY:
+ * `initClient({ dsn: process.env.NEXT_PUBLIC_CONDUX_DSN })` — Next inlines NEXT_PUBLIC_* only where
+ * application code references the variable, so this package's own env fallback resolves only when the
+ * app names it. Warns and stays inert when no DSN resolves. Global handlers cover uncaught errors and
+ * rejections; React RENDER errors go to error boundaries instead, so wrap the app in the re-exported
+ * ConduxErrorBoundary to cover them.
  */
 export function initClient(options: Partial<BrowserOptions> = {}): void {
   const dsn = options.dsn ?? process.env.NEXT_PUBLIC_CONDUX_DSN;
   if (!dsn) {
+    // Loud, not silent: the env fallback CANNOT work unless the app itself references
+    // NEXT_PUBLIC_CONDUX_DSN (Next inlines NEXT_PUBLIC_* only where application code names the
+    // variable — inside this compiled package it stays undefined). Silent here made a misconfigured
+    // app indistinguishable from a healthy one with no errors.
+    console.warn(
+      "Condux: initClient has no DSN, client reporting is OFF. Pass { dsn: process.env.NEXT_PUBLIC_CONDUX_DSN } "
+        + "explicitly from instrumentation-client.ts so Next inlines the variable into your bundle.",
+    );
     return;
   }
   initBrowser({
@@ -75,4 +104,53 @@ export function initClient(options: Partial<BrowserOptions> = {}): void {
     environment: options.environment ?? process.env.NODE_ENV,
     release: options.release ?? process.env.NEXT_PUBLIC_CONDUX_RELEASE,
   });
+}
+
+// Events are small JSON; anything past this is not one of ours and is refused before it is forwarded.
+const TUNNEL_MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * The ad-blocker tunnel (ADR-0028 slice 5): a same-origin route that forwards browser events to the
+ * relay, so an extension that cuts third-party monitoring hosts cannot drop reports. Pair it with the
+ * client's `tunnel` option:
+ *
+ * ```ts
+ * // app/monitoring/route.ts
+ * import { conduxTunnelRoute } from "@condux/nextjs";
+ * export const POST = conduxTunnelRoute();
+ *
+ * // instrumentation-client.ts
+ * initClient({ tunnel: "/monitoring" });
+ * ```
+ *
+ * The route authenticates with its own DSN (`CONDUX_DSN`, falling back to the public one), never with
+ * anything the browser sent — so it can only ever report into this app's project, and abusing it is
+ * exactly as possible as using the public DSN directly. Body size is capped; the relay's own rate limit
+ * and quota still apply behind it.
+ */
+export function conduxTunnelRoute(
+  options: { dsn?: string; fetch?: typeof fetch } = {},
+): (request: Request) => Promise<Response> {
+  const doFetch = options.fetch ?? fetch;
+  return async (request: Request): Promise<Response> => {
+    const dsn = options.dsn ?? process.env.CONDUX_DSN ?? process.env.NEXT_PUBLIC_CONDUX_DSN;
+    if (!dsn) {
+      return Response.json({ error: "tunnel_not_configured" }, { status: 503 });
+    }
+
+    const body = await request.text();
+    if (body.length > TUNNEL_MAX_BODY_BYTES) {
+      return new Response(null, { status: 413 });
+    }
+
+    const { endpoint, projectId, publicKey } = parseDsn(dsn);
+    const relayResponse = await doFetch(`${endpoint}/api/${projectId}/store/`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-condux-auth": publicKey },
+      body,
+    });
+    // Status passthrough: the browser SDK's transport reads it to decide retries (429/5xx), so hiding a
+    // relay refusal here would turn every failure into a silent success.
+    return new Response(await relayResponse.text(), { status: relayResponse.status });
+  };
 }

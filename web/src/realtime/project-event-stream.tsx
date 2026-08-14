@@ -3,13 +3,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { apiUrl } from "@/src/api/fetcher";
-import { getNewIssueCountQueryKey, getUnviewedFixCountQueryKey } from "@/src/api/generated/condux";
 import { ProjectStatus, useCurrentProject } from "@/src/issues/current-project";
 
 // One live Server-Sent Events connection for the current project (ADR-0030). On each "project changed"
-// ping it invalidates the nav-badge count queries so they refetch at once; the counts also poll slowly on
-// their own, so a dropped stream is self-healing. Opened once (via <ProjectEventStream/> in the sidebar)
-// and shared by every badge, so adding another badge is just another query key here.
+// ping it invalidates every query for that project so open surfaces refetch at once; the counts also poll
+// slowly on their own, so a dropped stream is self-healing. Opened once (via <ProjectEventStream/> in the
+// sidebar) and shared by everything.
 export function useProjectEventStream(projectId: number | null) {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -22,9 +21,17 @@ export function useProjectEventStream(projectId: number | null) {
     });
     // A message means "something changed, refetch". onopen fires on every (re)connect, so it also catches
     // anything that landed while the stream was down.
+    //
+    // Every project-scoped query, not a curated list of keys: this started as the two badge counts, and
+    // the lists were left out — so a fix finished by a runner (or an issue landed by another user) moved
+    // the badge while the list beside it sat stale until reload. A ping is rare (a new or regressed
+    // issue, a fix run changing state) and invalidation only marks; TanStack refetches what is mounted.
     const refresh = () => {
-      queryClient.invalidateQueries({ queryKey: getNewIssueCountQueryKey(projectId) });
-      queryClient.invalidateQueries({ queryKey: getUnviewedFixCountQueryKey(projectId) });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          typeof query.queryKey[0] === "string" &&
+          query.queryKey[0].startsWith(`/api/projects/${projectId}/`),
+      });
     };
     source.onmessage = refresh;
     source.onopen = refresh;

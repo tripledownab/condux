@@ -1,5 +1,9 @@
+using Condux.Agent;
+using Condux.Agent.ManagedAgents;
+using Condux.Agent.Sandbox;
 using Condux.Conductor;
 using Condux.Core.CveFix;
+using Condux.Core.Llm;
 using Condux.Core.FixEngine;
 using Condux.Core.Quotas;
 using Condux.Core.SourceControl;
@@ -13,6 +17,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+// A crash must end the process. As PID 1 in a container it otherwise survives its own unhandled
+// exception and spins, looking healthy while doing nothing.
+ProcessTermination.ExitOnUnhandledException();
 
 // OpenTelemetry (traces + metrics over OTLP; opt-in via OTEL_EXPORTER_OTLP_ENDPOINT).
 builder.AddConduxTelemetry("condux-conductor");
@@ -42,60 +50,89 @@ switch (providerKind)
         builder.Services.AddSingleton<IAgentGateway, SimulatedAgentGateway>();
         break;
     case "anthropic":
-        var anthropicOptions = new AnthropicOptions(builder.Configuration.Require("CONDUX_ANTHROPIC_API_KEY"));
-        var githubOptions = new GitHubAppOptions(
-            builder.Configuration.Require("CONDUX_GITHUB_CLIENT_ID"),
-            ReadPrivateKey(builder.Configuration),
-            builder.Configuration["CONDUX_GITHUB_WEBHOOK_SECRET"] ?? "");
-
-        // Plain singleton HttpClients: the worker is long-running but restarted on deploys, and the fix
-        // call can legitimately take minutes — so the Anthropic client gets a wide timeout and neither
-        // goes through the short-timeout resilience pipeline.
-        // The provider model clients (#66). Both are registered as IModelClient; the gateway picks the
-        // one matching a run's resolved provider (Anthropic by default; an org's BYO config may select
-        // openai-compat). The fix call can take minutes, so each gets a wide timeout and skips the
-        // short-timeout resilience pipeline.
-        builder.Services.AddSingleton<IModelClient>(new AnthropicMessagesClient(
-            new HttpClient { Timeout = TimeSpan.FromMinutes(10) }, anthropicOptions));
-        builder.Services.AddSingleton<IModelClient>(new OpenAiCompatClient(
-            new HttpClient { Timeout = TimeSpan.FromMinutes(10) }));
-        // The fix gateway talks to the neutral source-host seam (#145); GitHub is today's implementation of
-        // both the token minter and the repo client.
-        var githubTokens = new GitHubInstallationTokens(
-            new HttpClient(), githubOptions, () => DateTimeOffset.UtcNow);
-        builder.Services.AddSingleton(githubTokens);
-        builder.Services.AddSingleton<ISourceHostTokens>(githubTokens);
-        builder.Services.AddSingleton<ISourceHostClient>(new GitHubRepoClient(new HttpClient()));
-
-        // BYO-key resolution (#65): when CONDUX_SECRET_KEY is set, a run for an org with a stored config
-        // uses that org's decrypted key + model; otherwise every run uses the platform default.
-        var secretKey = builder.Configuration["CONDUX_SECRET_KEY"];
-        var box = string.IsNullOrEmpty(secretKey) ? null : new SecretBox(secretKey);
-        ILlmConfigReader? llmConfigs = box is null ? null : new PostgresLlmConfigStore(postgres);
-        builder.Services.AddSingleton(new ConductorKeyResolver(anthropicOptions.ApiKey, llmConfigs, box));
-
-        // The agentic loop (ADR-0033) is opt-in while it proves out: on, the model explores and edits the
-        // scoped checkout over several turns; off, it makes the single ADR-0016 patch-proposal call. The
-        // single-shot path also stays the fallback for any provider that cannot drive tools.
-        var agentic = builder.Configuration.GetValue("CONDUX_CONDUCTOR_AGENTIC", defaultValue: false);
-        builder.Services.AddSingleton<IAgentGateway>(sp => new AnthropicAgentGateway(
-            sp.GetRequiredService<IEnumerable<IModelClient>>(),
-            sp.GetRequiredService<ISourceHostTokens>(),
-            sp.GetRequiredService<ISourceHostClient>(),
-            sp.GetRequiredService<ConductorKeyResolver>(),
-            // A turn can take minutes, same as the single-shot call, so this bypasses the short default.
-            new HttpClient { Timeout = TimeSpan.FromMinutes(10) },
-            agentic));
+        AddAnthropicStack(builder, postgres, out var byoGateway, out _, out _, out _);
+        builder.Services.AddSingleton<IAgentGateway>(sp => byoGateway(sp));
+        break;
+    case "managed-agents":
+        // ADR-0038: the vendor-hosted backend, with the in-process stack kept alive beside it — a BYO
+        // org's runs stay on its own key and provider (the routing composite decides per run).
+        AddAnthropicStack(builder, postgres,
+            out var byoInner, out var cmaTokens, out var cmaRepo, out var routedConfigs);
+        var cmaOptions = ManagedAgentsOptions.FromEnv(builder.Configuration);
+        builder.Services.AddSingleton<IAgentGateway>(sp => new RoutingAgentGateway(
+            byoInner(sp),
+            new ManagedAgentsGateway(
+                new ManagedAgentsClient(
+                    // Control calls only (the vendor runs the long work), but session creation uploads
+                    // the prompt, so give it headroom over the 100s default.
+                    new HttpClient { Timeout = TimeSpan.FromMinutes(2) }, cmaOptions),
+                cmaTokens, cmaRepo, cmaOptions),
+            routedConfigs));
         break;
     default:
         throw new InvalidOperationException(
-            $"Unknown CONDUX_CONDUCTOR_PROVIDER '{providerKind}'. Use 'fake', 'simulated-agent' or 'anthropic'.");
+            $"Unknown CONDUX_CONDUCTOR_PROVIDER '{providerKind}'. Use 'fake', 'simulated-agent', 'anthropic' or 'managed-agents'.");
 }
 
 if (providerKind != "fake")
 {
+    var pollOptions = ConductorPollOptions.FromEnv(builder.Configuration, providerKind);
     builder.Services.AddSingleton<IFixProvider>(sp =>
-        new ManagedAgentFixProvider(sp.GetRequiredService<IAgentGateway>()));
+        new ManagedAgentFixProvider(sp.GetRequiredService<IAgentGateway>(), pollOptions));
+}
+
+// The full in-process fix stack (model clients, source-host seams, BYO-key resolution, the ADR-0033
+// gateway) — one body serving both the 'anthropic' mode and, as the BYO side, 'managed-agents'.
+void AddAnthropicStack(
+    HostApplicationBuilder builder, string postgres,
+    out Func<IServiceProvider, AnthropicAgentGateway> gatewayFactory,
+    out GitHubInstallationTokens githubTokens, out ISourceHostClient repoClient,
+    out ILlmConfigReader? llmConfigs)
+{
+    var anthropicOptions = new AnthropicOptions(builder.Configuration.Require("CONDUX_ANTHROPIC_API_KEY"));
+    var githubOptions = new GitHubAppOptions(
+        builder.Configuration.Require("CONDUX_GITHUB_CLIENT_ID"),
+        ReadPrivateKey(builder.Configuration),
+        builder.Configuration["CONDUX_GITHUB_WEBHOOK_SECRET"] ?? "");
+
+    // Plain singleton HttpClients: the worker is long-running but restarted on deploys, and the fix
+    // call can legitimately take minutes — so each model client gets a wide timeout and skips the
+    // short-timeout resilience pipeline. Both are IModelClient; the gateway picks the one matching a
+    // run's resolved provider (Anthropic by default; an org's BYO config may select openai-compat, #66).
+    builder.Services.AddSingleton<IModelClient>(new AnthropicMessagesClient(
+        new HttpClient { Timeout = TimeSpan.FromMinutes(10) }, anthropicOptions));
+    builder.Services.AddSingleton<IModelClient>(new OpenAiCompatClient(
+        new HttpClient { Timeout = TimeSpan.FromMinutes(10) }));
+    // The fix gateway talks to the neutral source-host seam (#145); GitHub is today's implementation of
+    // both the token minter and the repo client.
+    githubTokens = new GitHubInstallationTokens(new HttpClient(), githubOptions, () => DateTimeOffset.UtcNow);
+    repoClient = new GitHubRepoClient(new HttpClient());
+    builder.Services.AddSingleton(githubTokens);
+    builder.Services.AddSingleton<ISourceHostTokens>(githubTokens);
+    builder.Services.AddSingleton(repoClient);
+
+    // BYO-key resolution (#65): when CONDUX_SECRET_KEY is set, a run for an org with a stored config
+    // uses that org's decrypted key + model; otherwise every run uses the platform default.
+    var secretKey = builder.Configuration["CONDUX_SECRET_KEY"];
+    var box = string.IsNullOrEmpty(secretKey) ? null : new SecretBox(secretKey);
+    llmConfigs = box is null ? null : new PostgresLlmConfigStore(postgres);
+    builder.Services.AddSingleton(new ModelKeyResolver(anthropicOptions.ApiKey, llmConfigs, box));
+
+    // The agentic loop (ADR-0033) is opt-in while it proves out: on, the model explores and edits the
+    // scoped checkout over several turns; off, it makes the single ADR-0016 patch-proposal call. The
+    // single-shot path also stays the fallback for any provider that cannot drive tools. The sandbox
+    // (slice 2) is opt-in on top: without it the agent can read and edit but not run anything.
+    var agentic = builder.Configuration.GetValue("CONDUX_CONDUCTOR_AGENTIC", defaultValue: false);
+    var sandbox = SandboxOptions.FromEnv(builder.Configuration);
+    gatewayFactory = sp => new AnthropicAgentGateway(
+        sp.GetRequiredService<IEnumerable<IModelClient>>(),
+        sp.GetRequiredService<ISourceHostTokens>(),
+        sp.GetRequiredService<ISourceHostClient>(),
+        sp.GetRequiredService<ModelKeyResolver>(),
+        // A turn can take minutes, same as the single-shot call, so this bypasses the short default.
+        new HttpClient { Timeout = TimeSpan.FromMinutes(10) },
+        agentic,
+        sandbox);
 }
 
 builder.Services.AddSingleton<FixOrchestrator>();
@@ -114,6 +151,12 @@ builder.Services.AddClickHouseIssueStatsReader(
     builder.Configuration.Require("CONDUX_CLICKHOUSE_PASSWORD"));
 builder.Services.AddSingleton(new PostgresFixVerification(postgres));
 builder.Services.AddSingleton(new IssueRepository(postgres));
+
+// Live dashboard nudges (ADR-0030): a hosted run concluding, a verification verdict and a CVE bump
+// finishing all happen outside any browser, so without these pings the open fixes surface sits on its
+// slow poll. Best-effort via ProjectEventNudge, like every other notify.
+builder.Services.AddSingleton(new ProjectEventNotifier(postgres));
+builder.Services.AddSingleton(new RepoLinkRepository(postgres));
 
 builder.Services.AddHostedService<ConductorWorker>();
 builder.Services.AddHostedService<CveFixWorker>();

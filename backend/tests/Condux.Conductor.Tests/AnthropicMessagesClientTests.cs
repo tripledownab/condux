@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Condux.Agent;
 using Xunit;
 
 namespace Condux.Conductor.Tests;
@@ -59,5 +60,35 @@ public class AnthropicMessagesClientTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => Create(empty).CreateAsync("m", "s", "u", "k", ""));
         Assert.Contains("refusal", ex.Message);
+    }
+
+    [Fact]
+    public async Task An_api_error_reads_as_its_type_and_message_not_a_raw_json_blob()
+    {
+        // The failure summary lands verbatim on the fix run the customer reads. Anthropic's full error
+        // envelope (type wrapper, request id, escaped quotes) turned "invalid x-api-key" into a wire
+        // capture; the one line a person needs is the type and the message.
+        var handler = new StubHandler(HttpStatusCode.Unauthorized, """
+            {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},
+             "request_id":"req_test"}
+            """);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Create(handler).CreateAsync("m", "s", "u", "k", ""));
+
+        Assert.Equal("Anthropic API returned 401: authentication_error: invalid x-api-key", ex.Message);
+    }
+
+    [Fact]
+    public async Task An_unparseable_error_body_still_surfaces_raw()
+    {
+        // The fallback for a proxy's HTML error page or a half-written body: show what came back rather
+        // than replacing the real problem with a JSON parse complaint.
+        var handler = new StubHandler(HttpStatusCode.BadGateway, "<html>upstream timeout</html>");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Create(handler).CreateAsync("m", "s", "u", "k", ""));
+
+        Assert.Contains("upstream timeout", ex.Message);
     }
 }

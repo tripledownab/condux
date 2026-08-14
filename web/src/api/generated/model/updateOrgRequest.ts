@@ -9,4 +9,6 @@ export interface UpdateOrgRequest {
   aiFixMode: number;
   /** @nullable */
   aiFixCostCapUsd: number | null;
+  /** @nullable */
+  fixExecution: number | null;
 }

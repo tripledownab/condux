@@ -23,7 +23,6 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class FixEndpoints
 {
-    private const string DefaultModel = "claude-opus-4-8";
 
     public static void MapFixEndpoints(this IEndpointRouteBuilder app)
     {
@@ -34,7 +33,8 @@ internal static class FixEndpoints
                     RepoLinkRepository repos, ReleaseRepository releases,
                     GithubInstallationRepository installations,
                     ClickHouseEventReader events, IAiFixQuota quota, IAiFixSpend spend,
-                    IFixRequestPublisher publisher, ILoggerFactory loggerFactory) =>
+                    IFixRequestPublisher publisher, PostgresJobLeaseStore leases, IFixStore fixes,
+                    ProjectEventNotifier projectEvents, ILoggerFactory loggerFactory) =>
                 {
                     if (await issues.GetByPublicIdAsync(projectId, issueId) is not { } issue)
                     {
@@ -86,7 +86,8 @@ internal static class FixEndpoints
                     // (Team/Business compute ceiling; Enterprise/BYO has no default, so it's a pure customer
                     // budget). Checked before reserving a run so a capped org burns no allowance.
                     if (AiFixBudget.IsOverCap(
-                        AiFixBudget.EffectiveCapUsd(org.AiFixCostCapUsd, limits),
+                        AiFixBudget.EffectiveCapUsd(
+                            org.AiFixCostCapUsd, limits, (FixExecution)org.FixExecution),
                         await spend.MonthToDateUsdAsync(org.Id, DateTimeOffset.UtcNow, http.RequestAborted)))
                     {
                         return TypedResults.Conflict(new ErrorResponse("ai_fix_cost_cap_exceeded"));
@@ -124,7 +125,7 @@ internal static class FixEndpoints
                         http.RequestServices.GetService<ISourceHostTokens>(),
                         http.RequestServices.GetService<ISourceHostClient>(),
                         events, repos, logger, http.RequestAborted);
-                    var job = new FixJob(issue.InternalId, repo.RepoFullName, baseBranch, actor, DefaultModel)
+                    var job = new FixJob(issue.InternalId, repo.RepoFullName, baseBranch, actor, ModelDefaults.Fix)
                     {
                         Prompt = context.Prompt,
                         ScopedPaths = context.ScopedPaths,
@@ -132,12 +133,43 @@ internal static class FixEndpoints
                         OrgId = org.Id,
                     };
 
-                    // The reservation is already taken; if the job never reaches the topic the run will
+                    // The reservation is already taken; if the job never reaches the queue the run will
                     // never happen, so refund it here (the orchestrator only refunds runs it actually
                     // started). A broker outage then surfaces as a clear 503, not a silently burnt fix.
                     try
                     {
-                        await publisher.PublishAsync(job, http.RequestAborted);
+                        // Where it goes is the org's choice (ADR-0033 slice 4c). A self-hosting org gets a
+                        // leasable row its own runner takes; everyone else gets the Kafka topic our
+                        // Conductor drains. Everything above this line — the context, the double scrub, the
+                        // cost cap, the allowance — is identical either way, which is the point.
+                        if ((FixExecution)org.FixExecution == FixExecution.Runner)
+                        {
+                            var fixId = Guid.CreateVersion7();
+                            await leases.EnqueueAsync(
+                                fixId, issue.InternalId, repo.RepoFullName,
+                                new RunnerJobContext(baseBranch, context.Prompt, context.ScopedPaths),
+                                DateTimeOffset.UtcNow, http.RequestAborted);
+
+                            // The hosted orchestrator writes this when it starts the run; a run we hand to
+                            // a runner never reaches it, so without this the trail begins at "leased" and
+                            // nothing records who asked for the fix — fix_suggestions has no actor column,
+                            // so that fact would exist nowhere. Best-effort, because the row is committed:
+                            // failing here would 503 and refund a run that is going to happen anyway.
+                            await FixAudit.TryWriteAsync(
+                                fixes, logger, fixId, actor, "requested",
+                                new
+                                {
+                                    repo = repo.RepoFullName,
+                                    model = "",
+                                    provider = PostgresJobLeaseStore.RunnerProvider,
+                                    promptHash = FixOrchestrator.PromptHash(context.Prompt),
+                                },
+                                http.RequestAborted);
+                        }
+                        else
+                        {
+                            await publisher.PublishAsync(job, http.RequestAborted);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -155,6 +187,12 @@ internal static class FixEndpoints
                             new ErrorResponse("fix_enqueue_failed"),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
+
+                    // A new run exists; nudge every open dashboard for this project (ADR-0030) so the
+                    // fixes surface shows it without waiting for a poll — the requester's own tab already
+                    // knows via its mutation, but any other viewer would otherwise see nothing.
+                    await ProjectEventNudge.TrySendAsync(
+                        projectEvents, logger, projectId, http.RequestAborted);
 
                     return TypedResults.Accepted($"/api/projects/{projectId}/issues/{issueId}/fixes");
                 })

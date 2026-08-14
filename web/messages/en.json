@@ -6,7 +6,8 @@
   "common": {
     "loading": "Loading",
     "comboboxSearch": "Search",
-    "comboboxEmpty": "No results."
+    "comboboxEmpty": "No results.",
+    "renderErrorFallback": "Something went wrong rendering this page. The error has been reported."
   },
   "platforms": {
     "javascript": "JavaScript / Node",
@@ -228,6 +229,7 @@
     "continueWithGoogle": "Continue with Google",
     "continueWithSso": "Sign in with SSO",
     "ssoNeedsEmail": "Enter your work email first",
+    "legalNotice": "By creating an account you agree to our <terms>Terms of Service</terms> and <privacy>Privacy Policy</privacy>.",
     "login": {
       "title": "Sign in",
       "submit": "Sign in",
@@ -292,14 +294,22 @@
     },
     "sso": {
       "title": "Enterprise SSO",
-      "description": "Let your team sign in through your identity provider (Okta, Entra, Auth0, Keycloak). Members are routed by their email domain.",
+      "description": "Let your team sign in through your identity provider (Okta, Entra, Auth0, Keycloak) over OIDC or SAML. Members are routed by their email domain.",
+      "protocolLabel": "Protocol",
+      "protocolOidc": "OIDC",
+      "protocolSaml": "SAML",
       "loading": "Loading SSO settings.",
       "error": "Could not load SSO settings. Try again.",
       "noOrg": "Create an organization first.",
       "adminOnly": "Only organization admins can manage SSO.",
       "callbackLabel": "Redirect URI",
+      "acsUrlLabel": "ACS URL",
+      "spEntityIdLabel": "SP entity ID",
       "emailDomainLabel": "Email domain",
       "issuerLabel": "Issuer",
+      "samlIssuerLabel": "IdP entity ID",
+      "samlSsoUrlLabel": "Single sign-on URL",
+      "samlCertificateLabel": "IdP signing certificate (PEM)",
       "authorizationEndpointLabel": "Authorization endpoint",
       "tokenEndpointLabel": "Token endpoint",
       "clientIdLabel": "Client ID",
@@ -312,7 +322,7 @@
       "requiresUpgrade": "Enterprise SSO is available on the Business and Enterprise plans.",
       "domainTaken": "That email domain is already claimed by another organization.",
       "notConfigured": "Single sign-on is not enabled on this deployment.",
-      "invalidRequest": "Check the fields: the endpoints must be full https URLs and the domain must be valid.",
+      "invalidRequest": "Check the fields: URLs must be full https URLs, the domain must be valid and a SAML certificate must be a valid PEM or base64 certificate.",
       "failed": "Could not save. Try again."
     },
     "notifications": {
@@ -432,6 +442,14 @@
       "aiFixAutoHint": "Suggest a fix automatically when a new or regressed error-level issue lands (uses your AI-fix allowance).",
       "aiFixUpgrade": "Automatic fixes are not included in this plan. Upgrade to enable them.",
       "aiFixFailed": "Could not update the AI-fix settings. Try again.",
+      "executionTitle": "Where fixes run",
+      "executionDescription": "Hosted runs use Condux compute and count toward your plan's compute limit. A self-hosted runner uses your machines and your own model key, so that limit does not apply.",
+      "executionHosted": "Hosted by Condux",
+      "executionHostedHint": "The Conductor runs on Condux infrastructure. No setup needed.",
+      "executionRunner": "Your own runner",
+      "executionRunnerHint": "A runner you deploy leases fix work over an outbound connection. Your code and credentials stay inside your network.",
+      "executionRunnerUpgrade": "Self-hosted runners are available from the Team plan.",
+      "runnerUpgrade": "Self-hosted runners are not included in this plan. Upgrade to enable them.",
       "costCapTitle": "Monthly spend cap",
       "costCapDescription": "Pause new Conductor fixes once this month's model spend reaches the cap. Leave blank for no cap.",
       "costCapLabel": "Cap (USD)",
@@ -685,6 +703,30 @@
         "openai-compat": "OpenAI-compatible"
       },
       "baseUrlLabel": "Base URL"
+    },
+    "runnerTokens": {
+      "title": "Runner tokens",
+      "description": "The credential a self-hosted runner presents to lease fix work. The token is shown once; only a hash is stored.",
+      "nameLabel": "Token label",
+      "namePlaceholder": "e.g. build-server-1",
+      "create": "Create token",
+      "creating": "Creating...",
+      "mintedTitle": "Token \"{name}\" created. Copy it now; it will not be shown again.",
+      "mintedLabel": "Runner token",
+      "mintedHint": "Store it as a secret on the machine that runs the runner.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "dismiss": "Done",
+      "loading": "Loading tokens...",
+      "error": "Could not load runner tokens.",
+      "empty": "No runner tokens yet.",
+      "active": "Active",
+      "revoked": "Revoked",
+      "revoke": "Revoke",
+      "lastUsed": "Last used {date}",
+      "neverUsed": "Never used",
+      "connectHint": "Start a runner with this token. The fake provider proves the connection without a model key; switch to a real provider once it leases work.",
+      "connectProviderHint": "See the self-hosting docs for the real provider and its model and git credentials."
     }
   },
   "issues": {
@@ -696,6 +738,8 @@
     "loading": "Loading issues.",
     "error": "Could not load issues. Try again.",
     "empty": "No issues yet. Send an event with this project's DSN and it appears here.",
+    "emptyVerifyHint": "Waiting for your first event. Verify the pipeline end to end with",
+    "emptyDeveloperLink": "Open the Developer guide for setup snippets",
     "loadMore": "Load more",
     "loadingMore": "Loading.",
     "columns": {
@@ -789,6 +833,7 @@
         "repoLabel": "Repository",
         "branchLabel": "Base branch",
         "remaining": "{count, plural, one {# fix remaining} other {# fixes remaining}} this period.",
+        "stale": "This issue has not been seen for {days} days. It may already be fixed - a run still uses your allowance.",
         "remainingUnlimited": "Your plan includes unlimited fixes.",
         "cancel": "Cancel",
         "confirm": "Suggest fix",
@@ -1000,10 +1045,12 @@
       "timeline": "Activity",
       "audit": {
         "requested": "Fix requested",
+        "leased": "Claimed by a runner",
         "draft_pr_opened": "Draft PR opened",
         "fix_merged": "Draft PR merged",
         "fix_verified": "Verified in production",
-        "fix_did_not_hold": "Fix did not hold"
+        "fix_did_not_hold": "Fix did not hold",
+        "failed": "Run failed"
       }
     },
     "spend": {

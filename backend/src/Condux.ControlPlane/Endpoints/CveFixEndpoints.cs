@@ -2,6 +2,7 @@ using System.Globalization;
 using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
 using Condux.Core.CveFix;
+using Condux.Core.FixEngine;
 using Condux.Core.Plans;
 using Condux.Core.Quotas;
 using Condux.Core.SourceControl;
@@ -20,7 +21,6 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class CveFixEndpoints
 {
-    private const string DefaultModel = "claude-opus-4-8";
 
     public static void MapCveFixEndpoints(this IEndpointRouteBuilder app)
     {
@@ -29,6 +29,7 @@ internal static class CveFixEndpoints
                     long projectId, Guid repoId, StartCveFixRequest req, HttpContext http,
                     RepoLinkRepository repos, ProjectRepository projects, OrgRepository orgs,
                     GithubInstallationRepository installations, ICveFixStore cveFixes, ICveFixPublisher publisher,
+                    PostgresJobLeaseStore leases, ProjectEventNotifier projectEvents,
                     IAiFixQuota quota, IAiFixSpend spend, ILoggerFactory loggerFactory) =>
                 {
                     var ct = http.RequestAborted;
@@ -59,13 +60,19 @@ internal static class CveFixEndpoints
                     }
 
                     // Re-fetch the advisory from GitHub and match by id — the client only supplies the GHSA id,
-                    // so a stale/forged package or version can never drive the bump.
-                    DependabotAlert? alert;
+                    // so a stale/forged package or version can never drive the bump. One advisory can raise an
+                    // alert per monorepo workspace member (#41), so keep every match: the run bumps them all in
+                    // one draft PR, with the fixable one (it names the patched version) leading.
+                    IReadOnlyList<DependabotAlert> matching;
                     try
                     {
                         var token = await tokens.GetAsync(installs[0].InstallationId, ct);
-                        alert = (await repoClient.ListDependabotAlertsAsync(token, repo.RepoFullName, ct))
-                            .FirstOrDefault(a => a.GhsaId == req.GhsaId);
+                        matching =
+                        [
+                            .. (await repoClient.ListDependabotAlertsAsync(token, repo.RepoFullName, ct))
+                                .Where(a => a.GhsaId == req.GhsaId)
+                                .OrderByDescending(a => !string.IsNullOrEmpty(a.FixedVersion)),
+                        ];
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -74,17 +81,25 @@ internal static class CveFixEndpoints
                         return TypedResults.Conflict(new ErrorResponse("github_not_connected"));
                     }
 
-                    if (alert is null)
+                    if (matching.Count == 0)
                     {
                         return TypedResults.NotFound();
                     }
+                    var alert = matching[0];
                     if (string.IsNullOrEmpty(alert.FixedVersion))
                     {
                         return TypedResults.Conflict(new ErrorResponse("cve_not_fixable"));
                     }
+                    // Manifests from the chosen PACKAGE's alerts only: one advisory can affect several
+                    // packages, and scoping another package's manifest into a run whose prompt bumps
+                    // this one would touch a file the instruction does not cover.
                     var context = CveFixContextAssembler.Assemble(
                         alert.Package, alert.Ecosystem, alert.VulnerableRange, alert.FixedVersion,
-                        alert.GhsaId, alert.CveId, alert.Summary);
+                        alert.GhsaId, alert.CveId, alert.Summary,
+                        [.. matching
+                            .Where(a => a.Package == alert.Package)
+                            .Select(a => a.ManifestPath)
+                            .OfType<string>()]);
                     if (context.ScopedPaths.Count == 0)
                     {
                         return TypedResults.Conflict(new ErrorResponse("cve_ecosystem_unsupported"));
@@ -99,9 +114,11 @@ internal static class CveFixEndpoints
 
                     // Cost cap (ADR-0020/0027) then allowance (#100/#112) — the same budget an issue fix
                     // draws from, so a capped/exhausted org burns nothing here. The cap is the org override
-                    // else the tier's fair-use compute default. Checked before reserving.
+                    // else the tier's fair-use compute default (waived for runner execution, whose model
+                    // spend is the customer's own). Checked before reserving.
                     if (AiFixBudget.IsOverCap(
-                        AiFixBudget.EffectiveCapUsd(org.AiFixCostCapUsd, limits),
+                        AiFixBudget.EffectiveCapUsd(
+                            org.AiFixCostCapUsd, limits, (FixExecution)org.FixExecution),
                         await spend.MonthToDateUsdAsync(org.Id, DateTimeOffset.UtcNow, ct)))
                     {
                         return TypedResults.Conflict(new ErrorResponse("ai_fix_cost_cap_exceeded"));
@@ -119,7 +136,7 @@ internal static class CveFixEndpoints
                     var job = new CveFixJob(
                         repo.Id, repo.RepoFullName, repo.DefaultBranch, alert.GhsaId, alert.CveId,
                         alert.Package, alert.Ecosystem, alert.VulnerableRange, alert.FixedVersion,
-                        alert.HtmlUrl, actor, DefaultModel)
+                        alert.HtmlUrl, actor, ModelDefaults.Fix)
                     {
                         Prompt = context.Prompt,
                         ScopedPaths = context.ScopedPaths,
@@ -131,7 +148,25 @@ internal static class CveFixEndpoints
                     // refund here (the orchestrator only refunds runs it actually started).
                     try
                     {
-                        await publisher.PublishAsync(job, ct);
+                        // Same routing as an issue fix (ADR-0033 slice 4c): a self-hosting org gets a
+                        // leasable row its own runner takes; everyone else gets the Kafka topic. The
+                        // advisory re-fetch, the cost cap and the allowance above are identical either way.
+                        if ((FixExecution)org.FixExecution == FixExecution.Runner)
+                        {
+                            var now = DateTimeOffset.UtcNow;
+                            await leases.EnqueueCveAsync(
+                                new CveFixRun(
+                                    Guid.CreateVersion7(), repo.Id, alert.GhsaId, alert.CveId,
+                                    alert.Package, alert.Ecosystem, alert.VulnerableRange, alert.FixedVersion,
+                                    alert.HtmlUrl, FixStatus.Pending, PostgresJobLeaseStore.RunnerProvider,
+                                    Model: "", Branch: "", PrUrl: "", Summary: "", actor, now, now),
+                                new RunnerJobContext(repo.DefaultBranch, context.Prompt, context.ScopedPaths),
+                                ct);
+                        }
+                        else
+                        {
+                            await publisher.PublishAsync(job, ct);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -149,6 +184,12 @@ internal static class CveFixEndpoints
                             new ErrorResponse("cve_fix_enqueue_failed"),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
+
+                    // A new run exists; nudge every open dashboard for this project (ADR-0030), same as
+                    // the issue-fix request path — any other viewer's CVE panel would otherwise sit on
+                    // its slow poll.
+                    await ProjectEventNudge.TrySendAsync(
+                        projectEvents, loggerFactory.CreateLogger(nameof(CveFixEndpoints)), projectId, ct);
 
                     return TypedResults.Accepted($"/api/projects/{projectId}/repos/{repoId}/cve-fixes");
                 })

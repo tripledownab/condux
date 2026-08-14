@@ -14,6 +14,12 @@ importers:
       '@condux/core':
         specifier: link:../core
         version: link:../core
+      '@condux/react':
+        specifier: link:../react
+        version: link:../react
+      react:
+        specifier: ^18.0.0 || ^19.0.0
+        version: 19.2.8
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -26,6 +32,10 @@ packages:
 
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
+
+  react@19.2.8:
+    resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
+    engines: {node: '>=0.10.0'}
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -40,6 +50,8 @@ snapshots:
   '@types/node@22.20.1':
     dependencies:
       undici-types: 6.21.0
+
+  react@19.2.8: {}
 
   typescript@5.9.3: {}
 

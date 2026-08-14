@@ -54,6 +54,24 @@ test("uploadSourceMaps posts each map with the release token, keyed by release +
   assert.equal(calls[0].init.method, "POST");
 });
 
+test("a pointer-paired map uploads under the CHUNK's name, with the stamped debugId", async () => {
+  // Turbopack shape: the map's own name shares nothing with the chunk's, so only the chunk's
+  // sourceMappingURL pointer can key the upload by the name a stack frame will actually carry.
+  const dir = await mkdtemp(join(tmpdir(), "condux-turbo-"));
+  await writeFile(join(dir, "00d3wejgy8s0v.js"), "code();\n//# sourceMappingURL=34hirxaxltle0.js.map\n");
+  await writeFile(
+    join(dir, "34hirxaxltle0.js.map"),
+    '{"version":3,"mappings":"AAAA","debugId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}',
+  );
+  const { fetch, calls } = recordingFetch(201);
+
+  const result = await uploadSourceMaps({ dir, url: "https://x", release: "v1", token: "t", fetch });
+
+  assert.equal(result.uploaded, 1);
+  assert.ok(calls[0].url.includes("filename=00d3wejgy8s0v.js"));
+  assert.ok(calls[0].url.includes("debugId=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+});
+
 test("uploadSourceMaps reports a failed upload without throwing", async () => {
   const dir = await buildFixture();
   const { fetch } = recordingFetch(401);

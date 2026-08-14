@@ -1,13 +1,14 @@
 namespace Condux.Core.FixEngine;
 
 /// <summary>The tools an agentic fix run may call. Deliberately tiny: the agent explores the scoped
-/// checkout, edits files, and says when it is done. Running commands arrives with the sandboxed
-/// workspace, so it is absent here rather than declared and unimplemented.</summary>
+/// checkout, edits files, optionally runs a build or test command, and says when it is done. The command
+/// tool is offered only by a workspace that can execute, so it is never declared and unimplemented.</summary>
 public static class AgentToolNames
 {
     public const string ListFiles = "list_files";
     public const string ReadFile = "read_file";
     public const string WriteFile = "write_file";
+    public const string RunCommand = "run_command";
     public const string Finish = "finish";
 }
 
@@ -36,6 +37,7 @@ public sealed record AgentToolResult(string Id, string Content, bool IsError = f
 /// <summary>The tool set offered to the model, as the neutral schema each provider adapter maps.</summary>
 public static class AgentToolCatalog
 {
+    /// <summary>The tools every workspace supports.</summary>
     public static IReadOnlyList<AgentToolSchema> All { get; } =
     [
         new(AgentToolNames.ListFiles, "List the repo-relative paths available in the workspace.", []),
@@ -47,4 +49,17 @@ public static class AgentToolCatalog
         new(AgentToolNames.Finish, "Finish the run once the fix is complete.",
             [new("summary", "A short description of the fix, used as the pull request body.")]),
     ];
+
+    private static readonly AgentToolSchema RunCommand = new(
+        AgentToolNames.RunCommand,
+        "Run one build, test or scanning command in the workspace and read its output. Commands run "
+        + "directly rather than through a shell, so pipes, redirects and chained commands are unavailable.",
+        [new("command", "The command to run, for example 'dotnet test' or 'pnpm test'.")]);
+
+    /// <summary>
+    /// The tools this workspace can actually honour. A workspace that cannot execute never sees the
+    /// command tool offered, so the model does not spend turns discovering that it always fails.
+    /// </summary>
+    public static IReadOnlyList<AgentToolSchema> For(IAgentWorkspace workspace) =>
+        workspace.CanRunCommands ? [.. All, RunCommand] : All;
 }

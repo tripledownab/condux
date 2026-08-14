@@ -17,6 +17,12 @@ internal sealed class SsoOidcClient(HttpClient http)
         StoredSsoConfig config, string clientSecret, string redirectUri, string code,
         DateTimeOffset now, CancellationToken ct)
     {
+        // The caller resolves only OIDC-protocol configs here, but the columns are nullable since the
+        // registry also holds SAML configs — a half-set row can't be exchanged.
+        if (config.TokenEndpoint is null || config.ClientId is null)
+        {
+            return null;
+        }
         var idToken = await OidcExchange.FetchIdTokenAsync(
             http, config.TokenEndpoint, config.ClientId, clientSecret, redirectUri, code, ct);
         return OidcIdToken.Validate(idToken, [config.Issuer], config.ClientId, now);

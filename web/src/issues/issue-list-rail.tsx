@@ -95,7 +95,16 @@ export function IssueListRail({
         {isPending ? <RailNotice text={translate("loading")} /> : null}
         {isError ? <RailNotice text={translate("error")} /> : null}
         {!isPending && !isError && issues.length === 0 ? (
-          <RailNotice text={translate("empty")} />
+          <div className="flex flex-col gap-2 p-4 text-sm text-muted-foreground">
+            <p>{translate("empty")}</p>
+            <p>
+              {translate("emptyVerifyHint")}{" "}
+              <code className="font-mono text-xs text-foreground">npx condux test-event</code>
+            </p>
+            <Link href="/developer" className="text-primary hover:underline">
+              {translate("emptyDeveloperLink")}
+            </Link>
+          </div>
         ) : null}
         <ul>
           {issues.map((issue) => {

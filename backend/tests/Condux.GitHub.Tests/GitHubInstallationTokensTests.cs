@@ -12,15 +12,18 @@ public class GitHubInstallationTokensTests
     {
         public int Calls { get; private set; }
         public HttpRequestMessage? LastRequest { get; private set; }
+        public string? LastBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
             LastRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            // Read now — the caller disposes the request (and its content) as soon as the call returns.
+            LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(tokenJson),
-            });
+            };
         }
     }
 
@@ -51,6 +54,62 @@ public class GitHubInstallationTokensTests
         Assert.Equal(1, handler.Calls); // the second call is served from cache
         Assert.Equal("Bearer", handler.LastRequest?.Headers.Authorization?.Scheme);
         Assert.Contains("/app/installations/42/access_tokens", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Read_only_mint_downscopes_permissions_and_repository()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddYears(56);
+        var handler = new StubHandler($$"""{"token":"ghs_ro","expires_at":"{{now.AddHours(1):O}}"}""");
+        using var http = new HttpClient(handler);
+        var tokens = new GitHubInstallationTokens(http, Options(), () => now);
+
+        var token = await tokens.GetReadOnlyAsync(42, "acme/app");
+
+        Assert.Equal("ghs_ro", token);
+        // The downscope IS the security property: contents+metadata read, one bare repo name. GitHub
+        // enforces it at mint, so asserting the body is asserting what the vendor sandbox can ever do.
+        using var parsed = System.Text.Json.JsonDocument.Parse(handler.LastBody!);
+        var permissions = parsed.RootElement.GetProperty("permissions");
+        Assert.Equal("read", permissions.GetProperty("contents").GetString());
+        Assert.Equal("read", permissions.GetProperty("metadata").GetString());
+        var repos = parsed.RootElement.GetProperty("repositories");
+        Assert.Equal(1, repos.GetArrayLength());
+        Assert.Equal("app", repos[0].GetString());
+    }
+
+    [Fact]
+    public async Task Read_only_and_full_tokens_cache_separately()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddYears(56);
+        var handler = new StubHandler($$"""{"token":"ghs_t","expires_at":"{{now.AddHours(1):O}}"}""");
+        using var http = new HttpClient(handler);
+        var tokens = new GitHubInstallationTokens(http, Options(), () => now);
+
+        await tokens.GetAsync(42);
+        await tokens.GetReadOnlyAsync(42, "acme/app");
+        await tokens.GetReadOnlyAsync(42, "acme/app");
+        await tokens.GetReadOnlyAsync(42, "acme/other");
+
+        // Full + ro(app) + ro(other) each mint once; the repeated ro(app) is cached. A shared cache
+        // entry would hand the full-permission token to the read-only path.
+        Assert.Equal(3, handler.Calls);
+    }
+
+    [Fact]
+    public async Task The_default_seam_implementation_refuses_rather_than_hands_a_full_token()
+    {
+        // Any ISourceHostTokens impl that does not override GetReadOnlyAsync (the runner's static
+        // tokens, a future GitLab impl) must throw, never silently return its write-capable token.
+        ISourceHostTokens fallback = new StaticTokens(); // default members resolve via the interface
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => fallback.GetReadOnlyAsync(1, "acme/app"));
+    }
+
+    private sealed class StaticTokens : ISourceHostTokens
+    {
+        public Task<string> GetAsync(long installationId, CancellationToken ct = default) =>
+            Task.FromResult("full-token");
     }
 
     [Fact]

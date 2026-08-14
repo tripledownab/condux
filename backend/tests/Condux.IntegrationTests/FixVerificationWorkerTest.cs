@@ -132,6 +132,7 @@ public sealed class FixVerificationWorkerTest(PostgresFixture pg, ClickHouseFixt
             verification,
             new IssueRepository(pg.ConnectionString),
             new PostgresFixStore(pg.ConnectionString),
+            new ProjectEventNotifier(pg.ConnectionString),
             new Condux.Telemetry.ConduxSelfReporter(null));
 
         await worker.ConcludeAsync(await verification.ListWatchingAsync(), stats, now, default);

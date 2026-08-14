@@ -10,6 +10,10 @@ using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// A crash must end the process. As PID 1 in a container it otherwise survives its own unhandled
+// exception and spins, looking healthy while doing nothing.
+ProcessTermination.ExitOnUnhandledException();
+
 // OpenTelemetry (traces + metrics over OTLP; opt-in via OTEL_EXPORTER_OTLP_ENDPOINT).
 builder.AddConduxTelemetry("condux-controlplane",
     tracing => tracing.AddAspNetCoreInstrumentation(),
@@ -83,13 +87,14 @@ app.UseAuthorization();
 // Expose the OpenAPI JSON (no UI — the client generator and API consumers read this).
 app.MapOpenApi();
 
-app.MapOperationalEndpoints();
+app.MapOperationalEndpoints(builder.Configuration);
 app.MapIssueEndpoints();
 app.MapIssueNoteEndpoints();
 app.MapProvisioningEndpoints();
 app.MapRepoEndpoints();
 app.MapReleaseTokenEndpoints();
 app.MapMcpTokenEndpoints();
+app.MapRunnerEndpoints();
 app.MapMcpEndpoints();
 app.MapSourceMapEndpoints();
 app.MapFixEndpoints();
@@ -105,6 +110,7 @@ app.MapAuthEndpoints();
 app.MapOnboardingEndpoints();
 app.MapOAuthEndpoints();
 app.MapSsoEndpoints();
+app.MapSamlSsoEndpoints();
 app.MapSsoConfigEndpoints();
 app.MapBillingEndpoints();
 app.MapAdminEndpoints();

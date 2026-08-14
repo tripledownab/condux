@@ -8,6 +8,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Condux.Agent/Condux.Agent.csproj" />
     <ProjectReference Include="../../src/Condux.Conductor/Condux.Conductor.csproj" />
   </ItemGroup>
 </Project>

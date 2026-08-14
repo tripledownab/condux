@@ -1,3 +1,7 @@
 
 # Generated marketing screenshots (scripts/screenshots.mjs)
 /screenshots/
+
+# Playwright run artifacts (traces, the last-run ledger)
+/test-results/
+/playwright-report/

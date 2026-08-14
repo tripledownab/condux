@@ -7,6 +7,7 @@
     "dev:stack": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build",
     "dev:down": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml down",
     "dev:logs": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs -f",
+    "dev:runner": "bash scripts/runner-dev.sh",
     "dev:smee": "bash scripts/smee.sh",
     "dev:web": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml stop web && cd web && NEXT_PUBLIC_CONDUX_API_URL=http://localhost:8080 NEXT_PUBLIC_CONDUX_INGEST_URL=http://localhost:9010 pnpm dev",
     "dev:landing": "cd landing && NEXT_PUBLIC_CONDUX_APP_URL=http://localhost:3000 pnpm dev --port 3002",

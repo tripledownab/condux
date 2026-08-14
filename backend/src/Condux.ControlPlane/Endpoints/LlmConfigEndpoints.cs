@@ -2,6 +2,7 @@ using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Llm;
 using Condux.ControlPlane.Setup;
 using Condux.Core.Auth;
+using Condux.Core.Llm;
 using Condux.Core.Plans;
 using Condux.Core.Secrets;
 using Condux.Storage.Postgres;

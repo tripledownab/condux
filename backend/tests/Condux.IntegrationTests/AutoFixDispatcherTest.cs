@@ -70,6 +70,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         new RepoLinkRepository(pg.ConnectionString), new ReleaseRepository(pg.ConnectionString),
         new GithubInstallationRepository(pg.ConnectionString),
         new PostgresAiFixQuota(pg.ConnectionString), new PostgresAiFixSpend(pg.ConnectionString), publisher,
+        new PostgresJobLeaseStore(pg.ConnectionString), new PostgresFixStore(pg.ConnectionString),
         PauseNotifier(pauseSink), NullLogger<AutoFixDispatcher>.Instance);
 
     // An org at the given tier + mode, a project, and optionally a linked repo + GitHub installation.
@@ -79,7 +80,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var org = await orgs.CreateAsync("org-" + Guid.NewGuid().ToString("N"), "Org", tier);
         if (mode != 0)
         {
-            await orgs.UpdateSettingsAsync(org.Id, mode, costCapUsd: null);
+            await orgs.UpdateSettingsAsync(
+                org.Id, mode, costCapUsd: null, fixExecution: (int)FixExecution.Hosted);
         }
         var project = await new ProjectRepository(pg.ConnectionString).CreateAsync(org.Id, "Backend", "python");
         if (withRepo)
@@ -161,7 +163,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         await fixes.UpdateAsync(run);
 
         // Set a $10 cap — already blown by the $30 spent — then a new error issue lands.
-        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(orgId, mode: 1, costCapUsd: 10m);
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 1, costCapUsd: 10m, fixExecution: (int)FixExecution.Hosted);
         var pub = new CapturingPublisher();
         var sink = new CapturingNotifier();
         await Dispatcher(pub, sink).DispatchAsync(projectId,

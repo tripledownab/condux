@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 using Xunit;
 
 namespace Condux.IntegrationTests;
@@ -59,7 +58,7 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal(HttpStatusCode.Redirect, start.StatusCode);
         var authorize = start.Headers.Location!.ToString();
         Assert.StartsWith("https://idp.example/authorize", authorize);
-        var state = QueryParam(new Uri(authorize), "state");
+        var state = SsoFlow.QueryParam(new Uri(authorize), "state");
         Assert.NotEqual("", state);
 
         // The state cookie + org cookie ride the client's jar back to the callback.
@@ -67,7 +66,7 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal(HttpStatusCode.Redirect, callback.StatusCode);
         Assert.Equal("/", callback.Headers.Location!.ToString());
         Assert.Contains(callback.Headers.GetValues("Set-Cookie"), c => c.StartsWith("condux_session="));
-        Assert.Equal(1, await CountMembershipAsync(orgId, "alice@acme.test"));
+        Assert.Equal(1, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, "alice@acme.test"));
     }
 
     [Fact]
@@ -80,12 +79,12 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
 
         var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var start = await sso.GetAsync("/api/auth/sso/start?email=alice@beta.test");
-        var state = QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
+        var state = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
 
         var callback = await sso.GetAsync($"/api/auth/sso/callback?code=any&state={Uri.EscapeDataString(state)}");
         Assert.Equal(HttpStatusCode.Redirect, callback.StatusCode);
         Assert.Equal("/login?error=sso_domain_mismatch", callback.Headers.Location!.ToString());
-        Assert.Equal(0, await CountMembershipAsync(orgId, "mallory@evil.test"));
+        Assert.Equal(0, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, "mallory@evil.test"));
     }
 
     [Fact]
@@ -142,28 +141,5 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     private static string Base64Url(byte[] bytes) =>
         Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    private static string QueryParam(Uri uri, string key)
-    {
-        foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var kv = pair.Split('=', 2);
-            if (kv.Length == 2 && kv[0] == key)
-            {
-                return Uri.UnescapeDataString(kv[1]);
-            }
-        }
-        return "";
-    }
 
-    private async Task<int> CountMembershipAsync(long orgId, string email)
-    {
-        await using var conn = new NpgsqlConnection(pg.ConnectionString);
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand(
-            "SELECT count(*) FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = @org AND u.email = @email",
-            conn);
-        cmd.Parameters.AddWithValue("org", orgId);
-        cmd.Parameters.AddWithValue("email", email);
-        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
-    }
 }

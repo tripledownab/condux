@@ -1,0 +1,15 @@
+{
+  "name": "@condux/plans",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Condux plan facts, generated from PlanCatalog. Limits and capability flags only - prices and positioning are not here.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./plans.json": "./plans.json"
+  },
+  "files": ["plans.json", "index.js", "index.d.ts"]
+}

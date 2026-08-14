@@ -39,3 +39,29 @@ captureMessage("cache miss storm", Level.Warning);
 
 For Express, add [`@condux/express`](https://www.npmjs.com/package/@condux/express). See the
 [Condux SDK docs](https://github.com/tripledownab/condux/tree/main/sdks/js#readme).
+
+## Verify it works
+
+An error monitor's failure mode is silence, and silence looks like health. Prove the pipeline before
+waiting for a real error:
+
+```bash
+CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx condux test-event
+```
+
+Delivers one info-level test message through the real client and transport and prints the outcome
+(nonzero exit on failure, so it can gate CI).
+
+## Users, tags, contexts and breadcrumbs
+
+```js
+import { addBreadcrumb, setContext, setTag, setUser } from "@condux/node";
+
+setUser({ id: "u-1", email: "person@example.com" }); // setUser(null) on sign-out
+setTag("plan", "business");
+setContext("subscription", { seats: 12 });
+addBreadcrumb({ message: "job started", category: "worker" });
+```
+
+Everything set here rides every subsequent event; the relay scrubs it at ingest and derives the
+pseudonymous users-affected count from the user fields.

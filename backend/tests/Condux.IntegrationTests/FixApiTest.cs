@@ -200,7 +200,8 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         await fixes.UpdateAsync(run);
 
         // Cap at $10 (< $30 already spent) → the next request is refused before reserving a run.
-        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(orgId, mode: 0, costCapUsd: 10m);
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: 10m, fixExecution: (int)FixExecution.Hosted);
 
         var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
 
@@ -208,6 +209,234 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         Assert.Equal("ai_fix_cost_cap_exceeded",
             (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
         Assert.Null(publisher.Job);
+    }
+
+    [Fact]
+    public async Task RequestFix_OnAnOrgThatRunsItsOwnRunner_QueuesForTheRunnerInsteadOfTheTopic()
+    {
+        // The whole point of slice 4c. If it still published, the hosted Conductor would run a fix the
+        // customer chose to keep on their own machines, and their runner would sit idle waiting.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-runner");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: null, fixExecution: (int)FixExecution.Runner);
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
+        Assert.Null(publisher.Job); // nothing went to the hosted worker
+
+        // And what it wrote is claimable, carrying the work a runner acts on. The base branch is the
+        // assertion that the context round-tripped: it is chosen by the request path, so reading it back
+        // off the claim proves the whole object was persisted and handed over, not just the row created.
+        // The prompt is empty here only because the assembler reads its sample event from ClickHouse and
+        // this suite runs without one; the hosted path is equally empty under the same conditions.
+        var job = await new PostgresJobLeaseStore(pg.ConnectionString)
+            .TryClaimAsync(orgId, DateTimeOffset.UtcNow);
+        Assert.NotNull(job);
+        Assert.Equal("acme/api", job!.RepoFullName);
+        Assert.Equal("main", job.BaseBranch);
+    }
+
+    [Fact]
+    public async Task SpendOnTheirOwnRunnerDoesNotUseUpTheirHostedComputeCeiling()
+    {
+        // The cap governs spend on OUR compute. A run executed on the customer's runner is billed to their
+        // model account, so counting it would refuse them hosted runs over money we never paid — and it
+        // would report their spend as our cost in the cross-org rollup.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-runner-spend");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+        var issue = await new IssueRepository(pg.ConnectionString).UpsertAsync(
+            projectId, new Grouping("fp-fix-runner-spend", "TypeError: boom", "run"),
+            Level.Error, DateTimeOffset.UtcNow);
+
+        // A finished runner run worth $30 at the priced model, more than the $10 ceiling below.
+        var leases = new PostgresJobLeaseStore(pg.ConnectionString);
+        var runnerFixId = Guid.CreateVersion7();
+        await leases.EnqueueAsync(
+            runnerFixId, issue.Id, "acme/api",
+            new RunnerJobContext("main", "fix it", []), DateTimeOffset.UtcNow);
+        var claimed = await leases.TryClaimAsync(orgId, DateTimeOffset.UtcNow);
+        // The claim and the report both name the run's project (the live-badge nudge needs it, ADR-0030).
+        Assert.Equal(projectId, claimed!.ProjectId);
+        Assert.Equal(new ReportedJob(projectId, JobKind.IssueFix), await leases.TryReportAsync(
+            claimed.FixId, claimed.LeaseId, FixStatus.Succeeded, "b", "https://example.invalid/p/1", "s",
+            "claude-opus-4-8", 1_000_000, 1_000_000, DateTimeOffset.UtcNow));
+
+        // Now back on our compute with a $10 ceiling. Their own $30 must not be counted against it.
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: 10m, fixExecution: (int)FixExecution.Hosted);
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
+        Assert.NotNull(publisher.Job);
+    }
+
+    [Fact]
+    public async Task AFixQueuedForARunnerRecordsWhoAskedForIt()
+    {
+        // fix_suggestions has no actor column, so the requested audit entry is the only place the
+        // triggering user exists. The hosted orchestrator writes it; a run handed to a runner never
+        // reaches that orchestrator, so without this the trail starts at "leased" and the user is lost.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-audit");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: null, fixExecution: (int)FixExecution.Runner);
+
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        var fixes = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{projectId}/issues/{issueId}/fixes");
+        var fixId = Guid.Parse(fixes[0].GetProperty("id").GetString()!);
+        await using var conn = new Npgsql.NpgsqlConnection(pg.ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new Npgsql.NpgsqlCommand(
+            "SELECT actor FROM fix_audit WHERE fix_id = @fix AND event = 'requested';", conn);
+        cmd.Parameters.AddWithValue("fix", fixId);
+
+        var actor = await cmd.ExecuteScalarAsync() as string;
+
+        Assert.False(string.IsNullOrEmpty(actor), "the run records nobody as having asked for it");
+    }
+
+    [Fact]
+    public async Task RequestFix_OnAHostedOrg_IsNeverClaimableByARunner()
+    {
+        // The mirror of the case above, and the reason job_context gates the claim: a hosted request must
+        // stay invisible to a runner even in an org that has one.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-hosted");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
+        Assert.NotNull(publisher.Job);
+        Assert.Null(await new PostgresJobLeaseStore(pg.ConnectionString)
+            .TryClaimAsync(orgId, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public async Task SwitchingToYourOwnRunner_NeedsATierThatAllowsIt()
+    {
+        // Refused rather than ignored: silently staying hosted would leave a customer watching a runner
+        // that is never given work, with nothing saying why.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-gate", tier: 0);
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+
+        var resp = await client.PatchAsJsonAsync(
+            $"/api/orgs/{orgId}", new { aiFixMode = 0, fixExecution = (int)FixExecution.Runner });
+
+        Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
+        Assert.Equal("self_hosted_runner_requires_upgrade",
+            (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task AFailedRunnerRunRefundsTheAllowanceLikeAFailedHostedRunDoes()
+    {
+        // ADR-0017: no PR delivered means no allowance spent. The hosted orchestrator refunds in its
+        // catch; a runner's failure arrives as a report instead, and the first real runner failure burned
+        // its reservation because the report path had no refund.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-refund");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: null, fixExecution: (int)FixExecution.Runner);
+        var mintResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/runner-tokens", new { label = "r" });
+        var runnerToken = (await mintResp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("token").GetString()!;
+
+        async Task<int> RemainingAsync() =>
+            (await client.GetFromJsonAsync<JsonElement>($"/api/orgs/{orgId}/ai-fix-usage"))
+                .GetProperty("remainingFixes").GetInt32();
+
+        var before = await RemainingAsync();
+        Assert.Equal(HttpStatusCode.Accepted,
+            (await client.PostAsJsonAsync(
+                $"/api/projects/{projectId}/issues/{issueId}/fix", new { })).StatusCode);
+        Assert.Equal(before - 1, await RemainingAsync()); // reserved at request time
+
+        // The runner claims and reports failure over the real protocol.
+        var runner = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
+        runner.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", runnerToken);
+        var lease = await runner.PostAsync("/api/runner/lease", content: null);
+        Assert.Equal(HttpStatusCode.OK, lease.StatusCode);
+        var job = await lease.Content.ReadFromJsonAsync<JsonElement>();
+        var report = await runner.PostAsJsonAsync(
+            $"/api/runner/jobs/{job.GetProperty("fixId").GetString()}/result",
+            new
+            {
+                leaseId = job.GetProperty("leaseId").GetString(),
+                status = (int)FixStatus.Failed,
+                branch = "",
+                prUrl = "",
+                summary = "the model endpoint was unreachable",
+                model = "",
+                inputTokens = 0,
+                outputTokens = 0,
+            });
+        Assert.Equal(HttpStatusCode.NoContent, report.StatusCode);
+
+        Assert.Equal(before, await RemainingAsync()); // the failed run is free again
+    }
+
+    [Fact]
+    public async Task TheExecutionSettingRoundTripsThroughTheOrgListTheDashboardReads()
+    {
+        // The membership list is what the settings screen renders from. It once hand-picked its org
+        // columns, so fix_execution defaulted to hosted no matter what the row said, and the radio
+        // snapped back on every click while the server-side setting was in fact saved.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-roundtrip");
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+
+        var patch = await client.PatchAsJsonAsync(
+            $"/api/orgs/{orgId}", new { aiFixMode = 0, fixExecution = (int)FixExecution.Runner });
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+
+        var listed = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0].GetProperty("org");
+
+        Assert.Equal((int)FixExecution.Runner, listed.GetProperty("fixExecution").GetInt32());
+    }
+
+    [Fact]
+    public async Task AClientThatDoesNotKnowAboutRunnersCannotMoveAnOrgBackToHosted()
+    {
+        // The dashboard shipped before this field existed and PATCHes only the AI-fix settings. If the
+        // field were required, that request would bind 0 and quietly drag a self-hosting org's work back
+        // onto our compute as a side effect of changing something unrelated.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-omit");
+        var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
+            .GetProperty("org").GetProperty("id").GetInt64();
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: null, fixExecution: (int)FixExecution.Runner);
+
+        var resp = await client.PatchAsJsonAsync($"/api/orgs/{orgId}", new { aiFixMode = 1 });
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var org = await new OrgRepository(pg.ConnectionString).GetAsync(orgId);
+        Assert.Equal((int)FixExecution.Runner, org!.FixExecution);
+        Assert.Equal(1, org.AiFixMode); // the change it did ask for still landed
     }
 
     [Fact]

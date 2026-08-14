@@ -10,8 +10,12 @@
   <ItemGroup>
     <!-- The integration suite drives a real VerificationWorker tick against live Postgres + ClickHouse. -->
     <InternalsVisibleTo Include="Condux.IntegrationTests" />
+    <InternalsVisibleTo Include="Condux.Conductor.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The execution engine itself lives in Condux.Agent, which a customer-hosted runner also embeds.
+         This project is the hosted deployment of it: the queues, the stores and the schedules. -->
+    <ProjectReference Include="../Condux.Agent/Condux.Agent.csproj" />
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
     <ProjectReference Include="../Condux.GitHub/Condux.GitHub.csproj" />
     <ProjectReference Include="../Condux.Storage/Condux.Storage.csproj" />

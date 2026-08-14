@@ -8,7 +8,12 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["node"],
+    // The package is no longer single-file (config/build split from the runtime entry), so it imports
+    // siblings with an explicit .ts extension like the core does: the strip-types test runner resolves
+    // those directly, and tsc rewrites them to .js on emit.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src"]
 }

@@ -8,12 +8,17 @@ import { getListMyOrgsQueryKey, useAiFixUsage, useUpdateOrg } from "@/src/api/ge
 import { Notice } from "@/src/components/notice";
 import { formatUsd } from "@/src/lib/format";
 import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
-import { tierIsByo } from "@/src/orgs/plan-format";
+import { tierHasSelfHostedRunner, tierIsByo } from "@/src/orgs/plan-format";
 import { PlanSection } from "./plan-section";
+import { RunnerTokens } from "./runner-tokens";
 
 // Org AI-fix modes (#101), matching Condux.Core.FixEngine.AiFixMode.
 const MANUAL = 0;
 const AUTO = 1;
+
+// Where fix runs execute (ADR-0033), matching Condux.Core.FixEngine.FixExecution.
+const HOSTED = 0;
+const RUNNER = 1;
 
 // The General settings tab: the current org's identity, its plan, and its AI-fix mode. Rename/delete and
 // self-serve plan changes arrive with the admin + billing work; the rest is a read-only overview.
@@ -51,6 +56,7 @@ export function OrgGeneral() {
         tier={org.tier}
         mode={org.aiFixMode}
         costCapUsd={org.aiFixCostCapUsd}
+        execution={org.fixExecution ?? HOSTED}
         canManage={canManage}
       />
     </div>
@@ -66,12 +72,14 @@ function AiFixSettings({
   tier,
   mode,
   costCapUsd,
+  execution,
   canManage,
 }: {
   orgId: number;
   tier: number;
   mode: number;
   costCapUsd: number | null;
+  execution: number;
   canManage: boolean;
 }) {
   const translate = useTranslations("settings.general");
@@ -82,10 +90,14 @@ function AiFixSettings({
   // BYO (Enterprise) sets a real budget on their own key; every platform-billed tier, Free included,
   // sees a read-only fair-use compute ceiling (the plan default, ADR-0020/0027).
   const isByo = tierIsByo(tier);
+  const canSelfHost = tierHasSelfHostedRunner(tier);
 
-  const save = (nextMode: number, nextCap: number | null) => {
+  const save = (nextMode: number, nextCap: number | null, nextExecution: number) => {
     update.mutate(
-      { orgId, data: { aiFixMode: nextMode, aiFixCostCapUsd: nextCap } },
+      {
+        orgId,
+        data: { aiFixMode: nextMode, aiFixCostCapUsd: nextCap, fixExecution: nextExecution },
+      },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListMyOrgsQueryKey() });
@@ -97,7 +109,13 @@ function AiFixSettings({
 
   const selectMode = (next: number) => {
     if (next !== mode && !update.isPending) {
-      save(next, costCapUsd); // preserve the saved cap when toggling mode
+      save(next, costCapUsd, execution); // preserve the other settings when toggling mode
+    }
+  };
+
+  const selectExecution = (next: number) => {
+    if (next !== execution && !update.isPending) {
+      save(mode, costCapUsd, next);
     }
   };
 
@@ -107,11 +125,17 @@ function AiFixSettings({
     if (nextCap !== null && (Number.isNaN(nextCap) || nextCap < 0)) {
       return; // ignore an invalid entry; the backend also rejects it
     }
-    save(mode, nextCap);
+    save(mode, nextCap, execution);
   };
 
+  // The two 409s are different refusals with different remedies, so they get different messages.
+  const updateError = update.error as ConduxApiError | null;
   const errorKey =
-    (update.error as ConduxApiError | null)?.status === 409 ? "aiFixUpgrade" : "aiFixFailed";
+    updateError?.code === "self_hosted_runner_requires_upgrade"
+      ? "runnerUpgrade"
+      : updateError?.status === 409
+        ? "aiFixUpgrade"
+        : "aiFixFailed";
   const spent = usage.data?.data.monthToDateUsd ?? 0;
   // The effective ceiling (org override or plan default) and remaining allowance, from the usage meter.
   const effectiveCap = usage.data?.data.capUsd ?? null;
@@ -119,30 +143,80 @@ function AiFixSettings({
 
   return (
     <section>
-      <h2 className="font-heading text-lg font-semibold text-foreground">
-        {translate("aiFixTitle")}
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">{translate("aiFixDescription")}</p>
-      {canManage ? (
-        <fieldset className="mt-3 flex flex-col gap-2" disabled={update.isPending}>
-          <ModeOption
-            checked={mode === MANUAL}
-            onSelect={() => selectMode(MANUAL)}
-            label={translate("aiFixManual")}
-            hint={translate("aiFixManualHint")}
-          />
-          <ModeOption
-            checked={mode === AUTO}
-            onSelect={() => selectMode(AUTO)}
-            label={translate("aiFixAuto")}
-            hint={translate("aiFixAutoHint")}
-          />
-        </fieldset>
-      ) : (
-        <p className="mt-2 text-sm text-foreground">
-          {mode === AUTO ? translate("aiFixAuto") : translate("aiFixManual")}
-        </p>
-      )}
+      {/* Mode and execution answer sibling questions (when a fix starts; where it runs), so they sit
+          side by side rather than stacked. */}
+      <div className="grid gap-8 md:grid-cols-2">
+        <div>
+          <h2 className="font-heading text-lg font-semibold text-foreground">
+            {translate("aiFixTitle")}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">{translate("aiFixDescription")}</p>
+          {canManage ? (
+            <fieldset className="mt-3 flex flex-col gap-2" disabled={update.isPending}>
+              <ModeOption
+                checked={mode === MANUAL}
+                onSelect={() => selectMode(MANUAL)}
+                label={translate("aiFixManual")}
+                hint={translate("aiFixManualHint")}
+              />
+              <ModeOption
+                checked={mode === AUTO}
+                onSelect={() => selectMode(AUTO)}
+                label={translate("aiFixAuto")}
+                hint={translate("aiFixAutoHint")}
+              />
+            </fieldset>
+          ) : (
+            <p className="mt-2 text-sm text-foreground">
+              {mode === AUTO ? translate("aiFixAuto") : translate("aiFixManual")}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <h2 className="font-heading text-lg font-semibold text-foreground">
+            {translate("executionTitle")}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">{translate("executionDescription")}</p>
+          {canManage ? (
+            <fieldset className="mt-3 flex flex-col gap-2" disabled={update.isPending}>
+              <ModeOption
+                name="fix-execution"
+                checked={execution === HOSTED}
+                onSelect={() => selectExecution(HOSTED)}
+                label={translate("executionHosted")}
+                hint={translate("executionHostedHint")}
+              />
+              <ModeOption
+                name="fix-execution"
+                checked={execution === RUNNER}
+                onSelect={() => selectExecution(RUNNER)}
+                label={translate("executionRunner")}
+                // The API refuses the switch below Team, so the option says so instead of inviting a
+                // click that can only 409.
+                hint={
+                  canSelfHost
+                    ? translate("executionRunnerHint")
+                    : translate("executionRunnerUpgrade")
+                }
+                disabled={!canSelfHost}
+              />
+            </fieldset>
+          ) : (
+            <p className="mt-2 text-sm text-foreground">
+              {execution === RUNNER ? translate("executionRunner") : translate("executionHosted")}
+            </p>
+          )}
+        </div>
+      </div>
+      {/* The runner needs a credential to lease with, so its tokens live beside the switch. Shown while
+          self-hosting is selected (or available to select), for admin and member alike: member can read
+          the list, only admin mints and revokes, same as every token surface. */}
+      {canSelfHost && execution === RUNNER ? (
+        <div className="mt-4">
+          <RunnerTokens orgId={orgId} canManage={canManage} />
+        </div>
+      ) : null}
 
       <h3 className="mt-6 text-sm font-medium text-foreground">
         {isByo ? translate("budgetTitle") : translate("computeLimitTitle")}
@@ -200,23 +274,32 @@ function AiFixSettings({
 }
 
 function ModeOption({
+  name = "ai-fix-mode",
   checked,
   onSelect,
   label,
   hint,
+  disabled = false,
 }: {
+  name?: string;
   checked: boolean;
   onSelect: () => void;
   label: string;
   hint: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-card p-3 text-sm hover:border-ring">
+    <label
+      className={`flex items-start gap-3 rounded-md border border-border bg-card p-3 text-sm ${
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:border-ring"
+      }`}
+    >
       <input
         type="radio"
-        name="ai-fix-mode"
+        name={name}
         checked={checked}
         onChange={onSelect}
+        disabled={disabled}
         className="mt-0.5"
       />
       <span>

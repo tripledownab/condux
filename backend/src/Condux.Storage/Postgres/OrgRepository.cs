@@ -6,12 +6,13 @@ namespace Condux.Storage.Postgres;
 /// AiFixMode matches Condux.Core.FixEngine.AiFixMode (0 manual, 1 auto — #101). AiFixCostCapUsd is the
 /// optional monthly Conductor spend ceiling in USD (null = no cap, #120 budgets). The WeeklySummary* fields
 /// are the per-org weekly digest schedule (ADR-0031): Dow is a .NET DayOfWeek (0=Sun..6=Sat), Hour a local
-/// hour, Tz an IANA zone id.</summary>
+/// hour, Tz an IANA zone id. FixExecution matches Condux.Core.FixEngine.FixExecution (0 hosted, 1 the
+/// org's own runner — ADR-0033 slice 4c).</summary>
 public sealed record Org(
     long Id, string Slug, string Name, int Tier, DateTimeOffset CreatedAt, int AiFixMode, decimal? AiFixCostCapUsd,
     string? StripeCustomerId = null, string? StripeSubscriptionId = null,
     bool WeeklySummaryEnabled = true, int WeeklySummaryDow = 1, int WeeklySummaryHour = 9,
-    string WeeklySummaryTz = "UTC");
+    string WeeklySummaryTz = "UTC", int FixExecution = 0);
 
 /// <summary>An org whose weekly digest is enabled, with just the fields the send worker needs (ADR-0031).</summary>
 public readonly record struct WeeklySummaryOrg(long Id, string Name, int Dow, int Hour, string Tz);
@@ -19,9 +20,17 @@ public readonly record struct WeeklySummaryOrg(long Id, string Name, int Dow, in
 /// <summary>Creates and reads organizations.</summary>
 public sealed class OrgRepository(string connectionString)
 {
-    private const string Columns =
+    // Internal, together with Read below, so a query that joins orgs elsewhere selects THIS list rather
+    // than hand-picking columns. A hand-built Org silently defaults every field it forgot: the membership
+    // list did exactly that, so the dashboard saw fix_execution as hosted no matter what the row said,
+    // and the settings radio snapped back on every click.
+    internal const string Columns =
         "id, slug, name, tier, created_at, ai_fix_mode, ai_fix_cost_cap_usd, stripe_customer_id, stripe_subscription_id, "
-        + "weekly_summary_enabled, weekly_summary_dow, weekly_summary_hour, weekly_summary_tz";
+        + "weekly_summary_enabled, weekly_summary_dow, weekly_summary_hour, weekly_summary_tz, fix_execution";
+
+    /// <summary>The Columns list qualified for a join, e.g. <c>o.id, o.slug, ...</c>.</summary>
+    internal static string QualifiedColumns(string alias) =>
+        string.Join(", ", Columns.Split(", ").Select(column => $"{alias}.{column}"));
 
     private const string InsertSql = $"""
         INSERT INTO orgs (slug, name, tier)
@@ -31,9 +40,11 @@ public sealed class OrgRepository(string connectionString)
 
     private const string GetSql = $"SELECT {Columns} FROM orgs WHERE id = @id;";
 
-    // One atomic update of the org's AI-fix settings (mode + cost cap); the Settings form submits both.
+    // One atomic update of the org's AI-fix settings (mode, cost cap, and where runs execute); the
+    // Settings form submits them together.
     private const string UpdateSettingsSql = $"""
-        UPDATE orgs SET ai_fix_mode = @mode, ai_fix_cost_cap_usd = @cap WHERE id = @id
+        UPDATE orgs SET ai_fix_mode = @mode, ai_fix_cost_cap_usd = @cap, fix_execution = @execution
+        WHERE id = @id
         RETURNING {Columns};
         """;
 
@@ -76,7 +87,7 @@ public sealed class OrgRepository(string connectionString)
     /// <summary>Set the org's AI-fix settings — mode (#101) and cost cap (#120, null clears it). Returns
     /// the updated org, or null if it no longer exists.</summary>
     public async Task<Org?> UpdateSettingsAsync(
-        long id, int mode, decimal? costCapUsd, CancellationToken ct = default)
+        long id, int mode, decimal? costCapUsd, int fixExecution, CancellationToken ct = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -84,6 +95,7 @@ public sealed class OrgRepository(string connectionString)
         cmd.Parameters.AddWithValue("id", id);
         cmd.Parameters.AddWithValue("mode", (short)mode);
         cmd.Parameters.AddWithValue("cap", (object?)costCapUsd ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("execution", (short)fixExecution);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? Read(reader) : null;
     }
@@ -184,11 +196,12 @@ public sealed class OrgRepository(string connectionString)
         return await reader.ReadAsync(ct) ? Read(reader) : null;
     }
 
-    private static Org Read(NpgsqlDataReader r) => new(
+    /// <summary>Maps one row of <see cref="Columns"/> (which must lead the select list) to an Org.</summary>
+    internal static Org Read(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt16(3),
         r.GetFieldValue<DateTimeOffset>(4), r.GetInt16(5),
         r.IsDBNull(6) ? null : r.GetDecimal(6),
         r.IsDBNull(7) ? null : r.GetString(7),
         r.IsDBNull(8) ? null : r.GetString(8),
-        r.GetBoolean(9), r.GetInt16(10), r.GetInt16(11), r.GetString(12));
+        r.GetBoolean(9), r.GetInt16(10), r.GetInt16(11), r.GetString(12), r.GetInt16(13));
 }

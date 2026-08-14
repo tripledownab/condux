@@ -8,8 +8,16 @@
 export interface SsoConfigResponse {
   emailDomain: string;
   issuer: string;
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  clientId: string;
+  protocol: number;
+  /** @nullable */
+  authorizationEndpoint: string | null;
+  /** @nullable */
+  tokenEndpoint: string | null;
+  /** @nullable */
+  clientId: string | null;
+  /** @nullable */
+  samlSsoUrl: string | null;
+  /** @nullable */
+  samlCertificate: string | null;
   updatedAt: string;
 }

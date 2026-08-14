@@ -8,6 +8,7 @@ import { useAiFixUsage, useListGithubBranches, useListRepos } from "@/src/api/ge
 import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Combobox } from "@/src/components/ui/combobox";
 import { formatUsd } from "@/src/lib/format";
+import { daysSince } from "@/src/lib/time";
 import { ROUTES } from "@/src/routes";
 
 // Confirms a Conductor run before it starts (#128). A run costs a real AI-fix allowance (and money), so
@@ -17,11 +18,16 @@ import { ROUTES } from "@/src/routes";
 // the branch is a per-run choice, never stored), both defaulting to the sole/first repo and its default
 // branch. Omit projectId (e.g. a CVE bump, whose repo is fixed) for an allowance-only confirmation. Only
 // fires on Confirm; onConfirm receives (repoId, baseBranch), both null when no target was chosen.
+// How quiet an issue has to go before the dialog says so. A week is long enough that a deploy has
+// probably shipped since, and short enough to still catch the case worth catching.
+const STALE_AFTER_DAYS = 7;
+
 export function SuggestFixDialog({
   open,
   onOpenChange,
   orgId,
   projectId,
+  lastSeen,
   pending,
   onConfirm,
 }: {
@@ -29,6 +35,8 @@ export function SuggestFixDialog({
   onOpenChange: (open: boolean) => void;
   orgId: number;
   projectId?: number;
+  /** When the issue was last seen, for the stale warning. Omitted by callers with no issue (a CVE bump). */
+  lastSeen?: string;
   pending: boolean;
   onConfirm: (repoId: string | null, baseBranch: string | null) => void;
 }) {
@@ -46,6 +54,11 @@ export function SuggestFixDialog({
   // rather than a wrong outcome. Shown ahead of the count for the same reason the server checks it first.
   const capReached =
     data !== undefined && data.capUsd !== null && data.monthToDateUsd >= data.capUsd;
+
+  // Quiet for this long and the issue may already have been fixed by a later commit, which is exactly
+  // when a run gets spent re-fixing something.
+  const quietDays = lastSeen === undefined ? 0 : daysSince(lastSeen);
+  const staleDays = quietDays >= STALE_AFTER_DAYS ? quietDays : null;
 
   const repos = useListRepos(projectId ?? 0, {
     query: { enabled: open && projectId !== undefined },
@@ -124,6 +137,15 @@ export function SuggestFixDialog({
                 )}
               </div>
             </div>
+          ) : null}
+
+          {/* A warning, not a block: an issue can be worth fixing long after it stopped firing, and only
+              the person reading it knows. What they cannot know from this dialog is that it went quiet,
+              which is how a run gets spent re-fixing something a later commit already fixed. */}
+          {staleDays !== null ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {translate("stale", { days: staleDays })}
+            </p>
           ) : null}
 
           {capReached ? (
