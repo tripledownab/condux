@@ -1,0 +1,11 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// A thin shim: every decision lives in Condux\TestEvent, which is tested. The SDK's own autoloader is
+// enough here (the only classes needed are its own), so the command runs from a Composer install and
+// from a plain checkout alike.
+require __DIR__ . '/../src/autoload.php';
+
+exit(Condux\TestEvent::run(array_slice($argv, 1), STDOUT, STDERR));

@@ -21,6 +21,7 @@ public final class ConduxExceptionFilterTest {
     public static void main(String[] args) throws Exception {
         reportsAnUncaughtRequestExceptionAsUnhandledAndRethrows();
         passesACleanRequestThroughWithoutReporting();
+        refusesToRegisterWithoutAClient();
 
         System.out.println(checks + " checks, " + failures + " failures");
         if (failures > 0) {
@@ -59,6 +60,23 @@ public final class ConduxExceptionFilterTest {
 
         check(reached[0], "a clean request reaches the rest of the chain");
         check(recorder.bodies.isEmpty(), "nothing is reported for a clean request");
+    }
+
+    /**
+     * A filter built without a client must fail at registration, not on a request. Constructed with null it
+     * would throw from inside its own catch block, replacing every request's real exception with a
+     * NullPointerException from the monitoring layer.
+     */
+    private static void refusesToRegisterWithoutAClient() {
+        String message = null;
+        try {
+            new ConduxExceptionFilter(null);
+        } catch (IllegalArgumentException expected) {
+            message = expected.getMessage();
+        }
+
+        check(message != null, "constructing the filter without a client throws");
+        check(message != null && message.contains("ConduxClient.builder"), "the message names the fix");
     }
 
     private static ConduxClient client(Recorder recorder) {

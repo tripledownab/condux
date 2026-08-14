@@ -9,13 +9,14 @@ module Condux
 
     def self.parse(dsn)
       uri = URI(dsn)
-      if uri.user.nil? || uri.user.empty? || uri.host.nil?
+      project_id = uri.path.to_s.sub(%r{\A/}, "")
+      if uri.user.nil? || uri.user.empty? || uri.host.nil? || project_id.empty?
         raise ArgumentError, "Condux: DSN must be scheme://<key>@<host>/<projectId>"
       end
 
       endpoint = "#{uri.scheme}://#{uri.host}"
       endpoint += ":#{uri.port}" if uri.port && ![80, 443].include?(uri.port)
-      new(endpoint, uri.path.sub(%r{\A/}, ""), uri.user)
+      new(endpoint, project_id, uri.user)
     end
 
     def initialize(endpoint, project_id, public_key)

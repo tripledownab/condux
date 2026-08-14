@@ -14,9 +14,19 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 )
+
+var warnOnce sync.Once
+
+func warnUninitialized() {
+	warnOnce.Do(func() {
+		_, _ = os.Stderr.WriteString("condux: capture called on a nil Client; events are being dropped.\n")
+	})
+}
 
 // Options configures a Client.
 type Options struct {
@@ -81,9 +91,17 @@ func New(opts Options) (*Client, error) {
 	}, nil
 }
 
-// CaptureException reports err as an error-level event, capturing the current goroutine's stack.
+// CaptureException reports err as an error-level event, capturing the current goroutine's stack. This is
+// a handled capture; use CaptureUnhandled for an error that already escaped (a recovered panic, or one
+// that reached an HTTP handler's error path) so the relay marks the issue unhandled.
 func (c *Client) CaptureException(err error) SendResult {
-	return c.dispatch(event{Level: LevelError, Exception: toException(err)})
+	return c.dispatch(event{Level: LevelError, Exception: toException(err, true)})
+}
+
+// CaptureUnhandled reports err as an unhandled error-level event. Call it from a recover() or an error
+// middleware: mechanism.handled rides the wire as false, which is what drives the unhandled badge.
+func (c *Client) CaptureUnhandled(err error) SendResult {
+	return c.dispatch(event{Level: LevelError, Exception: toException(err, false)})
 }
 
 // CaptureMessage reports a bare message event at the given level.
@@ -92,11 +110,20 @@ func (c *Client) CaptureMessage(message string, level Level) SendResult {
 }
 
 func (c *Client) dispatch(e event) SendResult {
+	// Reporting never panics — an error monitor that panics turns a handled error into a crash in exactly
+	// the code path where someone is already dealing with a failure. A nil Client (New returned an error
+	// and the result was kept anyway) warns once and drops the event.
+	if c == nil {
+		warnUninitialized()
+		return SendResult{OK: false, Error: "not_initialized"}
+	}
+
 	e.EventID = newEventID()
 	e.Timestamp = float64(c.now().UnixNano()) / float64(time.Second) // epoch seconds, the store convention
 	e.Platform = "go"
 	e.Environment = c.opts.Environment
 	e.Release = c.opts.Release
+	applyScope(&e)
 
 	body, err := json.Marshal(e)
 	if err != nil {
@@ -116,8 +143,9 @@ func parseDSN(dsn string) (endpoint, projectID, publicKey string, err error) {
 	if parseErr != nil {
 		return "", "", "", parseErr
 	}
-	if u.User == nil || u.User.Username() == "" || u.Host == "" {
+	projectID = strings.TrimPrefix(u.Path, "/")
+	if u.User == nil || u.User.Username() == "" || u.Host == "" || projectID == "" {
 		return "", "", "", errors.New("condux: DSN must be scheme://<key>@<host>/<projectID>")
 	}
-	return u.Scheme + "://" + u.Host, strings.TrimPrefix(u.Path, "/"), u.User.Username(), nil
+	return u.Scheme + "://" + u.Host, projectID, u.User.Username(), nil
 }

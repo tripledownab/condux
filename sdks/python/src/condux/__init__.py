@@ -19,12 +19,27 @@ import traceback
 import urllib.error
 import urllib.request
 import uuid
+import warnings
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Callable, Mapping, Optional, Tuple
-from urllib.parse import urlparse
 
-__all__ = ["init", "capture_exception", "capture_message", "send_event", "Level", "SendResult"]
+from .dsn import parse_dsn
+from .scope import add_breadcrumb, clear_scope, scope_fields, set_context, set_tag, set_user
+
+__all__ = [
+    "init",
+    "capture_exception",
+    "capture_message",
+    "send_event",
+    "Level",
+    "SendResult",
+    "set_user",
+    "set_tag",
+    "set_context",
+    "add_breadcrumb",
+    "clear_scope",
+]
 
 
 class Level(str, enum.Enum):
@@ -69,6 +84,7 @@ class _Options:
 
 
 _options: Optional[_Options] = None
+_warned_uninitialized = False
 
 
 def init(
@@ -80,8 +96,13 @@ def init(
     transport: Optional[Transport] = None,
     sleep: Optional[SleepFn] = None,
 ) -> None:
-    """Configure the SDK with a project DSN (and optional testing hooks)."""
+    """Configure the SDK with a project DSN (and optional testing hooks).
+
+    Raises :class:`ValueError` on a malformed DSN. Setup runs once at developer time, so a typo is worth
+    failing loudly for — the alternative is an install that silently reports nowhere.
+    """
     global _options
+    parse_dsn(dsn)
     _options = _Options(dsn, environment, release, max_retries, transport, sleep)
 
 
@@ -100,14 +121,26 @@ def capture_message(message: str, level: Level = Level.INFO) -> SendResult:
 
 
 def _dispatch(fields: Mapping[str, object]) -> SendResult:
+    # Reporting never raises — an error monitor that raises turns a handled error into an unhandled one in
+    # exactly the code path where someone is already dealing with a failure, and the framework middleware
+    # capture inside an `except` block, so raising here would replace the application's own exception.
+    global _warned_uninitialized
     if _options is None:
-        raise RuntimeError("Condux SDK not initialized — call init(dsn) first")
+        if not _warned_uninitialized:
+            _warned_uninitialized = True
+            warnings.warn(
+                "Condux: capture called before init(dsn); events are being dropped.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+        return SendResult(ok=False, attempts=0, error="not_initialized")
 
-    endpoint, project_id, public_key = _parse_dsn(_options.dsn)
+    endpoint, project_id, public_key = parse_dsn(_options.dsn)
     event: dict = {
         "event_id": uuid.uuid4().hex,
         "timestamp": time.time(),  # epoch seconds, the Sentry store convention
         "platform": "python",
+        **scope_fields(),
         **fields,
     }
     if _options.environment is not None:
@@ -290,13 +323,6 @@ def _frame_vars(frame) -> dict:
 # Application frames drive grouping and the culprit; standard-library and dependency frames are noise.
 def _is_in_app(filename: str) -> bool:
     return "site-packages" not in filename and "/lib/python" not in filename
-
-
-def _parse_dsn(dsn: str) -> Tuple[str, str, str]:
-    parsed = urlparse(dsn)  # <scheme>://<publicKey>@<host>[:port]/<projectId>
-    port = f":{parsed.port}" if parsed.port else ""
-    endpoint = f"{parsed.scheme}://{parsed.hostname}{port}"
-    return endpoint, parsed.path.lstrip("/"), parsed.username or ""
 
 
 def _urllib_transport(

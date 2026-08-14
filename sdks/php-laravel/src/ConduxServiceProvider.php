@@ -28,12 +28,16 @@ final class ConduxServiceProvider extends ServiceProvider
         }
 
         $config = $this->app['config']->get('condux', []);
-        $client = ClientFactory::tryFromConfig(is_array($config) ? $config : []);
-        if ($client === null) {
-            return; // no DSN configured — the install stays inert until CONDUX_DSN is set
+        $config = is_array($config) ? $config : [];
+
+        // The container always resolves a Client, so code that type-hints one keeps working before a DSN
+        // is set (it would otherwise fail to resolve, turning "monitoring is off" into a broken app).
+        $client = ClientFactory::fromConfig($config);
+        $this->app->instance(Client::class, $client);
+        if (ClientFactory::dsn($config) === null) {
+            return; // no DSN configured — the bound client drops events until CONDUX_DSN is set
         }
 
-        $this->app->instance(Client::class, $client);
         ConduxReporting::register($client, $this->app->make(ExceptionHandler::class));
     }
 }

@@ -27,6 +27,23 @@ export default {
 Edge runtimes have no `window`, so there is no global auto-capture — wrap the handler (or call
 `captureException` manually).
 
+## Verify your setup
+
+Silence is what a broken error monitor and a healthy app look like from the outside, so prove the
+pipeline once. The command ships with `@condux/node`, so run it without adding a dependency:
+
+```bash
+CONDUX_DSN="https://<key>@ingest.condux.ai/<projectId>" npx --package=@condux/node condux test-event
+```
+
+Exit code 0 means delivered (the message appears as an info-level issue), 1 means delivery failed and
+prints why, 2 means the DSN was missing.
+
+## Enrichment
+
+`setUser` / `setTag` / `setContext` / `addBreadcrumb` are re-exported here; whatever you set rides every
+subsequent event. See the [`@condux/node` README](../js/README.md#users-tags-contexts-and-breadcrumbs).
+
 ## Develop
 
 ```bash

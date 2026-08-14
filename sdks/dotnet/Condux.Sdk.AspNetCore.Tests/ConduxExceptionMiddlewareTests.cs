@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Xunit;
@@ -7,26 +6,13 @@ namespace Condux.Sdk.AspNetCore.Tests;
 
 public class ConduxExceptionMiddlewareTests
 {
-    // Records the request body the SDK sends, and responds 202 — so a test can assert what reached the relay.
-    private sealed class RecordingHandler : HttpMessageHandler
-    {
-        public string? LastBody { get; private set; }
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.Accepted);
-        }
-    }
-
     private static ConduxClient Client(HttpMessageHandler transport) =>
         new(new ConduxOptions { Dsn = "http://pub123@relay.test/7", Transport = transport });
 
     [Fact]
     public async Task Reports_an_unhandled_request_exception_and_rethrows()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingTransport();
         RequestDelegate next = _ => throw new InvalidOperationException("route boom");
         var middleware = new ConduxExceptionMiddleware(next, Client(handler));
 
@@ -41,7 +27,7 @@ public class ConduxExceptionMiddlewareTests
     [Fact]
     public async Task Passes_a_successful_request_through_and_reports_nothing()
     {
-        var handler = new RecordingHandler();
+        var handler = new RecordingTransport();
         var reached = false;
         RequestDelegate next = _ =>
         {

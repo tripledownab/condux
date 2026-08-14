@@ -24,6 +24,41 @@ internal sealed record EventPayload
     public string? Message { get; init; }
 
     public ExceptionEnvelope? Exception { get; init; }
+
+    // Ambient enrichment (ConduxScope). Null when unset and nulls are not written, so an event captured
+    // without enrichment carries none of these four keys.
+    public ConduxUser? User { get; init; }
+
+    public IReadOnlyDictionary<string, string>? Tags { get; init; }
+
+    // Dictionary keys are written verbatim (only property names take the naming policy), so a tag or a
+    // context name reaches the relay exactly as the app spelled it.
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, object?>>? Contexts { get; init; }
+
+    public BreadcrumbEnvelope? Breadcrumbs { get; init; }
+}
+
+// Breadcrumbs ride the Sentry {"values": []} envelope, not a bare array.
+internal sealed record BreadcrumbEnvelope
+{
+    public required IReadOnlyList<Breadcrumb> Values { get; init; }
+}
+
+internal sealed record Breadcrumb
+{
+    public required string Message { get; init; }
+
+    public string? Category { get; init; }
+
+    // Lowercase level string, like the event's own level.
+    public string? Level { get; init; }
+
+    public string? Type { get; init; }
+
+    public IReadOnlyDictionary<string, object?>? Data { get; init; }
+
+    // Epoch seconds (fractional), stamped at AddBreadcrumb when the caller omits it.
+    public required double Timestamp { get; init; }
 }
 
 internal sealed record ExceptionEnvelope

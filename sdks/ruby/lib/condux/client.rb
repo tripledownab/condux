@@ -6,6 +6,7 @@ require_relative "level"
 require_relative "dsn"
 require_relative "event_payload"
 require_relative "event_transport"
+require_relative "scope"
 
 module Condux
   # A configured reporter. Cheap to hold for the process lifetime; safe for concurrent use.
@@ -36,7 +37,7 @@ module Condux
         "timestamp" => @clock.call.to_f,    # epoch seconds, the store convention
         "platform" => "ruby",
         "level" => level,
-      }
+      }.merge(Scope.fields)
       event["environment"] = @environment if @environment
       event["release"] = @release if @release
       event["message"] = message if message

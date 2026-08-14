@@ -81,6 +81,7 @@ public final class ConduxClient {
         event.put("event_id", UUID.randomUUID().toString().replace("-", "")); // 32 lowercase hex
         event.put("timestamp", clock.getAsDouble());                          // epoch seconds
         event.put("platform", "java");
+        event.putAll(ConduxScope.fields());
         event.putAll(fields);
         if (environment != null) {
             event.put("environment", environment);

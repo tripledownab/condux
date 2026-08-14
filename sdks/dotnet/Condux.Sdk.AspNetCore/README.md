@@ -25,8 +25,10 @@ app.MapGet("/", () => throw new InvalidOperationException("boom"));
 app.Run();
 ```
 
-The middleware resolves the `ConduxClient` from DI. Capture manually anywhere by injecting the client and
-calling `CaptureExceptionAsync` / `CaptureMessageAsync`.
+`UseConduxExceptionReporting()` resolves the `ConduxClient` from DI as the pipeline is built, so a missing
+registration throws once at startup naming the fix, rather than breaking every request the app serves.
+Capture manually anywhere by injecting the client and calling `CaptureExceptionAsync` /
+`CaptureMessageAsync`.
 
 ## Develop
 

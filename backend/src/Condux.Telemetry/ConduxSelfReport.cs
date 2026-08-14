@@ -20,13 +20,25 @@ public static class ConduxSelfReport
         Condux.Sdk.ConduxClient? client = null;
         if (!string.IsNullOrWhiteSpace(dsn))
         {
-            client = new Condux.Sdk.ConduxClient(new Condux.Sdk.ConduxOptions
+            try
             {
-                Dsn = dsn,
-                Environment = builder.Configuration["CONDUX_ENVIRONMENT"] ?? builder.Environment.EnvironmentName,
-                Release = builder.Configuration["CONDUX_RELEASE"],
-            });
-            builder.Services.AddSingleton(client); // the web services resolve this directly for their middleware
+                client = new Condux.Sdk.ConduxClient(new Condux.Sdk.ConduxOptions
+                {
+                    Dsn = dsn,
+                    Environment = builder.Configuration["CONDUX_ENVIRONMENT"] ?? builder.Environment.EnvironmentName,
+                    Release = builder.Configuration["CONDUX_RELEASE"],
+                });
+                builder.Services.AddSingleton(client); // the web services resolve this for their middleware
+            }
+            catch (FormatException malformed)
+            {
+                // Self-reporting is opt-in observability of ourselves, so a typo in its DSN must not take the
+                // service down: the SDK rejects a malformed DSN at construction (correctly, since a client
+                // built from one could only ever be rejected by the relay), and this call sits in the startup
+                // path of all four services. Log it loudly and run on with self-reporting off.
+                Console.Error.WriteLine(
+                    $"CONDUX_SELF_DSN is malformed, so this service will not report its own errors: {malformed.Message}");
+            }
         }
 
         // Always registered so a background worker can depend on it unconditionally; a no-op when the DSN

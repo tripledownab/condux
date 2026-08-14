@@ -19,19 +19,46 @@ CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId>
 
 Uncaught exceptions (anything Laravel reports) now show up in Condux automatically, marked **unhandled** —
 no code changes and, unlike some SDKs, **no edit to `bootstrap/app.php`**. Without `CONDUX_DSN` the package
-stays inert, so it is safe to install ahead of configuring it.
+stays inert: nothing is reported, `\Condux\Client` still resolves from the container, and captures on it
+are dropped locally. So it is safe to install ahead of configuring it, and safe to type-hint the client in
+code that ships before the DSN does.
 
-Verify the setup:
+## Verify it works
+
+An error monitor's failure mode is silence, and silence looks like health. Prove the pipeline before
+waiting for a real error:
 
 ```bash
 php artisan condux:test
 ```
+
+It sends one test event through the real client and transport and reports the outcome (a nonzero exit
+when it is not configured or delivery fails, so it can gate a deploy script).
 
 To capture something manually, resolve the client:
 
 ```php
 app(\Condux\Client::class)->captureMessage('cache miss storm', \Condux\Level::WARNING);
 ```
+
+## Users, tags, contexts and breadcrumbs
+
+Enrichment is ambient: set it wherever you know it (middleware, a job, a listener) and every subsequent
+event carries it, with nothing to thread through your capture calls.
+
+```php
+use Condux\Level;
+use Condux\Scope;
+
+Scope::setUser(['id' => (string) $request->user()?->id]); // setUser(null) on sign-out
+Scope::setTag('tenant', $tenant->slug);                   // a null value removes a tag
+Scope::setContext('subscription', ['seats' => 12]);
+Scope::addBreadcrumb('checkout started', category: 'order', level: Level::INFO);
+```
+
+The relay scrubs all of it at ingest and derives the pseudonymous users-affected count from the user
+fields. The trail keeps the newest 30 breadcrumbs. A request resets the scope by ending; in a queue worker
+or under Octane the process is reused, so call `Scope::clear()` between jobs.
 
 Optionally publish the config to tune the environment, release, and retries:
 

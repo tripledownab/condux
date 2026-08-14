@@ -40,7 +40,7 @@ captureMessage("cache miss storm", Level.Warning);
 For Express, add [`@condux/express`](https://www.npmjs.com/package/@condux/express). See the
 [Condux SDK docs](https://github.com/tripledownab/condux/tree/main/sdks/js#readme).
 
-## Verify it works
+## Verify your setup
 
 An error monitor's failure mode is silence, and silence looks like health. Prove the pipeline before
 waiting for a real error:

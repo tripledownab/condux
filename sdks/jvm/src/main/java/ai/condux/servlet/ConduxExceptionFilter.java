@@ -26,6 +26,14 @@ public final class ConduxExceptionFilter implements Filter {
     private final ConduxClient client;
 
     public ConduxExceptionFilter(ConduxClient client) {
+        if (client == null) {
+            // Loud at registration (developer time), never on a request. A null client here would throw
+            // from inside the catch below, replacing every request's real exception with a
+            // NullPointerException from the monitoring layer.
+            throw new IllegalArgumentException(
+                    "ConduxExceptionFilter requires a ConduxClient. Build one with "
+                            + "ConduxClient.builder(dsn).build() and register it (for Spring, expose it as a @Bean).");
+        }
         this.client = client;
     }
 
@@ -35,8 +43,18 @@ public final class ConduxExceptionFilter implements Filter {
         try {
             chain.doFilter(request, response);
         } catch (IOException | ServletException | RuntimeException error) {
-            client.captureException(error, false);
+            report(error);
             throw error;
+        }
+    }
+
+    // The application's exception must reach its own error handling whatever the monitoring layer does, so
+    // reporting can never be what propagates out of this filter.
+    private void report(Throwable error) {
+        try {
+            client.captureException(error, false);
+        } catch (RuntimeException reportingFailure) {
+            reportingFailure.printStackTrace();
         }
     }
 }

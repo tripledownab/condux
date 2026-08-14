@@ -62,7 +62,37 @@ FilterRegistrationBean<ConduxExceptionFilter> conduxFilter(ConduxClient client) 
 ```
 
 Its only dependency is the servlet API (`jakarta.servlet-api`, `provided` scope), which the container
-supplies at runtime, so the SDK stays runtime dependency-free.
+supplies at runtime, so the SDK stays runtime dependency-free. The filter refuses to be constructed
+without a client, so a missing registration fails at startup rather than on every request.
+
+## Verify your setup
+
+Silence is what a broken error monitor and a healthy app look like from the outside, so prove the
+pipeline once:
+
+```bash
+CONDUX_DSN="https://<key>@ingest.condux.ai/<projectId>" java -cp condux.jar ai.condux.TestEvent
+```
+
+Exit code 0 means delivered (the message appears as an info-level issue), 1 means delivery failed and
+prints why, 2 means the DSN was missing or malformed.
+
+## Enrichment
+
+Attach the ambient facts triage always needs. Every subsequent event carries them, so nothing has to be
+threaded through capture calls:
+
+```java
+import ai.condux.ConduxScope;
+
+ConduxScope.setUser(Map.of("id", "1042", "email", "dev@example.com")); // null clears it (sign-out)
+ConduxScope.setTag("plan", "team");                                    // null removes the tag
+ConduxScope.setContext("job", Map.of("queue", "billing"));             // null removes the context
+ConduxScope.addBreadcrumb(ConduxScope.Breadcrumb.of("charge.started").category("billing"));
+```
+
+The trail keeps the most recent `ConduxScope.MAX_BREADCRUMBS` (30) entries. `ConduxScope.clear()` resets
+everything. The scope is process wide and safe for concurrent use.
 
 ## Develop
 
@@ -74,6 +104,8 @@ curl -sfL -o /tmp/servlet-api.jar https://repo1.maven.org/maven2/jakarta/servlet
 javac -cp /tmp/servlet-api.jar -d out $(find src/main/java -name '*.java')
 javac -cp out:/tmp/servlet-api.jar -d out-test $(find src/test/java -name '*.java')
 java -cp out:out-test ai.condux.ConduxClientTest
+java -cp out:out-test ai.condux.ConduxScopeTest
+java -cp out:out-test ai.condux.TestEventTest
 java -cp out:out-test:/tmp/servlet-api.jar ai.condux.servlet.ConduxExceptionFilterTest
 ```
 

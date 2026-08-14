@@ -19,7 +19,10 @@ final class TestCommand extends Command
 
     public function handle(): int
     {
-        if (!$this->laravel->bound(Client::class)) {
+        // The bound client is inert without a DSN, so ask the config, not the container: a dropped event
+        // would otherwise be reported as a delivery failure rather than as "you have not configured it".
+        $config = $this->laravel['config']->get('condux', []);
+        if (ClientFactory::dsn(is_array($config) ? $config : []) === null) {
             $this->error('Condux is not configured — set CONDUX_DSN in your environment.');
 
             return self::FAILURE;

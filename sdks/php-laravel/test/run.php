@@ -10,13 +10,12 @@ declare(strict_types=1);
 namespace Condux\Laravel;
 
 // The base SDK (monorepo sibling) + this package's testable units.
-foreach (['Level', 'SendResult', 'Dsn', 'EventPayload', 'EventTransport', 'Client'] as $class) {
-    require __DIR__ . "/../../php/src/$class.php";
-}
+require __DIR__ . '/../../php/src/autoload.php';
 require __DIR__ . '/../src/ClientFactory.php';
 require __DIR__ . '/../src/ConduxReporting.php';
 
 use Condux\Client;
+use Condux\Level;
 
 $failures = 0;
 $checks = 0;
@@ -31,13 +30,32 @@ function check(bool $condition, string $message): void
     }
 }
 
-// 1. A DSN config builds a Client; a missing/blank DSN stays inert (no crash on install).
+// 1. Whether the package reports at all is read off the config's DSN — the signal the service provider
+// and `condux:test` both branch on.
+check(ClientFactory::dsn(['dsn' => ' https://k@ingest.test/1 ']) === 'https://k@ingest.test/1', 'the configured DSN is trimmed');
+check(ClientFactory::dsn(['dsn' => '   ']) === null, 'a blank DSN reads as unconfigured');
+check(ClientFactory::dsn([]) === null, 'a missing DSN reads as unconfigured');
+
+// 1b. The container gets a Client either way: an app that type-hints one must resolve it before a DSN is
+// set, and capture on that client is a local no-op rather than a send to nowhere.
 check(
-    ClientFactory::tryFromConfig(['dsn' => 'https://k@ingest.test/1', 'environment' => 'prod', 'release' => '1.0.0']) instanceof Client,
+    ClientFactory::fromConfig(['dsn' => 'https://k@ingest.test/1', 'environment' => 'prod', 'release' => '1.0.0']) instanceof Client,
     'a DSN config builds a Client',
 );
-check(ClientFactory::tryFromConfig([]) === null, 'missing DSN yields no client (inert install)');
-check(ClientFactory::tryFromConfig(['dsn' => '   ']) === null, 'a blank DSN yields no client');
+$inert = ClientFactory::fromConfig([]);
+check($inert instanceof Client, 'a config with no DSN still builds a Client to bind');
+$dropped = $inert->captureMessage('nobody is listening', Level::INFO);
+check(!$dropped->ok, 'an inert capture reports a failure instead of pretending to deliver');
+check($dropped->attempts === 1, 'an inert capture makes one local attempt and never retries');
+check(str_contains((string) $dropped->error, 'no DSN configured'), 'an inert capture is dropped locally, not sent anywhere');
+
+// 1c. max_retries comes from the environment as a string, so a blank or junk value means "unset", not
+// "one attempt, no retries". Attempts are counted against a port that refuses immediately.
+$refused = 'http://key@127.0.0.1:9/1';
+check(ClientFactory::fromConfig(['dsn' => $refused])->captureMessage('x', Level::INFO)->attempts === 4, 'an absent max_retries falls back to the default of 3 retries');
+check(ClientFactory::fromConfig(['dsn' => $refused, 'max_retries' => ''])->captureMessage('x', Level::INFO)->attempts === 4, 'a blank CONDUX_MAX_RETRIES falls back to the default');
+check(ClientFactory::fromConfig(['dsn' => $refused, 'max_retries' => 0])->captureMessage('x', Level::INFO)->attempts === 1, 'an explicit zero really means no retries');
+check(ClientFactory::fromConfig(['dsn' => $refused, 'max_retries' => '0'])->captureMessage('x', Level::INFO)->attempts === 1, 'a numeric string from the environment is honored');
 
 // 2. ConduxReporting registers a reportable callback that captures exceptions through the base SDK.
 $captured = [];

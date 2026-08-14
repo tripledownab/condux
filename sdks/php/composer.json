@@ -25,6 +25,7 @@
       "Condux\\": "src/"
     }
   },
+  "bin": ["exe/condux"],
   "scripts": {
     "test": "php test/run.php"
   }

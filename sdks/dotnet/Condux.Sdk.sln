@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Condux.Sdk.AspNetCore", "Co
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Condux.Sdk.AspNetCore.Tests", "Condux.Sdk.AspNetCore.Tests\Condux.Sdk.AspNetCore.Tests.csproj", "{1411623D-15F0-426F-98B5-EE09B989DEF6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Condux.Sdk.TestEvent", "Condux.Sdk.TestEvent\Condux.Sdk.TestEvent.csproj", "{A58C001E-96EC-4364-9D3B-D29166D7ECDF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -69,6 +71,18 @@ Global
 		{1411623D-15F0-426F-98B5-EE09B989DEF6}.Release|x64.Build.0 = Release|Any CPU
 		{1411623D-15F0-426F-98B5-EE09B989DEF6}.Release|x86.ActiveCfg = Release|Any CPU
 		{1411623D-15F0-426F-98B5-EE09B989DEF6}.Release|x86.Build.0 = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|x64.Build.0 = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Debug|x86.Build.0 = Debug|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|x64.ActiveCfg = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|x64.Build.0 = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|x86.ActiveCfg = Release|Any CPU
+		{A58C001E-96EC-4364-9D3B-D29166D7ECDF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

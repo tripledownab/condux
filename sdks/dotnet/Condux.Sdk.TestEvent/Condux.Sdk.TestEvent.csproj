@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Condux.Sdk.TestEvent</AssemblyName>
+    <RootNamespace>Condux.Sdk.TestEvent</RootNamespace>
+    <!-- Published to NuGet as a .NET tool: `dotnet tool install -g Condux.Sdk.TestEvent`, then
+         `condux-test-event`. Multi-targeted like the libraries, so the package carries a tools/<tfm>/any
+         folder per framework and the install picks the one matching the machine's runtime (.NET 8-10). -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>condux-test-event</ToolCommandName>
+    <PackageId>Condux.Sdk.TestEvent</PackageId>
+    <Description>Send one test event to a Condux relay and report whether it arrived.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Condux.Sdk\Condux.Sdk.csproj" />
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

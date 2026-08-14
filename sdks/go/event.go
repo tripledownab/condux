@@ -24,15 +24,25 @@ type SendResult struct {
 }
 
 // The Sentry store wire shape. Serialized to snake_case JSON so the relay parses it like a Sentry SDK.
+// Every enrichment field is omitempty, so an unenriched event carries none of those keys at all.
 type event struct {
-	EventID     string      `json:"event_id"`
-	Timestamp   float64     `json:"timestamp"`
-	Platform    string      `json:"platform"`
-	Level       Level       `json:"level"`
-	Environment string      `json:"environment,omitempty"`
-	Release     string      `json:"release,omitempty"`
-	Message     string      `json:"message,omitempty"`
-	Exception   *exceptions `json:"exception,omitempty"`
+	EventID     string                    `json:"event_id"`
+	Timestamp   float64                   `json:"timestamp"`
+	Platform    string                    `json:"platform"`
+	Level       Level                     `json:"level"`
+	Environment string                    `json:"environment,omitempty"`
+	Release     string                    `json:"release,omitempty"`
+	Message     string                    `json:"message,omitempty"`
+	Exception   *exceptions               `json:"exception,omitempty"`
+	User        *User                     `json:"user,omitempty"`
+	Tags        map[string]string         `json:"tags,omitempty"`
+	Contexts    map[string]map[string]any `json:"contexts,omitempty"`
+	Breadcrumbs *breadcrumbs              `json:"breadcrumbs,omitempty"`
+}
+
+// Breadcrumbs ride the Sentry {"values": []} envelope, not a bare array.
+type breadcrumbs struct {
+	Values []Breadcrumb `json:"values"`
 }
 
 type exceptions struct {
@@ -65,7 +75,7 @@ type frame struct {
 	InApp    bool   `json:"in_app"`
 }
 
-func toException(err error) *exceptions {
+func toException(err error, handled bool) *exceptions {
 	value := "nil error"
 	typ := "error"
 	if err != nil {
@@ -76,7 +86,7 @@ func toException(err error) *exceptions {
 	ex := exceptionValue{
 		Type:      typ,
 		Value:     value,
-		Mechanism: &mechanism{Type: "generic", Handled: true},
+		Mechanism: &mechanism{Type: "generic", Handled: handled},
 	}
 	if frames := captureStack(); len(frames) > 0 {
 		ex.Stacktrace = &stacktrace{Frames: frames}
