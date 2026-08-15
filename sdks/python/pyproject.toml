@@ -16,6 +16,13 @@ classifiers = [
 ]
 dependencies = []
 
+# Test only, never installed by a user. The frameworks are here because the adapter tests must run
+# against the REAL thing: a fake app that raises assumes the exception escapes, and for a framework that
+# handles its own exceptions that assumption is false, so such a test passes while the adapter reports
+# nothing.
+[project.optional-dependencies]
+test = ["flask>=2.3", "django>=4.2", "starlette>=0.37"]
+
 [project.urls]
 Homepage = "https://condux.ai"
 Repository = "https://github.com/tripledownab/condux"

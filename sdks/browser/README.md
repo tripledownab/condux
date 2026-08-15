@@ -27,6 +27,14 @@ try {
 
 Pass `captureGlobalErrors: false` to `init` to opt out of the automatic handlers and report only manually.
 
+Every event carries the page it happened on: the URL is read from `location.href` at capture time and
+sent as `request.url`, so an issue says which page produced it without any wiring. Override it, or add
+tags for one event only, with the third argument:
+
+```ts
+captureException(error, true, { request: { url: "/checkout" }, tags: { step: "payment" } });
+```
+
 ## Verify your setup
 
 Silence is what a broken error monitor and a healthy app look like from the outside, so prove the

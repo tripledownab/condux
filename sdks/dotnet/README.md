@@ -66,9 +66,55 @@ ConduxScope.AddBreadcrumb("charge.started", category: "billing", level: Level.In
 ```
 
 The trail keeps the most recent `ConduxScope.MaxBreadcrumbs` (30) entries, dropping the oldest.
-`ConduxScope.Clear()` resets everything. The scope is process wide and safe to use from any thread, so a
-framework integration and your own code share one view of it. The relay scrubs all of it at ingest and
-derives the pseudonymous users-affected count from the user fields.
+`ConduxScope.Clear()` resets everything. The relay scrubs all of it at ingest and derives the
+pseudonymous users-affected count from the user fields.
+
+### In a server, scope one request at a time
+
+Those calls are **process wide** by default, which is right for facts about the deployment and wrong for
+facts about one request: ASP.NET Core serves requests concurrently, so a bare `SetUser` in a controller
+can attach that user to a different request's error. That is worse than reporting no user, because it is
+confidently wrong.
+
+`ConduxScope.BeginRequest()` isolates it. Anything set inside belongs to that request alone, layered
+over the process-wide values:
+
+```csharp
+using (ConduxScope.BeginRequest())
+{
+    ConduxScope.SetUser(new ConduxUser { Id = userId }); // this request only
+    await Handle(request);
+}
+```
+
+**Register it inside your exception handler**, not before it:
+
+```csharp
+app.UseExceptionHandler("/error");     // first, so it is outermost
+app.UseConduxExceptionReporting();     // inside it, so this sees the exception
+```
+
+Middleware sees an exception only as it unwinds back out, so whichever is registered first is outermost
+and gets it last. A configured `UseExceptionHandler` handles the exception and returns a response rather
+than rethrowing, so anything registered outside it never sees the exception and reports nothing at all.
+Measured against a real app: inside, one event with the right error; outside, zero events and no sign
+anything is wrong. The ASP.NET Core templates put `UseExceptionHandler` first, so adding this line after
+it is correct.
+
+**`UseConduxExceptionReporting()` also opens the request scope**, so a `SetUser` in a controller or a
+filter is already isolated. Call it directly around a hosted service or a queue consumer, which has the same
+problem of many in flight at once. It uses `AsyncLocal`, so it follows the request across every `await`
+rather than being lost at the first one like a `ThreadStatic` would.
+
+Detail belonging to a single event can skip the scope entirely:
+
+```csharp
+await client.CaptureExceptionAsync(error, handled: true, new CaptureContext
+{
+    Request = new ConduxRequest { Url = "/api/sync", Method = "POST" },
+    Tags = new Dictionary<string, string> { ["job"] = "nightly" },
+});
+```
 
 ## Develop
 

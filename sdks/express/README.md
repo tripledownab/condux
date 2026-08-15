@@ -29,6 +29,20 @@ app.use(conduxErrorHandler());
 
 Capture manually anywhere with the re-exported `captureException` / `captureMessage`.
 
+Reported events carry the request they happened during: the URL, the method and the query string. The
+URL comes from `originalUrl`, so a router mounted with `app.use("/api", router)` still reports the
+endpoint the client actually called rather than the path within the router. Headers are on the request
+and deliberately not sent, since they carry cookies and authorization and not sending credentials is a
+stronger guarantee than scrubbing them later.
+
+Note that the enrichment scope (`setUser`, `setTag`) is **process wide**. Node serves requests
+concurrently, so a `setUser` in a route handler can attach that user to a different request's error.
+Pass anything request-specific at the capture call instead:
+
+```ts
+captureException(error, true, { request: { url: req.originalUrl }, tags: { route: "/checkout/:id" } });
+```
+
 ## Verify your setup
 
 Silence is what a broken error monitor and a healthy app look like from the outside, so prove the

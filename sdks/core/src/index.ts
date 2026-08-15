@@ -6,7 +6,14 @@
  */
 
 export { Level } from "./types.ts";
-export type { ConduxOptions, FetchLike, FetchResponse, SendResult } from "./types.ts";
+export type {
+  CaptureContext,
+  ConduxOptions,
+  ConduxRequest,
+  FetchLike,
+  FetchResponse,
+  SendResult,
+} from "./types.ts";
 export { sendEvent } from "./transport.ts";
 export { normalizeFramePath } from "./stack.ts";
 export { captureException, captureMessage, init } from "./client.ts";

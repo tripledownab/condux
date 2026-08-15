@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Condux\Laravel;
 
+use Condux\CaptureContext;
 use Condux\Client;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\ServiceProvider;
@@ -38,6 +39,20 @@ final class ConduxServiceProvider extends ServiceProvider
             return; // no DSN configured — the bound client drops events until CONDUX_DSN is set
         }
 
-        ConduxReporting::register($client, $this->app->make(ExceptionHandler::class));
+        // The Laravel-aware half: resolve the current request lazily, at report time, so there is no
+        // request to hold onto during boot and a console command reports with no request at all.
+        // Headers are available here and deliberately not read.
+        ConduxReporting::register(
+            $client,
+            $this->app->make(ExceptionHandler::class),
+            function (): ?CaptureContext {
+                $request = $this->app->bound('request') ? $this->app->make('request') : null;
+                if ($request === null || !method_exists($request, 'getRequestUri')) {
+                    return null;
+                }
+
+                return CaptureContext::forRequest($request->getRequestUri(), $request->getMethod());
+            }
+        );
     }
 }

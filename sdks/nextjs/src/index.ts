@@ -14,7 +14,13 @@
  * ```
  */
 
-import { type ConduxOptions, captureException, init as initServer, parseDsn } from "@condux/core";
+import {
+  type ConduxOptions,
+  type ConduxRequest,
+  captureException,
+  init as initServer,
+  parseDsn,
+} from "@condux/core";
 import { type BrowserOptions, init as initBrowser } from "@condux/browser";
 
 export {
@@ -30,7 +36,9 @@ export {
 } from "@condux/core";
 export type {
   Breadcrumb,
+  CaptureContext,
   ConduxOptions,
+  ConduxRequest,
   ConduxUser,
   FetchLike,
   FetchResponse,
@@ -58,22 +66,75 @@ export function register(options: Partial<ConduxOptions> = {}): void {
   serverInitialized = true;
 }
 
+/** The `request` Next passes to onRequestError. Headers are deliberately not read (see below). */
+interface NextRequest {
+  path?: string;
+  method?: string;
+}
+
+/** The `context` Next passes to onRequestError, narrowed to the fields worth reporting. */
+interface NextErrorContext {
+  routerKind?: string;
+  routePath?: string;
+  routeType?: string;
+}
+
 /**
  * Next's `onRequestError` hook: reports every uncaught server error (Server Components, route handlers,
  * server actions, middleware) as **unhandled**. Wire it up with
- * `export const onRequestError = captureRequestError`. The extra Next args (request, context) are accepted
- * for signature compatibility and currently unused.
+ * `export const onRequestError = captureRequestError`.
+ *
+ * The request and context Next supplies ride along, so a server event says which URL and route failed
+ * instead of only what threw. They are passed per event rather than through setTag / setContext: the
+ * ambient scope is module state, and a server handles requests concurrently, so one request's route
+ * would end up on another request's event.
+ *
+ * `request.headers` is available here and deliberately ignored. It carries cookies and authorization,
+ * and while the relay scrubs sensitive keys at ingest, not sending them at all is the stronger
+ * guarantee. `routePath` is the parameterised form (/app/blog/[dynamic]), which is what makes it worth
+ * a tag: it groups every dynamic instance of a route together.
  */
 export async function captureRequestError(
   error: unknown,
-  _request?: unknown,
-  _context?: unknown,
+  request?: NextRequest,
+  context?: NextErrorContext,
 ): Promise<void> {
   // Next fires onRequestError regardless of configuration; stay silent (never throw) until register ran.
   if (!serverInitialized) {
     return;
   }
-  await captureException(error, false);
+  await captureException(error, false, {
+    ...requestFields(request),
+    ...routeTags(context),
+  });
+}
+
+/**
+ * Next's `path` is a resource path that may carry the query string ("/blog?name=foo"), while the wire
+ * shape keeps the two apart, so split rather than reporting a URL with a query glued on.
+ */
+function requestFields(request?: NextRequest): { request?: ConduxRequest } {
+  if (request?.path === undefined && request?.method === undefined) {
+    return {};
+  }
+  const [url, queryString] = (request.path ?? "").split("?", 2);
+  return {
+    request: {
+      ...(url ? { url } : {}),
+      ...(request.method !== undefined ? { method: request.method } : {}),
+      ...(queryString ? { query_string: queryString } : {}),
+    },
+  };
+}
+
+/** Route detail as tags, so the dashboard can facet errors by route rather than only display them. */
+function routeTags(context?: NextErrorContext): { tags?: Record<string, string> } {
+  const tags = {
+    ...(context?.routePath !== undefined ? { route: context.routePath } : {}),
+    ...(context?.routeType !== undefined ? { route_type: context.routeType } : {}),
+    ...(context?.routerKind !== undefined ? { router: context.routerKind } : {}),
+  };
+  return Object.keys(tags).length > 0 ? { tags } : {};
 }
 
 /**

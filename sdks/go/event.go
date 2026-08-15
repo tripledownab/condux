@@ -1,6 +1,9 @@
 package condux
 
-import "reflect"
+import (
+	"net/http"
+	"reflect"
+)
 
 // Level is the event severity, matching the levels the relay understands. The wire value is the lowercase
 // string.
@@ -38,6 +41,45 @@ type event struct {
 	Tags        map[string]string         `json:"tags,omitempty"`
 	Contexts    map[string]map[string]any `json:"contexts,omitempty"`
 	Breadcrumbs *breadcrumbs              `json:"breadcrumbs,omitempty"`
+	Request     *Request                  `json:"request,omitempty"`
+}
+
+// Request is the request an event happened during. The JSON names are the Sentry store shape the relay
+// parses, so query_string is snake_case on purpose.
+//
+// Deliberately no headers: they carry Cookie and Authorization, and while the relay scrubs sensitive
+// keys at ingest, not sending credentials at all is the stronger guarantee.
+type Request struct {
+	// URL is the path or absolute URL, without the query string.
+	URL         string `json:"url,omitempty"`
+	Method      string `json:"method,omitempty"`
+	QueryString string `json:"query_string,omitempty"`
+}
+
+// RequestFrom describes an inbound *http.Request for reporting. Nil-safe, so a handler that captures
+// outside a request does not have to branch.
+func RequestFrom(r *http.Request) *Request {
+	if r == nil {
+		return nil
+	}
+	request := &Request{Method: r.Method}
+	if r.URL != nil {
+		request.URL = r.URL.Path
+		request.QueryString = r.URL.RawQuery
+	}
+	return request
+}
+
+// CaptureContext carries detail belonging to one event rather than to the process.
+//
+// This exists because the package scope (SetUser, SetTag) is global: a Go server handles requests on
+// many goroutines at once, so request detail set there attaches to whichever event is captured next,
+// which may belong to a different request. A wrong URL is worse than none, because it sends whoever is
+// debugging to the wrong endpoint.
+type CaptureContext struct {
+	Request *Request
+	// Tags merge over the ambient ones, so a per-event tag cannot silently drop the deployment-wide ones.
+	Tags map[string]string
 }
 
 // Breadcrumbs ride the Sentry {"values": []} envelope, not a bare array.

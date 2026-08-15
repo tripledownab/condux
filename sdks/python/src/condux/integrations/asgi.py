@@ -15,6 +15,18 @@ from typing import Callable
 
 import condux
 
+from . import _request
+
+
+def request_fields(scope: dict) -> dict:
+    """The request, read from the ASGI scope. Shaping is shared with the WSGI integration."""
+    query = scope.get("query_string") or b""
+    if isinstance(query, bytes):
+        # ASGI gives the query as bytes; latin-1 round-trips any byte, so a malformed query cannot raise
+        # from inside the reporting path.
+        query = query.decode("latin-1", "replace")
+    return _request.request_fields(scope.get("path") or "/", scope.get("method"), query)
+
 
 class ConduxAsgiMiddleware:
     def __init__(self, app: Callable) -> None:
@@ -24,8 +36,12 @@ class ConduxAsgiMiddleware:
         if scope.get("type") != "http":
             await self._app(scope, receive, send)
             return
-        try:
-            await self._app(scope, receive, send)
-        except Exception as error:  # noqa: BLE001 - report anything the app raises, then re-raise
-            condux.capture_exception(error, handled=False)
-            raise
+        # A scope per request. Concurrent requests interleave on one event loop, so enrichment set in a
+        # handler has to belong to that request rather than to the process. contextvars follow the await
+        # chain, so a value set here stays with this task.
+        with condux.request_scope():
+            try:
+                await self._app(scope, receive, send)
+            except Exception as error:  # noqa: BLE001 - report anything the app raises, then re-raise
+                condux.capture_exception(error, handled=False, request=request_fields(scope))
+                raise

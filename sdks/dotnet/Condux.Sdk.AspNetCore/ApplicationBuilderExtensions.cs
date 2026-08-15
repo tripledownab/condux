@@ -7,7 +7,10 @@ namespace Condux.Sdk.AspNetCore;
 public static class ApplicationBuilderExtensions
 {
     /// <summary>
-    /// Report unhandled request exceptions to Condux. Register early (before UseRouting). Requires a
+    /// Report unhandled request exceptions to Condux. <b>Register it AFTER <c>UseExceptionHandler</c>,
+    /// so it sits inside your exception handling</b>: middleware sees an exception only as it unwinds
+    /// back out, and a configured exception handler returns a response rather than rethrowing, so
+    /// anything registered before it never sees the exception and reports nothing. Requires a
     /// <see cref="ConduxClient"/> registered in DI, e.g.
     /// <c>builder.Services.AddSingleton(new ConduxClient(new ConduxOptions { Dsn = "..." }));</c>.
     /// </summary>

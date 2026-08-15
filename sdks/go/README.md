@@ -84,7 +84,36 @@ condux.AddBreadcrumb(condux.Breadcrumb{Message: "charge.started", Category: "bil
 ```
 
 The trail keeps the most recent `condux.MaxBreadcrumbs` (30) entries. `condux.ClearScope()` resets
-everything. The scope is process wide and safe for concurrent use.
+everything. The scope is safe for concurrent use.
+
+### In a server, pass request detail per event
+
+The scope is **process wide**, which is right for facts about the deployment and wrong for facts about
+one request: a Go server handles requests on many goroutines at once, so a `SetUser` in a handler
+attaches that user to whichever event is captured next, which may belong to a different request. That is
+worse than reporting no user, because it is confidently wrong.
+
+Pass anything request-specific at the capture call instead, where it cannot leak:
+
+```go
+func recoverMiddleware(client *condux.Client, next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if recovered := recover(); recovered != nil {
+                client.CaptureUnhandledWith(fmt.Errorf("%v", recovered),
+                    &condux.CaptureContext{Request: condux.RequestFrom(r)})
+                panic(recovered) // the app's own recovery still runs
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+`CaptureExceptionWith` is the same for a handled error, and `CaptureContext.Tags` merge over the ambient
+ones for that event only. `RequestFrom` reads the path, method and query string; headers are on the
+request and deliberately not read, since they carry cookies and authorization and not sending
+credentials is a stronger guarantee than scrubbing them later.
 
 ## Develop
 

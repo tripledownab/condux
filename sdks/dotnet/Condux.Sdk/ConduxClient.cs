@@ -44,17 +44,37 @@ public sealed class ConduxClient
     /// </summary>
     public Task<SendResult> CaptureExceptionAsync(
         Exception error, bool handled = true, CancellationToken cancellationToken = default) =>
-        DispatchAsync(Level.Error, message: null, error, handled, cancellationToken);
+        DispatchAsync(Level.Error, message: null, error, handled, context: null, cancellationToken);
+
+    /// <summary>
+    /// Report an exception with detail belonging to this one event. <paramref name="context"/> carries the
+    /// request it happened during and any request-scoped tags; they are passed here rather than set on
+    /// <see cref="ConduxScope"/> because scope state outlives the call, so on a server handling requests
+    /// concurrently request detail set ambiently attaches to whichever event is captured next.
+    /// </summary>
+    /// <remarks>An overload rather than an optional parameter, so existing calls that pass a
+    /// CancellationToken positionally keep compiling and keep meaning the same thing.</remarks>
+    public Task<SendResult> CaptureExceptionAsync(
+        Exception error, bool handled, CaptureContext? context,
+        CancellationToken cancellationToken = default) =>
+        DispatchAsync(Level.Error, message: null, error, handled, context, cancellationToken);
 
     /// <summary>Report a bare message event at the given level (default <see cref="Level.Info"/>).</summary>
     public Task<SendResult> CaptureMessageAsync(
         string message, Level level = Level.Info, CancellationToken cancellationToken = default) =>
-        DispatchAsync(level, message, error: null, handled: true, cancellationToken);
+        DispatchAsync(level, message, error: null, handled: true, context: null, cancellationToken);
+
+    /// <summary>Report a message with per-event detail. See the CaptureExceptionAsync overload.</summary>
+    public Task<SendResult> CaptureMessageAsync(
+        string message, Level level, CaptureContext? context,
+        CancellationToken cancellationToken = default) =>
+        DispatchAsync(level, message, error: null, handled: true, context, cancellationToken);
 
     // Reading the exception happens inside the guard below, not at the call site: a custom exception type
     // decides what its own Message and stack yield, so that read is one of the things that can fail.
     private async Task<SendResult> DispatchAsync(
-        Level level, string? message, Exception? error, bool handled, CancellationToken cancellationToken)
+        Level level, string? message, Exception? error, bool handled, CaptureContext? context,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -71,7 +91,10 @@ public sealed class ConduxClient
                 Message = message,
                 Exception = exception is null ? null : new ExceptionEnvelope { Values = [exception] },
                 User = scope.User,
-                Tags = scope.Tags,
+                Request = context?.Request,
+                // Merged over the ambient tags rather than replacing them, so a per-event tag cannot
+                // silently drop the deployment-wide ones.
+                Tags = MergeTags(scope.Tags, context?.Tags),
                 Contexts = scope.Contexts,
                 Breadcrumbs = scope.Breadcrumbs,
             };
@@ -93,6 +116,35 @@ public sealed class ConduxClient
             return new SendResult(false, 0, null, failure.Message);
         }
     }
+
+    private static IReadOnlyDictionary<string, string>? MergeTags(
+        IReadOnlyDictionary<string, string>? ambient, IReadOnlyDictionary<string, string>? perEvent)
+    {
+        if (perEvent is null || perEvent.Count == 0)
+        {
+            return ambient;
+        }
+
+        var merged = ambient is null ? [] : new Dictionary<string, string>(ambient);
+        foreach (var (key, value) in perEvent)
+        {
+            merged[key] = value;
+        }
+        return merged;
+    }
+}
+
+/// <summary>
+/// Per-event enrichment, passed at the capture call rather than set ambiently, for anything derived from
+/// a single request. See the CaptureExceptionAsync overload for why that distinction matters.
+/// </summary>
+public sealed record CaptureContext
+{
+    /// <summary>The request the event happened during.</summary>
+    public ConduxRequest? Request { get; init; }
+
+    /// <summary>Tags for this event only, merged over the ambient ones.</summary>
+    public IReadOnlyDictionary<string, string>? Tags { get; init; }
 }
 
 // A parsed DSN: scheme://<publicKey>@<host>/<projectId>.

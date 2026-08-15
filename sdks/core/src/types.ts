@@ -22,6 +22,34 @@ export interface ConduxOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/**
+ * The request an event happened during. Field names are the Sentry store shape the relay parses into
+ * RequestInfo, so they are snake_case on purpose and must stay that way.
+ *
+ * Deliberately no `headers`: they carry cookies and authorization, and while the relay scrubs sensitive
+ * keys at ingest, that is a safety net rather than a reason to send them. Nothing needs them yet.
+ */
+export interface ConduxRequest {
+  /** Path or absolute URL, without the query string. */
+  url?: string;
+  method?: string;
+  query_string?: string;
+}
+
+/**
+ * Per-event enrichment, passed at the capture call rather than set ambiently.
+ *
+ * This exists because the ambient scope (setUser / setTag) is module state, which is correct for a
+ * browser tab and wrong for a server handling requests concurrently: two in-flight requests share it,
+ * so one request's URL can ride another's event. A wrong URL is worse than none, because it sends
+ * whoever is debugging to the wrong route. Anything derived from a single request belongs here.
+ */
+export interface CaptureContext {
+  request?: ConduxRequest;
+  /** Merged over the ambient scope's tags, so a per-event value wins for that key only. */
+  tags?: Record<string, string>;
+}
+
 /** Event severity, matching the levels the relay understands. */
 export const Level = {
   Debug: "debug",

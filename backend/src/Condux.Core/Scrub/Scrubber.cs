@@ -16,6 +16,17 @@ public static partial class Scrubber
     private static partial Regex EmailRegex();
 
     // Token-shaped secrets: sk-/pk-/ghp-/gho-/xox?-/AKIA... and similar.
+    //
+    // These patterns stay NARROW on purpose, and the limit is worth stating because it looks like an
+    // oversight. They match shapes that are unambiguously credentials. They do not match a bare
+    // "name=value" pair, so a session cookie sitting inside free text (a log line, or a captured frame
+    // local holding a whole request object) survives this pass.
+    //
+    // Widening it to catch those would mean guessing at arbitrary text, and a scrub that redacts real
+    // data is a scrub people turn off, which costs more than the cases it would catch. The controls that
+    // actually carry this weight are structural and sit earlier: IsSensitiveKey drops a value outright by
+    // its key, and the SDKs do not put headers on an event at all, so credentials mostly never arrive
+    // here to be matched. Reviewed and kept narrow deliberately, 2026-08-15.
     [GeneratedRegex(@"\b(?:sk|pk|ghp|gho|xox[baprs]|AKIA)[-_A-Za-z0-9]{10,}\b", RegexOptions.IgnoreCase)]
     private static partial Regex TokenRegex();
 

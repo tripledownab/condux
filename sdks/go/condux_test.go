@@ -170,3 +170,70 @@ func TestNewRejectsMalformedDSN(t *testing.T) {
 		t.Error("expected an error for a DSN with no key")
 	}
 }
+
+// Per-event detail: the request an error happened during, and tags scoped to that one event.
+//
+// The package scope is global, so a Go server handling many requests at once cannot put request detail
+// there without it attaching to whichever event is captured next. These pin the alternative.
+func TestCaptureUnhandledWithReportsTheRequest(t *testing.T) {
+	stub := &stubRoundTripper{responses: []func() (*http.Response, error){respond(202, "")}}
+	client := newTestClient(t, stub, nil)
+
+	request, _ := http.NewRequest(http.MethodPost, "https://app.test/checkout?step=2", nil)
+	request.Header.Set("Cookie", "session=supersecret")
+	request.Header.Set("Authorization", "Bearer tok")
+
+	client.CaptureUnhandledWith(errors.New("boom"), &CaptureContext{Request: RequestFrom(request)})
+
+	body := stub.bodies[len(stub.bodies)-1]
+	for _, want := range []string{`"url":"/checkout"`, `"method":"POST"`, `"query_string":"step=2"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %s in %s", want, body)
+		}
+	}
+	// The relay scrubs sensitive header keys, but not sending them at all is the stronger guarantee.
+	for _, leaked := range []string{"supersecret", "Bearer"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("credentials leaked into the event: %s", body)
+		}
+	}
+}
+
+func TestPerEventTagsMergeOverAmbientAndDoNotPersist(t *testing.T) {
+	ClearScope()
+	defer ClearScope()
+	stub := &stubRoundTripper{responses: []func() (*http.Response, error){respond(202, "")}}
+	client := newTestClient(t, stub, nil)
+
+	SetTag("service", "billing")
+	SetTag("plan", "business")
+	client.CaptureExceptionWith(errors.New("boom"), &CaptureContext{
+		Tags: map[string]string{"route": "/checkout", "plan": "trial"},
+	})
+
+	body := stub.bodies[len(stub.bodies)-1]
+	for _, want := range []string{`"service":"billing"`, `"plan":"trial"`, `"route":"/checkout"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %s in %s", want, body)
+		}
+	}
+
+	// The concurrency hazard in miniature: a per-event tag that wrote through to the scope would still be
+	// here, and on a server that would be another request's route.
+	client.CaptureMessage("after", LevelInfo)
+	if strings.Contains(stub.bodies[len(stub.bodies)-1], "route") {
+		t.Fatalf("per-event tag persisted: %s", stub.bodies[len(stub.bodies)-1])
+	}
+}
+
+func TestNilCaptureContextKeepsTheExactWireShape(t *testing.T) {
+	stub := &stubRoundTripper{responses: []func() (*http.Response, error){respond(202, "")}}
+	client := newTestClient(t, stub, nil)
+
+	client.CaptureUnhandledWith(errors.New("boom"), nil)
+
+	// Absence, not an empty object: an event with nothing to say about the request keeps its plain shape.
+	if strings.Contains(stub.bodies[len(stub.bodies)-1], `"request"`) {
+		t.Fatalf("expected no request field: %s", stub.bodies[len(stub.bodies)-1])
+	}
+}

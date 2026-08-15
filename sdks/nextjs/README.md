@@ -43,7 +43,29 @@ import { ConduxErrorBoundary } from "@condux/nextjs/react";
 <ConduxErrorBoundary fallback={<p>Something went wrong.</p>}>{children}</ConduxErrorBoundary>
 ```
 
-Attach who and what to every event, and the trail leading up to it:
+Server errors reach `onRequestError` and are reported **unhandled**; `captureRequestError` is a safe
+no-op until `register` has run. It reports the URL, the method and the route it failed on, so a server
+event says where it happened and you can facet by `route`:
+
+```
+request  { url: "/checkout", method: "POST", query_string: "step=2" }
+tags     { route: "/app/checkout/[id]", route_type: "route", router: "App Router" }
+```
+
+`route` is the parameterised path, so every dynamic instance groups under one value. Request headers
+are deliberately never sent: they carry cookies and authorization, and not sending them is a stronger
+guarantee than scrubbing them later. Browser events carry the page URL automatically.
+
+Capture manually anywhere with the re-exported `captureException` / `captureMessage`, passing anything
+request-specific as the third argument:
+
+```ts
+import { captureException } from "@condux/nextjs";
+
+await captureException(error, true, { request: { url: "/api/sync" }, tags: { job: "nightly" } });
+```
+
+### Attaching the user, tags and breadcrumbs
 
 ```ts
 import { addBreadcrumb, setContext, setTag, setUser } from "@condux/nextjs";
@@ -54,15 +76,19 @@ setContext("subscription", { seats: 12 });
 addBreadcrumb({ message: "opened checkout", category: "navigation" });
 ```
 
-Verify the pipeline end to end before waiting for a real error:
+> **Client components only.** These set **process-global** state. That is what you want in a browser
+> tab, where the process is one user's session. On the server it is not: a Next server handles requests
+> concurrently in one process, so a `setUser` in a Server Component, route handler or server action can
+> attach that user to a **different** request's error. Pass anything request-specific to
+> `captureException` as shown above instead, which is per event and cannot leak between requests.
+
+Verify the pipeline end to end before waiting for a real error. `@condux/nextjs` does not ship this
+command, so name the package that does, otherwise npx resolves an unrelated `condux` package from the
+registry:
 
 ```bash
-CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx condux test-event
+CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx --package=@condux/node condux test-event
 ```
-
-Server errors reach `onRequestError` and are reported **unhandled**; `captureRequestError` is a safe no-op
-until `register` has run. Capture manually anywhere with the re-exported `captureException` /
-`captureMessage`.
 
 ## Develop
 

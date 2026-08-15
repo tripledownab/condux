@@ -24,11 +24,11 @@ module Condux
 
     # Report an exception as an error-level event, with its stack trace. Never raises on delivery failure.
     # Pass handled: false for an uncaught exception (a framework integration does this).
-    def capture_exception(error, handled: true)
+    def capture_exception(error, handled: true, request: nil, tags: nil)
       client = active_client
       return not_initialized unless client
 
-      client.capture_exception(error, handled: handled)
+      client.capture_exception(error, handled: handled, request: request, tags: tags)
     end
 
     # Report a bare message event at the given level (default info).
@@ -37,6 +37,12 @@ module Condux
       return not_initialized unless client
 
       client.capture_message(message, level)
+    end
+
+    # Isolate enrichment to one request, so a set_user inside it cannot attach to a concurrent request.
+    # The Rack middleware does this for every request; call it directly around a background job.
+    def request_scope(&block)
+      Scope.request(&block)
     end
 
     # Attach the signed-in user (id/email/username) to subsequent events; nil clears.

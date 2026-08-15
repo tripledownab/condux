@@ -7,6 +7,49 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.2.1
+
+**If you report errors from a Flask or Django app, upgrade the Python SDK.** Those two integrations
+never worked. Both frameworks catch an exception raised in a view, turn it into a 500 and return it, so
+nothing escapes the application, and the middleware we shipped wrapped the application from the outside.
+It saw nothing and reported nothing, silently, with no error to suggest it was not working. Anyone who
+followed our own instructions had an application that looked instrumented and sent no errors at all.
+
+They now hook the signal each framework actually fires:
+
+```python
+from condux.integrations.flask import ConduxFlask
+ConduxFlask(app)
+
+# Django, in settings.py
+MIDDLEWARE = ["condux.integrations.django.ConduxMiddleware", ...]
+```
+
+Each reports the URL, the method and the matched route as a tag, using the parameterised form so every
+instance of a route groups together, and keeps enrichment isolated to its own request. The old WSGI
+middleware is still correct for a bare WSGI application, and it says so now rather than naming two
+frameworks it could not serve.
+
+**Spring MVC reported every error under one type.** A servlet container rethrows what a handler threw
+wrapped in a `ServletException`, and since issues group on the exception type, every failure in an
+application collapsed into a single issue with the real error buried in a message. The filter now
+unwraps it. Spring apps with a global `@ExceptionHandler` also reported nothing at all, because the
+exception is resolved before a filter can see it, so there is a new `ConduxExceptionResolver` to
+register alongside the filter; it never claims an exception, so your own error handling is unchanged.
+
+**The Laravel package would not install on Laravel 13.** The constraint now includes it.
+
+**Where an integration sits decides whether it reports anything**, and two of our own instructions had
+it backwards. On ASP.NET Core, register `UseConduxExceptionReporting()` **after** `UseExceptionHandler`,
+inside it: middleware only sees an exception as it unwinds, so anything outside a configured handler
+never sees one. On Rails, use `config.middleware.use` and nothing else, because it appends and that is
+what places the middleware inside `ActionDispatch::ShowExceptions`.
+
+All of this was found by running a real application of each framework and checking what actually arrived
+at a relay. Our own tests could not catch any of it: they drove the middleware with a stand-in
+application that raises, which assumes the exception escapes, the exact thing that was false. The Python
+SDK now tests against real Flask, Django and Starlette, and its build fails if those tests are skipped.
+
 ## 0.2.0
 
 **Security fix, upgrade from 0.1.0.** A privilege escalation in organisation creation let an account

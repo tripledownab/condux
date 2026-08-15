@@ -30,6 +30,61 @@ public final class ConduxScope {
     public static final int MAX_BREADCRUMBS = 30;
 
     private static final Object LOCK = new Object();
+
+    // A servlet container serves each request on its own thread and returns that thread to a pool, so a
+    // ThreadLocal isolates requests AND has to be removed on the way out: state left behind is handed to
+    // the next request that worker picks up, which is the exact leak this exists to prevent.
+    //
+    // Null means no request is in flight, so writes fall through to the process state below. That
+    // fallback keeps a startup-time setTag working exactly as it did before request scopes existed.
+    private static final ThreadLocal<RequestState> CURRENT = new ThreadLocal<>();
+
+    // Reachable only from its own request's thread, so it needs no lock of its own. The process state
+    // below is shared and keeps LOCK.
+    private static final class RequestState {
+        private Map<String, String> user;
+        private final Map<String, String> tags = new LinkedHashMap<>();
+        private final Map<String, Map<String, Object>> contexts = new LinkedHashMap<>();
+        private final Deque<Map<String, Object>> breadcrumbs = new ArrayDeque<>();
+    }
+
+    /**
+     * Isolate enrichment to one request: anything set inside is visible only to events captured inside.
+     * Close it to end the scope, ideally with try-with-resources. The servlet filter wraps every request
+     * in this; call it directly around a background job, which has the same problem of many in flight.
+     *
+     * <pre>{@code
+     * try (var scope = ConduxScope.beginRequest()) {
+     *     ConduxScope.setUser(Map.of("id", userId)); // this request only
+     *     handle(request);
+     * }
+     * }</pre>
+     */
+    public static RequestScope beginRequest() {
+        RequestState previous = CURRENT.get();
+        CURRENT.set(new RequestState());
+        return new RequestScope(previous);
+    }
+
+    /** The handle returned by {@link #beginRequest()}; closing it restores the enclosing scope. */
+    public static final class RequestScope implements AutoCloseable {
+        private final RequestState previous;
+
+        private RequestScope(RequestState previous) {
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            // remove() rather than set(null): a pooled thread that keeps a ThreadLocal entry alive holds
+            // its value (and its classloader) until that thread dies.
+            if (previous == null) {
+                CURRENT.remove();
+            } else {
+                CURRENT.set(previous);
+            }
+        }
+    }
     private static Map<String, String> user;
     private static final Map<String, String> TAGS = new LinkedHashMap<>();
     private static final Map<String, Map<String, Object>> CONTEXTS = new LinkedHashMap<>();
@@ -40,13 +95,28 @@ public final class ConduxScope {
 
     /** Attach the signed-in user (id/email/username) to subsequent events; null clears it. */
     public static void setUser(Map<String, String> next) {
+        Map<String, String> value = next == null ? null : new LinkedHashMap<>(next);
+        RequestState request = CURRENT.get();
+        if (request != null) {
+            request.user = value;
+            return;
+        }
         synchronized (LOCK) {
-            user = next == null ? null : new LinkedHashMap<>(next);
+            user = value;
         }
     }
 
     /** Attach a tag to subsequent events; a null value removes it. */
     public static void setTag(String key, String value) {
+        RequestState request = CURRENT.get();
+        if (request != null) {
+            if (value == null) {
+                request.tags.remove(key);
+            } else {
+                request.tags.put(key, value);
+            }
+            return;
+        }
         synchronized (LOCK) {
             if (value == null) {
                 TAGS.remove(key);
@@ -58,6 +128,15 @@ public final class ConduxScope {
 
     /** Attach a named context object to subsequent events; null removes it. */
     public static void setContext(String name, Map<String, Object> context) {
+        RequestState request = CURRENT.get();
+        if (request != null) {
+            if (context == null) {
+                request.contexts.remove(name);
+            } else {
+                request.contexts.put(name, new LinkedHashMap<>(context));
+            }
+            return;
+        }
         synchronized (LOCK) {
             if (context == null) {
                 CONTEXTS.remove(name);
@@ -70,6 +149,14 @@ public final class ConduxScope {
     /** Record a breadcrumb; the trail (newest last, capped) rides every subsequent event. */
     public static void addBreadcrumb(Breadcrumb crumb) {
         Map<String, Object> wire = crumb.toWire();
+        RequestState request = CURRENT.get();
+        if (request != null) {
+            request.breadcrumbs.addLast(wire);
+            while (request.breadcrumbs.size() > MAX_BREADCRUMBS) {
+                request.breadcrumbs.removeFirst();
+            }
+            return;
+        }
         synchronized (LOCK) {
             BREADCRUMBS.addLast(wire);
             while (BREADCRUMBS.size() > MAX_BREADCRUMBS) {
@@ -78,8 +165,16 @@ public final class ConduxScope {
         }
     }
 
-    /** Reset all ambient state (tests, or a full sign-out). */
+    /** Reset all ambient state (tests, or a full sign-out). Clears the request scope when one is active. */
     public static void clear() {
+        RequestState request = CURRENT.get();
+        if (request != null) {
+            request.user = null;
+            request.tags.clear();
+            request.contexts.clear();
+            request.breadcrumbs.clear();
+            return;
+        }
         synchronized (LOCK) {
             user = null;
             TAGS.clear();
@@ -93,21 +188,47 @@ public final class ConduxScope {
      * event keeps its exact wire shape. Breadcrumbs use the Sentry {@code {"values": []}} envelope.
      */
     static Map<String, Object> fields() {
-        Map<String, Object> fields = new LinkedHashMap<>();
+        RequestState request = CURRENT.get();
+
+        Map<String, String> mergedUser;
+        Map<String, String> mergedTags;
+        Map<String, Map<String, Object>> mergedContexts;
+        List<Map<String, Object>> mergedTrail;
         synchronized (LOCK) {
-            if (user != null) {
-                fields.put("user", new LinkedHashMap<>(user));
+            mergedUser = user == null ? null : new LinkedHashMap<>(user);
+            mergedTags = new LinkedHashMap<>(TAGS);
+            mergedContexts = new LinkedHashMap<>(CONTEXTS);
+            mergedTrail = new ArrayList<>(BREADCRUMBS);
+        }
+
+        // The request scope layers OVER the process state rather than replacing it, so a request keeps
+        // the deployment-wide tags while overriding the ones it sets itself.
+        if (request != null) {
+            if (request.user != null) {
+                mergedUser = new LinkedHashMap<>(request.user);
             }
-            if (!TAGS.isEmpty()) {
-                fields.put("tags", new LinkedHashMap<>(TAGS));
+            mergedTags.putAll(request.tags);
+            mergedContexts.putAll(request.contexts);
+            // Concatenated, not merged: the trail is a sequence, and the process-level crumbs genuinely
+            // happened before the ones recorded during the request.
+            mergedTrail.addAll(request.breadcrumbs);
+            while (mergedTrail.size() > MAX_BREADCRUMBS) {
+                mergedTrail.remove(0);
             }
-            if (!CONTEXTS.isEmpty()) {
-                fields.put("contexts", new LinkedHashMap<>(CONTEXTS));
-            }
-            if (!BREADCRUMBS.isEmpty()) {
-                List<Map<String, Object>> values = new ArrayList<>(BREADCRUMBS);
-                fields.put("breadcrumbs", Map.of("values", values));
-            }
+        }
+
+        Map<String, Object> fields = new LinkedHashMap<>();
+        if (mergedUser != null) {
+            fields.put("user", mergedUser);
+        }
+        if (!mergedTags.isEmpty()) {
+            fields.put("tags", mergedTags);
+        }
+        if (!mergedContexts.isEmpty()) {
+            fields.put("contexts", mergedContexts);
+        }
+        if (!mergedTrail.isEmpty()) {
+            fields.put("breadcrumbs", Map.of("values", mergedTrail));
         }
         return fields;
     }

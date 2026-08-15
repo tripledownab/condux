@@ -62,10 +62,22 @@ public final class ConduxClient {
      * uncaught request exception reports {@code handled = false} (drives the unhandled badge).
      */
     public SendResult captureException(Throwable error, boolean handled) {
+        return captureException(error, handled, null);
+    }
+
+    /**
+     * Report an exception with detail belonging to this one event: the request it happened during, and
+     * any request-scoped tags.
+     *
+     * <p>Passed here rather than set on {@link ConduxScope} because scope state outlives the call: on a
+     * server handling requests concurrently, request detail set ambiently attaches to whichever event is
+     * captured next, which may belong to a different request.
+     */
+    public SendResult captureException(Throwable error, boolean handled, CaptureContext context) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("level", Level.ERROR.wire());
         fields.put("exception", Map.of("values", List.of(EventPayload.exception(error, handled))));
-        return dispatch(fields);
+        return dispatch(fields, context);
     }
 
     /** Report a bare message event at the given level. */
@@ -73,15 +85,30 @@ public final class ConduxClient {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("level", level.wire());
         fields.put("message", message);
-        return dispatch(fields);
+        return dispatch(fields, null);
     }
 
-    private SendResult dispatch(Map<String, Object> fields) {
+    @SuppressWarnings("unchecked")
+    private SendResult dispatch(Map<String, Object> fields, CaptureContext context) {
         Map<String, Object> event = new LinkedHashMap<>();
         event.put("event_id", UUID.randomUUID().toString().replace("-", "")); // 32 lowercase hex
         event.put("timestamp", clock.getAsDouble());                          // epoch seconds
         event.put("platform", "java");
         event.putAll(ConduxScope.fields());
+        if (context != null) {
+            Map<String, String> request = context.request();
+            if (!request.isEmpty()) {
+                event.put("request", request);
+            }
+            if (!context.tags().isEmpty()) {
+                // Merged over the ambient tags rather than replacing them, so a per-event tag cannot
+                // silently drop the deployment-wide ones.
+                Map<String, String> tags = new LinkedHashMap<>(
+                        (Map<String, String>) event.getOrDefault("tags", Map.of()));
+                tags.putAll(context.tags());
+                event.put("tags", tags);
+            }
+        }
         event.putAll(fields);
         if (environment != null) {
             event.put("environment", environment);

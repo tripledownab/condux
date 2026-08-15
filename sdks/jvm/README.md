@@ -61,9 +61,26 @@ FilterRegistrationBean<ConduxExceptionFilter> conduxFilter(ConduxClient client) 
 }
 ```
 
+**On Spring MVC, register the resolver as well.** The filter alone only sees exceptions that escape the
+servlet, and `DispatcherServlet` converts anything a `HandlerExceptionResolver` claims into a response
+first. So an app with a global `@ExceptionHandler(Exception.class)`, which many have, would report
+nothing at all through the filter:
+
+```java
+@Bean
+ConduxExceptionResolver conduxExceptionResolver(ConduxClient client) {
+    return new ConduxExceptionResolver(client);
+}
+```
+
+It runs before the resolvers that would claim the exception and **never claims it itself**, so your own
+error handling is untouched and responses are unchanged. Registering both is correct: they cover
+different halves and will not double report.
+
 Its only dependency is the servlet API (`jakarta.servlet-api`, `provided` scope), which the container
-supplies at runtime, so the SDK stays runtime dependency-free. The filter refuses to be constructed
-without a client, so a missing registration fails at startup rather than on every request.
+supplies at runtime, so the SDK stays runtime dependency-free; the resolver additionally needs Spring,
+which is `provided` and `optional` for the same reason. The filter refuses to be constructed without a
+client, so a missing registration fails at startup rather than on every request.
 
 ## Verify your setup
 
@@ -92,7 +109,37 @@ ConduxScope.addBreadcrumb(ConduxScope.Breadcrumb.of("charge.started").category("
 ```
 
 The trail keeps the most recent `ConduxScope.MAX_BREADCRUMBS` (30) entries. `ConduxScope.clear()` resets
-everything. The scope is process wide and safe for concurrent use.
+everything.
+
+### In a server, scope one request at a time
+
+Those calls are **process wide** by default, which is right for facts about the deployment and wrong for
+facts about one request: a servlet container serves requests concurrently, so a bare `setUser` in a
+controller can attach that user to a different request's error. That is worse than reporting no user,
+because it is confidently wrong.
+
+`ConduxScope.beginRequest()` isolates it. Anything set inside belongs to that request alone, layered
+over the process-wide values:
+
+```java
+try (var scope = ConduxScope.beginRequest()) {
+    ConduxScope.setUser(Map.of("id", userId)); // this request only
+    handle(request);
+}
+```
+
+**`ConduxExceptionFilter` does this for you**, so a `setUser` in a Spring controller is already isolated.
+Call it directly around a background job, which has the same problem of many in flight at once. It uses a
+`ThreadLocal` and removes it on close, because containers pool request threads and a value left behind is
+handed to the next request that worker picks up.
+
+Detail belonging to a single event can skip the scope entirely:
+
+```java
+client.captureException(error, false, CaptureContext.of()
+        .request("/checkout", "POST", "step=2")
+        .tag("route", "/checkout/{id}"));
+```
 
 ## Develop
 

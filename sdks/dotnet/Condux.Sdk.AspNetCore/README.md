@@ -19,11 +19,19 @@ builder.Services.AddSingleton(new ConduxClient(new ConduxOptions
 }));
 
 var app = builder.Build();
-app.UseConduxExceptionReporting(); // register early, before UseRouting
+app.UseExceptionHandler("/error");     // your handler first, so it is outermost
+app.UseConduxExceptionReporting();     // Condux inside it, so it sees the exception
 
 app.MapGet("/", () => throw new InvalidOperationException("boom"));
 app.Run();
 ```
+
+**The order of those two lines decides whether anything is reported.** Middleware sees an exception only
+as it unwinds back out, and a configured `UseExceptionHandler` returns a response rather than rethrowing:
+registered outside it, this middleware never sees the exception and reports zero events, silently.
+Measured against a real app both ways. The ASP.NET Core templates put `UseExceptionHandler` first, so
+adding the Condux line after it is correct. (An app with no exception handler at all also works, since
+the exception then escapes to whatever middleware is outermost.)
 
 `UseConduxExceptionReporting()` resolves the `ConduxClient` from DI as the pipeline is built, so a missing
 registration throws once at startup naming the fix, rather than breaking every request the app serves.

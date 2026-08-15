@@ -23,14 +23,20 @@ final class ConduxReporting
      * logging — Condux reporting is additive. Reported exceptions are marked unhandled: they propagated to
      * the framework's handler rather than being caught (this drives Condux's "unhandled" badge).
      */
-    public static function register(Client $client, object $exceptionHandler): void
-    {
+    public static function register(
+        Client $client,
+        object $exceptionHandler,
+        ?\Closure $describeRequest = null
+    ): void {
         if (!method_exists($exceptionHandler, 'reportable')) {
             return;
         }
 
-        $exceptionHandler->reportable(static function (\Throwable $error) use ($client): void {
-            $client->captureException($error, handled: false);
+        $exceptionHandler->reportable(static function (\Throwable $error) use ($client, $describeRequest): void {
+            // The resolver is supplied by the service provider, which is the Laravel-aware half. Reading
+            // the request here would couple this class to the framework and cost it its unit tests.
+            $context = $describeRequest === null ? null : $describeRequest();
+            $client->captureException($error, handled: false, context: $context);
         });
     }
 }

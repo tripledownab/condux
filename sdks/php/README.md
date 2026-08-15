@@ -68,6 +68,20 @@ The scope is static, which is what makes it ambient — the code that sets a use
 the client that reports. PHP tears the process down between requests, so it resets on its own; in a
 long-lived worker (queue, Octane) call `Scope::clear()` between jobs.
 
+### Request detail belongs to the event, not the scope
+
+Classic PHP is share-nothing, so the static `Scope` is already per request there. That stops being true
+under a worker runtime (Swoole, RoadRunner, FrankenPHP worker mode), where the process is reused across
+requests and static state carries over. Passing request detail per event is correct in both, so it is
+the safe habit regardless of how the app is served:
+
+```php
+$client->captureException($error, false, CaptureContext::forRequest('/checkout?step=2', 'POST'));
+```
+
+Tags on a `CaptureContext` merge over the ambient ones for that event only. Headers are deliberately
+never sent, since they carry cookies and authorization.
+
 ## Develop
 
 ```bash

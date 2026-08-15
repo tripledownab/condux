@@ -64,5 +64,15 @@
       <version>6.0.0</version>
       <scope>provided</scope>
     </dependency>
+    <!-- Spring is provided for the same reason the servlet API is: an app that registers
+         ConduxExceptionResolver already has Spring on the classpath, and everyone else keeps an SDK with
+         no runtime dependencies at all. -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-webmvc</artifactId>
+      <version>6.1.14</version>
+      <scope>provided</scope>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
 </project>

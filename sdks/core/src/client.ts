@@ -9,7 +9,13 @@ import { parseDsn } from "./dsn.ts";
 import { scopeFields } from "./scope.ts";
 import { type SentryException, toException } from "./stack.ts";
 import { sendEvent } from "./transport.ts";
-import { type ConduxOptions, Level, type SendResult } from "./types.ts";
+import {
+  type CaptureContext,
+  type ConduxOptions,
+  type ConduxRequest,
+  Level,
+  type SendResult,
+} from "./types.ts";
 
 let options: ConduxOptions | undefined;
 let warnedUninitialized = false;
@@ -21,14 +27,24 @@ export function init(opts: ConduxOptions): void {
 /**
  * Report an exception as an error-level event, with its stack trace. Pass `handled: false` when
  * reporting an uncaught error (the browser/edge global handlers do this) so the relay marks it unhandled.
+ * `context` carries per-event detail such as the request it happened during, which must not go through
+ * the ambient scope on a server (see CaptureContext).
  */
-export function captureException(error: unknown, handled = true): Promise<SendResult> {
-  return dispatch({ level: Level.Error, exception: { values: [toException(error, handled)] } });
+export function captureException(
+  error: unknown,
+  handled = true,
+  context: CaptureContext = {},
+): Promise<SendResult> {
+  return dispatch({ level: Level.Error, exception: { values: [toException(error, handled)] } }, context);
 }
 
 /** Report a bare message event at the given level (default info). */
-export function captureMessage(message: string, level: Level = Level.Info): Promise<SendResult> {
-  return dispatch({ level, message });
+export function captureMessage(
+  message: string,
+  level: Level = Level.Info,
+  context: CaptureContext = {},
+): Promise<SendResult> {
+  return dispatch({ level, message }, context);
 }
 
 // The event fields that vary per capture (level plus a message or an exception).
@@ -38,7 +54,7 @@ type EventFields = {
   exception?: { values: SentryException[] };
 };
 
-function dispatch(fields: EventFields): Promise<SendResult> {
+function dispatch(fields: EventFields, context: CaptureContext = {}): Promise<SendResult> {
   // Reporting never throws — an error monitor that throws turns a handled error into an unhandled one
   // in exactly the code path where someone is already dealing with a failure. Warn once and no-op.
   if (!options) {
@@ -49,13 +65,18 @@ function dispatch(fields: EventFields): Promise<SendResult> {
     return Promise.resolve({ ok: false, attempts: 0, error: "not_initialized" });
   }
   const { endpoint, projectId, publicKey } = parseDsn(options.dsn);
+  const ambient = scopeFields();
   const event = {
     event_id: globalThis.crypto.randomUUID().replace(/-/g, ""),
     timestamp: Date.now() / 1000, // epoch seconds, the Sentry store convention
     platform: "javascript",
     environment: options.environment,
     release: options.release,
-    ...scopeFields(),
+    ...ambient,
+    // Per-event tags merge OVER the ambient ones rather than replacing the object, so setting a
+    // request-scoped tag cannot silently drop the app's ambient tags.
+    ...(context.tags !== undefined ? { tags: { ...ambient.tags, ...context.tags } } : {}),
+    ...requestField(context),
     ...fields,
     ...debugMeta(fields),
   };
@@ -68,6 +89,25 @@ function dispatch(fields: EventFields): Promise<SendResult> {
     JSON.stringify(event),
     options,
   );
+}
+
+/**
+ * The event's `request`, which the relay parses into RequestInfo and the dashboard shows beside the
+ * stack trace. Explicit detail from the caller wins; otherwise, in a browser, the page URL is filled in
+ * from `location.href`.
+ *
+ * The auto fill lives here rather than in @condux/browser so that every browser event carries the page
+ * it happened on, including manual captures and the ones from @condux/nextjs, which re-exports the core
+ * entry points and cannot know at build time which runtime it will land in. Guarding on `location` is
+ * what keeps the core isomorphic: Node leaves it undefined, so a server event is untouched.
+ */
+function requestField(context: CaptureContext): { request?: ConduxRequest } {
+  const pageUrl = (globalThis as { location?: { href?: string } }).location?.href;
+  const request: ConduxRequest = {
+    ...(pageUrl !== undefined ? { url: pageUrl } : {}),
+    ...context.request,
+  };
+  return Object.keys(request).length > 0 ? { request } : {};
 }
 
 // The debug_meta images for the event's frames (ADR-0028), keyed by the raw abs_path the server matches

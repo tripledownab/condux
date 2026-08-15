@@ -46,8 +46,11 @@ An error monitor's failure mode is silence, and silence looks like health. Prove
 waiting for a real error:
 
 ```bash
-CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx condux test-event
+CONDUX_DSN=https://<key>@ingest.condux.ai/<projectId> npx --package=@condux/node condux test-event
 ```
+
+Naming the package matters: `condux` on npm is an unrelated package, so a bare `npx condux` fetches
+that one instead unless `@condux/node` is already installed locally.
 
 Delivers one info-level test message through the real client and transport and prints the outcome
 (nonzero exit on failure, so it can gate CI).

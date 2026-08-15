@@ -45,18 +45,24 @@ final class Client
      * Pass $handled = false when reporting an uncaught exception (a framework adapter does this) so the
      * relay marks it unhandled.
      */
-    public function captureException(\Throwable $error, bool $handled = true): SendResult
-    {
+    public function captureException(
+        \Throwable $error,
+        bool $handled = true,
+        ?CaptureContext $context = null
+    ): SendResult {
         return $this->dispatch([
             'level' => Level::ERROR,
             'exception' => ['values' => [EventPayload::exception($error, $handled)]],
-        ]);
+        ], $context);
     }
 
     /** Report a bare message event at the given level (default info). */
-    public function captureMessage(string $message, string $level = Level::INFO): SendResult
-    {
-        return $this->dispatch(['level' => $level, 'message' => $message]);
+    public function captureMessage(
+        string $message,
+        string $level = Level::INFO,
+        ?CaptureContext $context = null
+    ): SendResult {
+        return $this->dispatch(['level' => $level, 'message' => $message], $context);
     }
 
     /**
@@ -67,14 +73,25 @@ final class Client
      *
      * @param array<string,mixed> $fields
      */
-    private function dispatch(array $fields): SendResult
+    private function dispatch(array $fields, ?CaptureContext $context = null): SendResult
     {
         try {
+            $ambient = Scope::fields();
             $event = [
                 'event_id' => bin2hex(random_bytes(16)), // 32 lowercase hex, the Sentry event_id shape
                 'timestamp' => ($this->clock)(),         // epoch seconds, the store convention
                 'platform' => 'php',
-            ] + Scope::fields() + $fields;
+            ] + $ambient + $fields;
+            if ($context !== null) {
+                if ($context->request !== []) {
+                    $event['request'] = $context->request;
+                }
+                if ($context->tags !== []) {
+                    // Merged over the ambient tags rather than replacing them, so a per-event tag cannot
+                    // silently drop the deployment-wide ones.
+                    $event['tags'] = array_merge($ambient['tags'] ?? [], $context->tags);
+                }
+            }
             if ($this->environment !== null) {
                 $event['environment'] = $this->environment;
             }

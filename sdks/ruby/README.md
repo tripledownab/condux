@@ -57,6 +57,34 @@ Condux.add_breadcrumb("charge.started", category: "billing")
 
 The breadcrumb trail keeps the most recent 30 entries. `Condux.clear_scope` resets everything.
 
+### In a server, scope one request at a time
+
+Those calls are **process wide** by default, which is right for facts about the deployment and wrong for
+facts about one request: Puma serves requests concurrently, so a bare `set_user` in a controller can
+attach that user to a different request's error. That is worse than reporting no user, because it is
+confidently wrong.
+
+`Condux.request_scope` isolates it. Anything set inside belongs to that request alone, layered over the
+process-wide values:
+
+```ruby
+Condux.request_scope do
+  Condux.set_user({ "id" => current_user.id }) # this request only
+  process(job)
+end
+```
+
+**The Rack middleware below does this for you**, so a `set_user` in a Rails controller is already
+isolated. Call it directly around background jobs, which have the same problem. It uses
+`Thread.current[]`, which is fiber-local in Ruby, so it isolates Puma's threads and Falcon's fibers
+alike.
+
+Detail belonging to a single event can skip the scope entirely:
+
+```ruby
+Condux.capture_exception(error, request: { "url" => "/api/sync" }, tags: { "job" => "nightly" })
+```
+
 ## Rack and Rails
 
 ```ruby
@@ -69,6 +97,12 @@ config.middleware.use "Condux::Rack::CaptureExceptions"
 ```
 
 Uncaught exceptions are reported as unhandled and re-raised, so the app's own error handling still runs.
+
+**On Rails use `config.middleware.use`, and nothing else.** `use` appends, which puts the middleware at
+the bottom of the stack, inside `ActionDispatch::ShowExceptions`. That position is why it works:
+`ShowExceptions` catches a controller exception and turns it into a 500, so anything above it never sees
+the exception and reports nothing, with no error to tell you. `insert_before`, `insert_after` and
+`unshift` all move it above and break it silently.
 
 ## Develop
 

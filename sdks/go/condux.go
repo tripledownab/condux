@@ -104,6 +104,40 @@ func (c *Client) CaptureUnhandled(err error) SendResult {
 	return c.dispatch(event{Level: LevelError, Exception: toException(err, false)})
 }
 
+// CaptureUnhandledWith reports an unhandled error together with detail belonging to this one event, such
+// as the request it happened during. Use it from HTTP middleware:
+//
+//	defer func() {
+//		if recovered := recover(); recovered != nil {
+//			client.CaptureUnhandledWith(fmt.Errorf("%v", recovered),
+//				&condux.CaptureContext{Request: condux.RequestFrom(r)})
+//			panic(recovered)
+//		}
+//	}()
+//
+// The request is passed here rather than set with SetTag because the package scope is global and a
+// server handles many requests at once, so an ambient value attaches to whichever event is captured
+// next. A nil context reports exactly as CaptureUnhandled does.
+func (c *Client) CaptureUnhandledWith(err error, ctx *CaptureContext) SendResult {
+	return c.dispatch(applyCaptureContext(event{Level: LevelError, Exception: toException(err, false)}, ctx))
+}
+
+// CaptureExceptionWith reports a handled error with per-event detail. See CaptureUnhandledWith.
+func (c *Client) CaptureExceptionWith(err error, ctx *CaptureContext) SendResult {
+	return c.dispatch(applyCaptureContext(event{Level: LevelError, Exception: toException(err, true)}, ctx))
+}
+
+// applyCaptureContext puts the per-event detail on the event. Tags are merged in dispatch, after the
+// ambient scope has been applied, so this only records them.
+func applyCaptureContext(e event, ctx *CaptureContext) event {
+	if ctx == nil {
+		return e
+	}
+	e.Request = ctx.Request
+	e.Tags = ctx.Tags
+	return e
+}
+
 // CaptureMessage reports a bare message event at the given level.
 func (c *Client) CaptureMessage(message string, level Level) SendResult {
 	return c.dispatch(event{Level: level, Message: message})
@@ -123,7 +157,22 @@ func (c *Client) dispatch(e event) SendResult {
 	e.Platform = "go"
 	e.Environment = c.opts.Environment
 	e.Release = c.opts.Release
+
+	// Per-event tags are carried on the event before the ambient scope is applied, so hold them aside and
+	// merge them back on top: applyScope would otherwise overwrite them with the process-wide map.
+	perEvent := e.Tags
+	e.Tags = nil
 	applyScope(&e)
+	if len(perEvent) > 0 {
+		merged := make(map[string]string, len(e.Tags)+len(perEvent))
+		for key, value := range e.Tags {
+			merged[key] = value
+		}
+		for key, value := range perEvent {
+			merged[key] = value
+		}
+		e.Tags = merged
+	}
 
 	body, err := json.Marshal(e)
 	if err != nil {

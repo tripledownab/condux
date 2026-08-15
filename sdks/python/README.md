@@ -62,19 +62,63 @@ condux.add_breadcrumb("charge.started", category="billing")
 
 The breadcrumb trail keeps the most recent 30 entries. `condux.clear_scope()` resets everything.
 
-## Framework integrations
+### In a server, scope one request at a time
 
-WSGI (Flask, Django) and ASGI (FastAPI, Starlette) middleware report uncaught exceptions
-(`handled=False`) and re-raise:
+Those calls are **process wide** by default, which is right for facts about the deployment and wrong
+for facts about one request: a server handles requests concurrently, so a bare `set_user` in a view can
+attach that user to a different request's error. That is worse than reporting no user, because it is
+confidently wrong.
+
+`request_scope()` isolates it. Anything set inside belongs to that request alone, layered over the
+process-wide values:
 
 ```python
-# WSGI
-from condux.integrations.wsgi import ConduxWsgiMiddleware
-app.wsgi_app = ConduxWsgiMiddleware(app.wsgi_app)
+with condux.request_scope():
+    condux.set_user({"id": user.id})   # this request only
+    handle(request)
+```
 
-# ASGI
+**The framework integrations do this for you**, so a `set_user` inside a Flask, Django, FastAPI or
+Starlette view is already isolated. Call it directly for background jobs and consumers, which have the
+same problem: many in flight at once, each wanting its own identity on its own events. It is built on
+`contextvars`, so one mechanism covers threads and `asyncio`.
+
+Detail belonging to a single event can also skip the scope entirely:
+
+```python
+condux.capture_exception(error, request={"url": "/api/sync"}, tags={"job": "nightly"})
+```
+
+## Framework integrations
+
+Each reports an uncaught request exception as unhandled, with the request and the matched route, and
+isolates enrichment to that request.
+
+```python
+# Flask
+from condux.integrations.flask import ConduxFlask
+ConduxFlask(app)
+
+# Django: add to MIDDLEWARE in settings.py
+MIDDLEWARE = ["condux.integrations.django.ConduxMiddleware", ...]
+
+# FastAPI / Starlette
 from condux.integrations.asgi import ConduxAsgiMiddleware
 app = ConduxAsgiMiddleware(app)
+```
+
+**Flask and Django need their own integrations, not the WSGI one.** Both catch a view exception,
+convert it to a 500 and return it, so nothing propagates out of the application. A WSGI middleware wraps
+the application from the outside and would therefore never see the exception at all: it reports zero
+events, silently, with nothing to tell you it is not working. `ConduxFlask` and `ConduxMiddleware` hook
+`got_request_exception` instead, which is the signal each framework actually fires.
+
+`ConduxWsgiMiddleware` remains correct for a bare WSGI application, or any framework that lets
+exceptions escape:
+
+```python
+from condux.integrations.wsgi import ConduxWsgiMiddleware
+application = ConduxWsgiMiddleware(my_wsgi_app)
 ```
 
 ## Develop

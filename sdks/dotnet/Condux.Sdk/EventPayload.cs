@@ -36,6 +36,26 @@ internal sealed record EventPayload
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, object?>>? Contexts { get; init; }
 
     public BreadcrumbEnvelope? Breadcrumbs { get; init; }
+
+    // Per-event, not ambient: the request this event happened during.
+    public ConduxRequest? Request { get; init; }
+}
+
+/// <summary>
+/// The request an event happened during. Property names take the serializer's snake_case policy, which
+/// is what the relay's parser reads (url / method / query_string).
+/// </summary>
+/// <remarks>
+/// Deliberately no headers: they carry cookies and authorization, and while the relay scrubs sensitive
+/// keys at ingest, not sending credentials at all is the stronger guarantee.
+/// </remarks>
+public sealed record ConduxRequest
+{
+    public string? Url { get; init; }
+
+    public string? Method { get; init; }
+
+    public string? QueryString { get; init; }
 }
 
 // Breadcrumbs ride the Sentry {"values": []} envelope, not a bare array.
