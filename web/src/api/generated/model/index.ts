@@ -129,7 +129,6 @@ export * from './ssoStartParams';
 export * from './startCveFixRequest';
 export * from './storedEvent';
 export * from './testChannelResponse';
-export * from './tier';
 export * from './unviewedFixCountResponse';
 export * from './updateAlertChannelRequest';
 export * from './updateAlertRuleRequest';

@@ -31,7 +31,7 @@ internal static class ProvisioningEndpoints
                 {
                     return TypedResults.Conflict(new ErrorResponse("single_org_limit"));
                 }
-                var org = await orgs.CreateAsync(req.Slug, req.Name, (int)(req.Tier ?? Tier.Free));
+                var org = await orgs.CreateAsync(req.Slug, req.Name, (int)Tier.Free);
                 await members.AddAsync(org.Id, userId, OrgRole.Owner);
                 return TypedResults.Created($"/api/orgs/{org.Id}", org);
             })

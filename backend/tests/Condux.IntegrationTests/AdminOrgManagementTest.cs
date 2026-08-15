@@ -141,11 +141,15 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
             entries.EnumerateArray().Select(e => e.GetProperty("action").GetString()));
     }
 
-    private static async Task<long> CreateOrgAsync(HttpClient client, int tier = 0)
+    // Not static: needs the connection string to set the tier out of band, since POST /api/orgs always
+    // creates Free and only the Stripe webhook moves an org off it.
+    private async Task<long> CreateOrgAsync(HttpClient client, int tier = 0)
     {
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme", tier });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         resp.EnsureSuccessStatusCode();
-        return (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        var id = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, id, tier);
+        return id;
     }
 }

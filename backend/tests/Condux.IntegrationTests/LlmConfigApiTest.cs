@@ -39,11 +39,15 @@ public sealed class LlmConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
             b.ConfigureTestServices(s => s.AddSingleton<ILlmKeyValidator>(new StubValidator(keyValid)));
         });
 
-    private static async Task<long> CreateOrgAsync(HttpClient client, int tier)
+    // Not static: needs the connection string to set the tier out of band, since POST /api/orgs always
+    // creates Free and only the Stripe webhook moves an org off it.
+    private async Task<long> CreateOrgAsync(HttpClient client, int tier)
     {
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier });
-        return (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" });
+        var id = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, id, tier);
+        return id;
     }
 
     [Fact]

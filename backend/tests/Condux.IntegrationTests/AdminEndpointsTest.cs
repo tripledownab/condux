@@ -37,7 +37,7 @@ public sealed class AdminEndpointsTest(PostgresFixture pg) : IClassFixture<Postg
         foreach (var client in new[] { admin, tenant })
         {
             await client.PostAsJsonAsync("/api/orgs",
-                new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier = 0 });
+                new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" });
         }
 
         // The flag rides on /api/auth/me — true for the admin, false for the tenant.

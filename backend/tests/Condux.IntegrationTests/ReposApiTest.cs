@@ -35,8 +35,9 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
         var client = ControlPlaneApp.Create(pg.ConnectionString, configure: configure).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { slug = "backend", name = "Backend", platform = "python" });
         var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())

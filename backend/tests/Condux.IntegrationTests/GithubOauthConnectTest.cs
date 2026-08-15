@@ -293,7 +293,7 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         }
 
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier = 0 });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" });
         return (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
     }
 }

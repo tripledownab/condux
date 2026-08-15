@@ -217,14 +217,17 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     }
 
 
-    private static async Task<long> SetUpOrgWithSamlAsync(
+    // Not static: reaches pg.ConnectionString to set the tier out of band, since POST /api/orgs
+    // always creates Free and only the Stripe webhook moves an org off it.
+    private async Task<long> SetUpOrgWithSamlAsync(
         WebApplicationFactory<Program> app, string domain, X509Certificate2 idpCertificate)
     {
         var admin = app.CreateClient();
         await ApiAuth.SignUpAsync(admin);
         var created = await admin.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier = 2 }); // Business has Sso
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" }); // Business has Sso
         var orgId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
 
         var put = await admin.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
         {

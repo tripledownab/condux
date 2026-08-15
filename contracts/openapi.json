@@ -6295,8 +6295,7 @@
       "CreateOrgRequest": {
         "required": [
           "slug",
-          "name",
-          "tier"
+          "name"
         ],
         "type": "object",
         "properties": {
@@ -6305,15 +6304,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "tier": {
-            "type": "integer",
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Tier"
-              }
-            ],
-            "nullable": true
           }
         }
       },
@@ -8285,9 +8275,6 @@
             "nullable": true
           }
         }
-      },
-      "Tier": {
-        "type": "integer"
       },
       "UnviewedFixCountResponse": {
         "required": [

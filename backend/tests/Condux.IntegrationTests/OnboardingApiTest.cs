@@ -46,8 +46,9 @@ public sealed class OnboardingApiTest(PostgresFixture pg) : IClassFixture<Postgr
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgResp = await owner.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier = 0 });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 0);
 
         var email = $"invitee-{Guid.NewGuid():N}@condux.test";
         var invite = await (await owner.PostAsJsonAsync($"/api/orgs/{orgId}/invites",

@@ -48,9 +48,10 @@ public sealed class RelayPostgresAuthTest(PostgresFixture pg) : IClassFixture<Po
         // Mint a DSN the way a user would: create an org, then a project (which returns
         // a ready-to-use DSN string).
         var orgResp = await api.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 1 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         Assert.Equal(HttpStatusCode.Created, orgResp.StatusCode);
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 1);
 
         var projResp = await api.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { name = "Backend", platform = "python" });

@@ -8,6 +8,4 @@
 export interface CreateOrgRequest {
   slug: string;
   name: string;
-  /** @nullable */
-  tier: number | null;
 }

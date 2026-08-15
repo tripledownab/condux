@@ -25,7 +25,9 @@ export function CreateOrgForm() {
     if (trimmed.length === 0) {
       return;
     }
-    createOrg.mutate({ data: { name: trimmed, slug: slugify(trimmed), tier: null } });
+    // No tier: an org is always created Free and only Stripe moves it (ADR-0026). The field used to be
+    // in the request and the server honoured it, which let anyone POST their way onto Enterprise.
+    createOrg.mutate({ data: { name: trimmed, slug: slugify(trimmed) } });
   };
 
   return (

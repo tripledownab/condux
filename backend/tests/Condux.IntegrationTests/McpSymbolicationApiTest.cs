@@ -48,8 +48,9 @@ public sealed class McpSymbolicationApiTest(PostgresFixture pg, ClickHouseFixtur
 
         await ApiAuth.SignUpAsync(client);
         var orgId = (await (await client.PostAsJsonAsync("/api/orgs",
-                new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 }))
+                new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" }))
             .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2); // Business
         var projectId = (await (await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
                 new { name = "Web", platform = "javascript" }))
             .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("project").GetProperty("id").GetInt64();

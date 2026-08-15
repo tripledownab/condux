@@ -2,6 +2,8 @@
 
 Condux is a source-available error monitoring platform with a built-in AI fix engine.
 
+[![An issue in Condux, with its stack trace, source context, volume chart and triage actions](https://condux.ai/screenshots/issue-detail-light.jpg)](https://condux.ai)
+
 SDKs report errors to a stateless ingest relay, which authenticates the DSN, applies per-plan rate
 limits and quotas, and scrubs PII before buffering through Redpanda. A consumer fingerprints and groups
 events into issues, writes time series to ClickHouse and issue state to PostgreSQL. A Next.js dashboard
@@ -14,6 +16,8 @@ The fix engine takes an issue to a draft pull request. It assembles a scoped, sc
 stack trace and the project's code mappings, sends it to Claude or to a model the organisation supplies,
 and applies the returned changes on a new branch as a **draft** pull request. Fixes are never merged
 automatically.
+
+[![A Conductor fix run on an issue, showing its status, the model token usage and the draft pull request it opened](https://condux.ai/screenshots/fix-run-light.jpg)](https://condux.ai)
 
 Repository access is a GitHub App with short-lived installation tokens; the model is not given the
 token. After a fix PR merges, a verification loop compares the issue against its subsequent event
@@ -34,6 +38,15 @@ application report without an SDK.
 First-party SDKs are published for JavaScript/Node, browser, edge, Next.js, Python, Go, Ruby, PHP, JVM
 and .NET, with framework adapters for React, Express, Flask/Django/FastAPI, Rails, ASP.NET Core and
 Spring Boot. The SDKs are Apache-2.0; the server is FSL.
+
+## MCP endpoint
+
+A read-only Model Context Protocol endpoint lets an AI agent debug against real production errors.
+Point Claude, Cursor or any MCP client at a project with a scoped token and it can list issues, read
+stack traces and page through occurrences. There are no write tools, and a token resolves to exactly
+one project.
+
+[![The MCP tab of a project, where a scoped read-only token is minted with its client configuration snippet](https://condux.ai/screenshots/mcp-tab-light.jpg)](https://condux.ai)
 
 ## Architecture
 

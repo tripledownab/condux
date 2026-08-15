@@ -105,7 +105,7 @@ public sealed class ImpersonationTest(PostgresFixture pg) : IClassFixture<Postgr
     private static async Task<long> CreateOrgAsync(HttpClient client)
     {
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 0 });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         resp.EnsureSuccessStatusCode();
         return (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
     }

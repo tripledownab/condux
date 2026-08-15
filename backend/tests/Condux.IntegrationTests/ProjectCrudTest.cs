@@ -24,7 +24,7 @@ public sealed class ProjectCrudTest(PostgresFixture pg) : IClassFixture<Postgres
     private static async Task<long> CreateOrgAsync(HttpClient client)
     {
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org", tier = 0 });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" });
         return (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
     }
 

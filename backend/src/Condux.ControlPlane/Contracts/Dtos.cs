@@ -8,7 +8,11 @@ using Condux.Storage.Postgres;
 // namespace would be a needless churn risk to the wire contract.
 
 // Requests (bound from JSON bodies).
-internal sealed record CreateOrgRequest(string Slug, string Name, Tier? Tier);
+// No Tier: the caller does not get to choose its own plan. Every org is created Free and only the
+// signature-verified Stripe webhook moves it (ADR-0026). Accepting a client tier let any signed-up
+// user POST tier=3 and take Enterprise: unlimited ingest, uncapped Conductor runs, and — with no BYO
+// key configured — those runs billed to the platform's own model key.
+internal sealed record CreateOrgRequest(string Slug, string Name);
 // The org's AI-fix settings, submitted together from Settings → General. AiFixCostCapUsd is the optional
 // monthly Conductor spend ceiling (null clears it — no cap; #120 budgets).
 // FixExecution is nullable and means "leave it as it is" when omitted (ADR-0033 slice 4c). It has to be:

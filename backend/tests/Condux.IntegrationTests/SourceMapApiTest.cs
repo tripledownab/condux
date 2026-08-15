@@ -36,13 +36,16 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
             b.ConfigureTestServices(s => s.AddSingleton<IObjectStore>(store));
         });
 
-    private static async Task<(HttpClient Admin, long ProjectId)> ProvisionAsync(WebApplicationFactory<Program> app)
+    // Not static: reaches pg.ConnectionString to set the tier out of band, since POST /api/orgs
+    // always creates Free and only the Stripe webhook moves an org off it.
+    private async Task<(HttpClient Admin, long ProjectId)> ProvisionAsync(WebApplicationFactory<Program> app)
     {
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { slug = "web", name = "Web", platform = "javascript" });
         var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())

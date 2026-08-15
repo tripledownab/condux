@@ -35,14 +35,17 @@
     <url>https://github.com/tripledownab/condux/tree/main/sdks/jvm</url>
   </scm>
 
-  <!-- Publishing target: GitHub Packages Maven registry (matches the .NET SDK's NuGet GH Packages
-       default). The publish workflow supplies credentials via a generated settings.xml (GITHUB_TOKEN).
-       To publish to Maven Central instead, swap this for the Central repository + add GPG signing. -->
+  <!-- Publishing target: GitHub Packages Maven registry. The publish workflow supplies credentials via a
+       generated settings.xml using the built-in GITHUB_TOKEN, and that token can only write packages to
+       the repository the workflow runs in — so this URL must name that repository, not the public mirror,
+       or the deploy is rejected. Note GitHub Packages requires a token to READ as well, so this is not a
+       substitute for Maven Central: publishing there instead means swapping this repository and adding
+       GPG signing. -->
   <distributionManagement>
     <repository>
       <id>github</id>
       <name>GitHub Packages</name>
-      <url>https://maven.pkg.github.com/tripledownab/condux</url>
+      <url>https://maven.pkg.github.com/tripledownab/condux-private</url>
     </repository>
   </distributionManagement>
 

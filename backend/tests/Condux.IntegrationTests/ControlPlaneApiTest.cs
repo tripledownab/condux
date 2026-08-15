@@ -28,10 +28,11 @@ public sealed class ControlPlaneApiTest(PostgresFixture pg) : IClassFixture<Post
 
         // Create an org (tier 2 = Business).
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         Assert.Equal(HttpStatusCode.Created, orgResp.StatusCode);
         var org = await orgResp.Content.ReadFromJsonAsync<JsonElement>();
         var orgId = org.GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2); // Business
 
         // Create a project → returns the project, its first key, and a usable DSN.
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
@@ -87,7 +88,7 @@ public sealed class ControlPlaneApiTest(PostgresFixture pg) : IClassFixture<Post
         await Migrations.ApplyAllAsync(pg.ConnectionString);
         var anon = CreateClient(); // no signup → no session cookie
 
-        var resp = await anon.PostAsJsonAsync("/api/orgs", new { slug = "x", name = "X", tier = 0 });
+        var resp = await anon.PostAsJsonAsync("/api/orgs", new { slug = "x", name = "X" });
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/orgs")).StatusCode);
     }

@@ -19,8 +19,9 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 1 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 1);
         return (client, orgId);
     }
 

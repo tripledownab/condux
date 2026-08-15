@@ -27,8 +27,9 @@ public sealed class RunnerTokenApiTest(PostgresFixture pg) : IClassFixture<Postg
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 });
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
         return (client, orgId);
     }
 

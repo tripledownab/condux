@@ -67,14 +67,17 @@ public sealed class BillingApiTest(PostgresFixture pg) : IClassFixture<PostgresF
         Assert.Equal(error, (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 
-    private static async Task<(HttpClient Client, long OrgId)> OwnerWithOrgAsync(WebApplicationFactory<Program> app)
+    // Not static: reaches pg.ConnectionString to set the tier out of band, since POST /api/orgs
+    // always creates Free and only the Stripe webhook moves an org off it.
+    private async Task<(HttpClient Client, long OrgId)> OwnerWithOrgAsync(WebApplicationFactory<Program> app)
     {
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
         var resp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 0 });
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         resp.EnsureSuccessStatusCode();
         var orgId = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 0);
         return (client, orgId);
     }
 }

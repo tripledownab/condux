@@ -26,8 +26,9 @@ public sealed class IssueStatsApiTest(PostgresFixture pg, ClickHouseFixture ch)
         var client = ControlPlaneApp.Create(pg.ConnectionString, ch).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "stats-" + Guid.NewGuid().ToString("N"), name = "Stats", tier = 1 });
+            new { slug = "stats-" + Guid.NewGuid().ToString("N"), name = "Stats" });
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 1);
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { slug = "svc", name = "Svc", platform = "python" });
         var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())

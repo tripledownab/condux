@@ -21,8 +21,9 @@ public sealed class CveFixApiTest(PostgresFixture pg) : IClassFixture<PostgresFi
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme", tier = 2 }); // Business: AiFixes on
+            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" }); // Business: AiFixes on
         var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { slug = "backend", name = "Backend", platform = "node" });
         var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())
