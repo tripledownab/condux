@@ -37,7 +37,10 @@ public final class ConduxClientTest {
         ConduxClient client = build(recorder);
         SendResult result;
         try {
-            throw new IllegalArgumentException("boom from java");
+            // Thrown from a class outside ai.condux, so the in-app assertion below is about the SDK's
+            // classifier rather than about this test sharing the SDK's package.
+            com.example.app.OrderService.checkout();
+            throw new AssertionError("OrderService.checkout did not throw");
         } catch (IllegalArgumentException e) {
             result = client.captureException(e);
         }
@@ -53,8 +56,8 @@ public final class ConduxClientTest {
         check(body.contains("\"value\":\"boom from java\""), "exception value is the message");
         check(body.contains("\"mechanism\":{\"type\":\"generic\",\"handled\":true}"), "mechanism is generic + handled");
         check(body.contains("\"stacktrace\""), "a stack trace is attached");
-        check(body.contains("ConduxClientTest"), "the throwing method is in the trace");
-        check(body.contains("\"in_app\":true"), "the app frame is in-app");
+        check(body.contains("OrderService"), "the throwing method is in the trace");
+        check(body.contains("\"in_app\":true"), "the application frame is in-app");
         check("testkey".equals(recorder.requests.get(0).get("x-condux-auth")), "auth header carries the DSN key");
         check("https://ingest.test/api/proj-uuid/store/".equals(recorder.urls.get(0)), "store URL is built from the DSN");
     }

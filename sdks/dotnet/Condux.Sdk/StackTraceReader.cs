@@ -53,8 +53,15 @@ internal static class StackTraceReader
     private static string FunctionName(MethodBase method) =>
         method.DeclaringType is { } type ? $"{type.FullName}.{method.Name}" : method.Name;
 
-    // Application frames drive grouping + the culprit; the BCL and framework are noise. Excludes the
-    // System.* and Microsoft.* namespaces (the Sentry .NET default), keyed on the declaring type.
+    // Application frames drive grouping + the culprit; the BCL, the framework and this SDK are noise.
+    // Excludes System.* and Microsoft.* (the Sentry .NET default) keyed on the declaring type, plus
+    // Condux.Sdk.*.
+    //
+    // That last one is not tidiness. ConduxExceptionMiddleware sits in the request pipeline, so its frame
+    // is in every unhandled request exception this SDK reports: leaving it in-app put our own plumbing
+    // into the customer's grouping fingerprint and made it a candidate culprit. The Python SDK had the
+    // same defect and the JVM SDK had it worse, where a real Spring request reported 48 in-app frames of
+    // which one was the application's.
     private static bool IsInApp(MethodBase method)
     {
         var declaringNamespace = method.DeclaringType?.Namespace;
@@ -64,6 +71,13 @@ internal static class StackTraceReader
         }
 
         return !declaringNamespace.StartsWith("System", StringComparison.Ordinal)
-            && !declaringNamespace.StartsWith("Microsoft", StringComparison.Ordinal);
+            && !declaringNamespace.StartsWith("Microsoft", StringComparison.Ordinal)
+            && !IsThisSdk(declaringNamespace);
     }
+
+    // Exact namespace or a child of it, rather than a bare prefix: "Condux.Sdk".StartsWith would also
+    // swallow a customer namespace like Condux.SdkExtensions, and silently deciding someone else's code
+    // is ours is the same class of error in the other direction.
+    private static bool IsThisSdk(string declaringNamespace) =>
+        declaringNamespace == "Condux.Sdk" || declaringNamespace.StartsWith("Condux.Sdk.", StringComparison.Ordinal);
 }

@@ -29,7 +29,7 @@ public class EventPayloadTests
     {
         var transport = new ScriptedTransport(ScriptedTransport.Status(HttpStatusCode.OK));
         var result = await Client(transport, environment: "test", release: "1.2.3")
-            .CaptureExceptionAsync(Thrown());
+            .CaptureExceptionAsync(Acme.Checkout.OrderService.Thrown());
 
         Assert.True(result.Ok);
         var body = LastBody(transport);
@@ -95,23 +95,47 @@ public class EventPayloadTests
     {
         // A framework integration reports uncaught exceptions with handled: false, driving the badge.
         var transport = new ScriptedTransport(ScriptedTransport.Status(HttpStatusCode.OK));
-        await Client(transport).CaptureExceptionAsync(Thrown(), handled: false);
+        await Client(transport).CaptureExceptionAsync(Acme.Checkout.OrderService.Thrown(), handled: false);
 
         var mechanism = LastBody(transport)
             .GetProperty("exception").GetProperty("values")[0].GetProperty("mechanism");
         Assert.False(mechanism.GetProperty("handled").GetBoolean());
     }
 
-    // Throw + catch so the exception carries a real stack trace.
-    private static Exception Thrown()
+    // in_app drives the relay's grouping fingerprint, the culprit, and which files the fix engine follows
+    // back to a repository, so a frame wrongly marked in-app is not cosmetic.
+    //
+    // Condux.Sdk.* is excluded for the same reason the Python SDK excludes its own directory: this SDK's
+    // ASP.NET middleware sits in the request pipeline, so its frame is in EVERY unhandled request
+    // exception it reports, and leaving it in-app put our own plumbing in the customer's fingerprint.
+    [Fact]
+    public async Task ThisSdksOwnFramesAreNotInApp()
     {
+        var transport = new ScriptedTransport(ScriptedTransport.Status(HttpStatusCode.OK));
+        var client = Client(transport);
+
         try
         {
-            throw new InvalidOperationException("boom from the sdk");
+            throw new InvalidOperationException("boom");
         }
-        catch (Exception error)
+        catch (InvalidOperationException error)
         {
-            return error;
+            await client.CaptureExceptionAsync(error);
+        }
+
+        var frames = LastBody(transport)
+            .GetProperty("exception").GetProperty("values")[0]
+            .GetProperty("stacktrace").GetProperty("frames");
+
+        for (var i = 0; i < frames.GetArrayLength(); i++)
+        {
+            var function = frames[i].GetProperty("function").GetString() ?? "";
+            if (function.StartsWith("Condux.Sdk", StringComparison.Ordinal))
+            {
+                Assert.False(frames[i].GetProperty("in_app").GetBoolean(),
+                    $"{function} is this SDK's own frame and must not be in-app");
+            }
         }
     }
+
 }

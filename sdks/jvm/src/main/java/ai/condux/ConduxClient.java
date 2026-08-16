@@ -35,6 +35,7 @@ public final class ConduxClient {
     private final String environment;
     private final String release;
     private final DoubleSupplier clock;
+    private final List<String> inAppPackages;
 
     private ConduxClient(Builder builder) {
         Dsn dsn = Dsn.parse(builder.dsn);
@@ -45,6 +46,7 @@ public final class ConduxClient {
         this.environment = builder.environment;
         this.release = builder.release;
         this.clock = builder.clock != null ? builder.clock : () -> System.currentTimeMillis() / 1000.0;
+        this.inAppPackages = builder.inAppPackages;
     }
 
     /** Start building a client for the given project DSN. */
@@ -76,7 +78,7 @@ public final class ConduxClient {
     public SendResult captureException(Throwable error, boolean handled, CaptureContext context) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("level", Level.ERROR.wire());
-        fields.put("exception", Map.of("values", List.of(EventPayload.exception(error, handled))));
+        fields.put("exception", Map.of("values", List.of(EventPayload.exception(error, handled, inAppPackages))));
         return dispatch(fields, context);
     }
 
@@ -128,6 +130,7 @@ public final class ConduxClient {
         private Transport transport;
         private DoubleConsumer sleeper;
         private DoubleSupplier clock;
+        private List<String> inAppPackages = List.of();
 
         private Builder(String dsn) {
             this.dsn = dsn;
@@ -145,6 +148,23 @@ public final class ConduxClient {
 
         public Builder maxRetries(int maxRetries) {
             this.maxRetries = maxRetries;
+            return this;
+        }
+
+        /**
+         * The packages that are this application's own, as prefixes.
+         *
+         * <p>Optional, and worth setting. Without it the SDK guesses, excluding the JDK, this SDK and the
+         * usual web-request infrastructure, which is right for an ordinary {@code com.example.*}
+         * application. It cannot be right for one whose own package sits under a framework's namespace,
+         * and it cannot know that an internal shared library is yours rather than a third party's.
+         *
+         * <p>Setting this REPLACES the guess: listed prefixes are in-app and everything else is not.
+         *
+         * <pre>{@code ConduxClient.builder(dsn).inAppPackages("com.acme.").build()}</pre>
+         */
+        public Builder inAppPackages(String... prefixes) {
+            this.inAppPackages = List.of(prefixes);
             return this;
         }
 

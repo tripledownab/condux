@@ -46,6 +46,23 @@ try {
 condux.captureMessage("cache miss storm", Level.WARNING);
 ```
 
+### Which frames are yours
+
+Condux marks each stack frame as the application's or not, and that decides how issues group, which
+frame is shown as the culprit, and which files an automated fix reads. By default it excludes the JDK,
+this SDK, and the layers that wrap every web request (Spring, Tomcat, Jetty, Undertow), which is right
+for an ordinary application.
+
+Set `inAppPackages` if your code sits somewhere that guess cannot reach, such as inside a framework's
+own namespace, or if an internal shared library should count as yours. It **replaces** the default:
+what you list is in-app, and nothing else is.
+
+```java
+ConduxClient.builder(dsn)
+    .inAppPackages("com.acme.", "com.acme.platform.")
+    .build();
+```
+
 ### Spring Boot / servlet apps
 
 `ai.condux.servlet.ConduxExceptionFilter` is a servlet `Filter` that reports an uncaught request

@@ -27,7 +27,7 @@ func captureStack() []frame {
 				Function: f.Function,
 				Module:   packageOf(f.Function),
 				Lineno:   f.Line,
-				InApp:    f.File != "" && (goroot == "" || !strings.HasPrefix(f.File, goroot)),
+				InApp:    isInApp(f.File, goroot),
 			})
 		}
 		if !more {
@@ -39,6 +39,28 @@ func captureStack() []frame {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+// isInApp reports whether a frame is the application's own code.
+//
+// Excludes the standard library by GOROOT, and dependencies by the module cache path. The second half
+// brings Go into line with the rest of the fleet, which all exclude wherever their ecosystem installs
+// dependencies: site-packages, /gems/, /vendor/, node_modules. Without it EVERY dependency counted as
+// application code, and so did this SDK, whose own frames therefore entered the customer's grouping
+// fingerprint and could be chosen as the culprit.
+//
+// A vendored build (vendor/ beside the source) is deliberately NOT excluded here: those files are inside
+// the user's own tree and a path check cannot tell them from application code without guessing.
+func isInApp(file string, goroot string) bool {
+	if file == "" {
+		return false
+	}
+	if goroot != "" && strings.HasPrefix(file, goroot) {
+		return false
+	}
+	// The module cache, wherever GOMODCACHE puts it. Matched as a path segment so a user directory
+	// merely called "mod" cannot collide.
+	return !strings.Contains(file, "/pkg/mod/")
 }
 
 // isCaptureFrame reports whether a runtime function name is part of this SDK's capture path (so it is

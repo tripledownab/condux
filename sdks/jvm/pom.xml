@@ -54,6 +54,90 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
+  <!-- Maven Central publishing, behind a profile so it changes nothing about an ordinary build.
+       CI activates it with -Pcentral; `mvn package` and the plain-javac path stay exactly as they were.
+
+       Why Central at all, when the artifact already publishes to GitHub Packages: that registry accepts
+       ONLY classic personal access tokens, and the read:packages scope on one is account-wide. Every JVM
+       consumer therefore had to mint a token granting read across every organisation they belong to,
+       just to depend on us, while our other six registries resolve anonymously. Central removes that.
+
+       Central's requirements, all satisfied here: sources and javadoc jars, PGP signatures on every
+       file, and complete POM metadata (name, description, url, licence, developers, scm — above). PGP is
+       still mandatory; Sonatype added Sigstore validation but were explicit that it supplements
+       signatures rather than replacing them. -->
+  <profiles>
+    <profile>
+      <id>central</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.4.0</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.12.0</version>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+            <configuration>
+              <!-- Central requires a javadoc jar to exist, not to be lint-clean. Failing a release on a
+                   missing @param would be a self-inflicted outage on the publish path. -->
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+                <configuration>
+                  <!-- The passphrase arrives via env rather than an interactive prompt; without this the
+                       plugin waits for a TTY that a runner does not have and the job hangs to timeout. -->
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.11.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <!-- Upload and release in one step. The alternative leaves each release sitting in the
+                   portal waiting for a human to press a button, which is exactly the manual step that
+                   left the public mirror with no GitHub Releases for three versions. -->
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
   <!-- Zero runtime dependencies: HTTP is java.net.http, JSON is written by hand. The one dependency is
        compile-only (provided): the servlet API the ConduxExceptionFilter (Spring Boot / servlet adapter)
        implements, supplied by the container at runtime. -->
