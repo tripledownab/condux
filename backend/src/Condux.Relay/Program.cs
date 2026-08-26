@@ -10,6 +10,8 @@ using Condux.Core.Quotas;
 using Condux.Core.RateLimiting;
 using Condux.Core.Scrub;
 using Condux.Messaging;
+using Condux.Otlp;
+using Condux.Relay.Ingest;
 using Condux.Storage.Postgres;
 using Condux.Storage.Quotas;
 using Condux.Storage.RateLimiting;
@@ -18,6 +20,10 @@ using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using StackExchange.Redis;
+// Aliased because OpenTelemetry.Trace exports its own Status and StatusCode. Any receiver that also
+// uses the OpenTelemetry SDK hits the same clash, which is worth knowing before reaching for these.
+using OtlpStatus = Condux.Otlp.Status;
+using OtlpStatusCode = Condux.Otlp.StatusCode;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -271,13 +277,18 @@ app.MapPost("/api/{projectId}/envelope/",
 
 // Native OTLP/HTTP logs ingestion (#79, ADR-0025): an app instrumented with OpenTelemetry reports errors
 // by pointing its OTLP logs exporter at `<relay>/api/{projectId}` (the exporter appends `/v1/logs`). JSON
-// encoding only for now (protobuf is a follow-up). One OTLP export is one request for auth/rate/spike;
+// and protobuf encodings both. One OTLP export is one request for auth/rate/spike;
 // each error LogRecord in the batch is one event for quota. Being an error monitor, only error-or-worse
 // records (or those carrying an exception) become issues; lower-severity logs are accepted but not stored.
 app.MapPost("/api/{projectId}/v1/logs",
     async (string projectId, HttpContext ctx, IRateLimiter limiter, IQuotaMeter quotaMeter,
         SpikeGuard spike, IProjectStore projects, IEventPublisher publisher) =>
 {
+    // Decided before the first refusal rather than just before the parse: every failure below has to be
+    // answered in the encoding the request arrived in, including the ones that never read the body.
+    var isProtobuf = (ctx.Request.ContentType ?? "")
+        .Contains("application/x-protobuf", StringComparison.OrdinalIgnoreCase);
+
     var publicKey = ExtractPublicKey(ctx);
     var project = publicKey is null
         ? null
@@ -285,7 +296,7 @@ app.MapPost("/api/{projectId}/v1/logs",
     if (project is null)
     {
         ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await ctx.Response.WriteAsJsonAsync(new { error = "invalid_dsn" });
+        await WriteOtlpErrorAsync(ctx, isProtobuf, OtlpStatusCode.Unauthenticated, "the DSN was rejected");
         return;
     }
 
@@ -299,7 +310,8 @@ app.MapPost("/api/{projectId}/v1/logs",
     {
         ctx.Response.Headers.RetryAfter = decision.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
         ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await ctx.Response.WriteAsJsonAsync(new { error = "rate_limited" });
+        await WriteOtlpErrorAsync(ctx, isProtobuf, OtlpStatusCode.ResourceExhausted,
+            "the project's ingest rate limit was reached");
         return;
     }
 
@@ -308,32 +320,32 @@ app.MapPost("/api/{projectId}/v1/logs",
     {
         ctx.Response.Headers.RetryAfter = spikeDecision.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
         ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await ctx.Response.WriteAsJsonAsync(new { error = "spike_protection" });
+        await WriteOtlpErrorAsync(ctx, isProtobuf, OtlpStatusCode.ResourceExhausted,
+            "the receiver is shedding load, retry after the interval given");
         return;
     }
 
-    // The JSON proto encoding only; a binary-protobuf export needs codegen we haven't added yet.
-    if ((ctx.Request.ContentType ?? "").Contains("application/x-protobuf", StringComparison.OrdinalIgnoreCase))
+    // Bounded like the Sentry path: UseRequestDecompression has already expanded the body, and Kestrel's
+    // own limit bounds the compressed request, so an unbounded read here has no ceiling at all.
+    var body = await ReadBoundedAsync(ctx.Request.Body, maxIngestBytes, ctx.RequestAborted);
+    if (body is null)
     {
-        ctx.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
-        await ctx.Response.WriteAsJsonAsync(new { error = "protobuf_unsupported" });
+        ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+        await WriteOtlpErrorAsync(ctx, isProtobuf, OtlpStatusCode.ResourceExhausted,
+            "the export exceeded the configured size limit");
         return;
     }
 
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
-
-    IReadOnlyList<Event> parsed;
-    try
-    {
-        parsed = OtlpLogParser.ParseLogs(body);
-    }
-    catch (JsonException)
+    var decoded = isProtobuf ? OtlpLogs.ParseProtobuf(body) : OtlpLogs.ParseJson(body);
+    if (!decoded.IsSuccess)
     {
         ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-        await ctx.Response.WriteAsJsonAsync(new { error = "invalid_payload" });
+        await WriteOtlpErrorAsync(ctx, isProtobuf, OtlpStatusCode.InvalidArgument,
+            "the export did not decode");
         return;
     }
+
+    var parsed = OtlpEventMapper.ToEvents(decoded.Value);
 
     long rejected = 0;
     var accepted = 0;
@@ -364,20 +376,20 @@ app.MapPost("/api/{projectId}/v1/logs",
     app.Logger.LogInformation(
         "otlp ingest project={ProjectId} accepted={Accepted} rejected={Rejected}", projectKey, accepted, rejected);
 
-    // OTLP/HTTP success is 200 with an ExportLogsServiceResponse; partialSuccess is set only when the
-    // monthly quota rejected some of the batch's error records.
-    ctx.Response.StatusCode = StatusCodes.Status200OK;
+    // OTLP/HTTP success is 200 with an ExportLogsServiceResponse, encoded the way the request was.
+    // partialSuccess is set only when the monthly quota rejected some of the batch's error records.
+    var response = new ExportLogsServiceResponse();
     if (rejected > 0)
     {
-        await ctx.Response.WriteAsJsonAsync(new
+        response.PartialSuccess = new ExportLogsPartialSuccess
         {
-            partialSuccess = new { rejectedLogRecords = rejected, errorMessage = "quota_exceeded" },
-        });
+            RejectedLogRecords = rejected,
+            ErrorMessage = "quota_exceeded",
+        };
     }
-    else
-    {
-        await ctx.Response.WriteAsJsonAsync(new { });
-    }
+
+    ctx.Response.StatusCode = StatusCodes.Status200OK;
+    await WriteOtlpAsync(ctx, isProtobuf, response);
 });
 
 app.Run();
@@ -392,6 +404,52 @@ static long ParseLong(string? value, long fallback) =>
 /// <summary>Reads the request body, refusing it the moment it passes <paramref name="limit"/> bytes;
 /// null means it did. Bounds the DECOMPRESSED size, which a server request-size limit cannot: a zip bomb
 /// is tiny on the wire and only becomes large after the decompression middleware has run.</summary>
+// OTLP requires a server to answer in the content type it was sent, so the encoding is chosen from the
+// request rather than fixed. A full success is an empty message in both encodings.
+static async Task WriteOtlpAsync(HttpContext ctx, bool isProtobuf, ExportLogsServiceResponse response)
+{
+    if (isProtobuf)
+    {
+        ctx.Response.ContentType = "application/x-protobuf";
+        await ctx.Response.Body.WriteAsync(response.ToProtobuf(), ctx.RequestAborted);
+        return;
+    }
+
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsync(response.ToJson(), ctx.RequestAborted);
+}
+
+// The protocol's failure body is a Status message, which we do not encode, so a protobuf caller gets the
+// status code and no body. Answering with JSON labelled as protobuf would be worse than answering with
+// nothing.
+// The protocol requires the body of every 4xx and 5xx to be a google.rpc.Status describing the problem,
+// in the content type the request arrived in. Both encodings used to break that: protobuf got an empty
+// body, and JSON got this service's own {"error": "..."} shape, which is not a Status.
+//
+// Do not "correct" the JSON branch to write protobuf. The spec's Failures section words this as a
+// "Protobuf-encoded Status message", under a heading that is not encoding-specific, which reads as
+// binary until you notice it contradicts the same-content-type rule stated a few lines earlier: obeying
+// it literally would answer application/json with binary bytes. The OpenTelemetry Collector settles it,
+// picking its encoder from the request's Content-Type and marshalling the Status with that, so a JSON
+// request gets a JSON Status. That is what this does.
+//
+// The code is not a retry instruction. A sender decides that from the HTTP status, so a 400 is never
+// retried whatever code rides in the body. It is here to make the failure legible to whoever is reading
+// their exporter's logs while nothing arrives.
+static async Task WriteOtlpErrorAsync(HttpContext ctx, bool isProtobuf, OtlpStatusCode code, string message)
+{
+    var status = new OtlpStatus { Code = (int)code, Message = message };
+    if (isProtobuf)
+    {
+        ctx.Response.ContentType = "application/x-protobuf";
+        await ctx.Response.Body.WriteAsync(status.ToProtobuf(), ctx.RequestAborted);
+        return;
+    }
+
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsync(status.ToJson(), ctx.RequestAborted);
+}
+
 static async Task<byte[]?> ReadBoundedAsync(Stream body, long limit, CancellationToken ct)
 {
     var rented = ArrayPool<byte>.Shared.Rent(81920);

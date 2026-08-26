@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./sign-in";
 
 // The core vertical slice: sign in, make sure a project exists, ingest an event straight into the
 // relay, and confirm it surfaces as a grouped issue in the dashboard. Requires the full compose stack
@@ -6,8 +7,6 @@ import { expect, test } from "@playwright/test";
 // `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build`.
 
 const RELAY_URL = process.env.CONDUX_E2E_RELAY_URL ?? "http://localhost:9010";
-const ADMIN_EMAIL = process.env.CONDUX_E2E_ADMIN_EMAIL ?? "admin@condux.dev";
-const ADMIN_PASSWORD = process.env.CONDUX_E2E_ADMIN_PASSWORD ?? "condux-dev-admin";
 
 // Splits a DSN (scheme://publicKey@host/projectId) into the pieces a relay call needs.
 function parseDsn(dsn: string): { publicKey: string; projectId: string } {
@@ -17,13 +16,7 @@ function parseDsn(dsn: string): { publicKey: string; projectId: string } {
 
 test("an ingested event surfaces as an issue in the dashboard", async ({ page, request }) => {
   // 1. Sign in as the seeded dev admin and land on the issue list.
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(ADMIN_EMAIL);
-  await page.getByLabel("Password").fill(ADMIN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  // The issues surface has had no "Issues" heading since the quad-pane redesign — the views are a rail
-  // of buttons. Assert on the shell, which is what "signed in" actually means.
-  await expect(page.getByRole("button", { name: /Account menu/ })).toBeVisible();
+  await signIn(page);
 
   // 2. Ensure a project exists, then read its DSN. Projects moved out of Settings to their own
   // top-level section (#124), and the DSN now lives behind the project's "DSN keys" tab rather than on

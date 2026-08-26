@@ -43,7 +43,7 @@ internal static class AuthEndpoints
         app.MapPost("/api/auth/login",
                 async Task<Results<Ok<AuthUserResponse>, UnauthorizedHttpResult>> (
                     Credentials req, UserRepository users, SessionRepository sessions,
-                    EmailAllowlist platformAdmins, HttpContext http) =>
+                    EmailAllowlist platformAdmins, MultiFactor mfa, HttpContext http) =>
                 {
                     var user = await users.GetByEmailAsync(Emails.Normalize(req.Email ?? string.Empty));
                     if (user?.PasswordHash is null
@@ -53,9 +53,15 @@ internal static class AuthEndpoints
                         return TypedResults.Unauthorized();
                     }
 
-                    await Sessions.IssueAsync(user, sessions, http);
+                    // The cookie is issued either way; when a second factor is enrolled it is issued
+                    // PENDING, which resolves to nobody until /api/auth/mfa/verify promotes it. Carrying
+                    // the challenge on the session rather than a separate token is what lets the
+                    // redirect-based sign-ins reuse this without putting state in a URL.
+                    var mfaRequired = await mfa.IsEnabledAsync(user.Id, http.RequestAborted);
+                    await Sessions.IssueAsync(user, sessions, http, mfaPending: mfaRequired);
                     return TypedResults.Ok(new AuthUserResponse(
-                        user.Id, user.Email, platformAdmins.Contains(user.Email), Onboarded: user.OnboardedAt is not null));
+                        user.Id, user.Email, platformAdmins.Contains(user.Email),
+                        Onboarded: user.OnboardedAt is not null, MfaRequired: mfaRequired));
                 })
             .WithName("login").WithTags("Auth");
 

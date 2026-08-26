@@ -56,7 +56,7 @@ internal static class OAuthEndpoints
         app.MapGet("/api/auth/oauth/google/callback",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     GoogleOAuthConfig config, GoogleOidcClient oidc, UserRepository users,
-                    SessionRepository sessions, IConfiguration cfg, HttpContext http) =>
+                    SessionRepository sessions, IConfiguration cfg, MultiFactor mfa, HttpContext http) =>
                 {
                     if (!config.Enabled)
                     {
@@ -85,8 +85,14 @@ internal static class OAuthEndpoints
                     var email = Emails.Normalize(identity.Email);
                     var user = await users.GetByEmailAsync(email, http.RequestAborted)
                         ?? await users.CreateFederatedAsync(email, http.RequestAborted);
-                    await Sessions.IssueAsync(user, sessions, http);
-                    return TypedResults.Redirect(OidcFlow.DashboardUrl(cfg));
+                    // Google is challenged, unlike enterprise SSO. Accounts link by verified email, so
+                    // without this a user who enrolled a second factor could skip it entirely by
+                    // clicking "Sign in with Google" instead of typing their password (ADR-0039).
+                    // Enterprise SSO is deliberately NOT challenged: that org's IdP enforces its own.
+                    var mfaRequired = await mfa.IsEnabledAsync(user.Id, http.RequestAborted);
+                    await Sessions.IssueAsync(user, sessions, http, mfaPending: mfaRequired);
+                    return TypedResults.Redirect(
+                        mfaRequired ? OidcFlow.MfaChallengeUrl(cfg) : OidcFlow.DashboardUrl(cfg));
                 })
             .WithName("googleOAuthCallback").WithTags("Auth");
     }

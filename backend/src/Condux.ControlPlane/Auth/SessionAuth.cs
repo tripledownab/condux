@@ -14,6 +14,13 @@ internal static class SessionAuth
     public const string Scheme = "Condux";
     public const string Cookie = "condux_session";
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// How long a session that has passed the password but not the second factor stays usable. Minutes,
+    /// not the full session lifetime: it is a challenge window, and anything longer is time an attacker
+    /// who already has the password can spend guessing codes.
+    /// </summary>
+    public static readonly TimeSpan PendingLifetime = TimeSpan.FromMinutes(10);
 }
 
 /// <summary>

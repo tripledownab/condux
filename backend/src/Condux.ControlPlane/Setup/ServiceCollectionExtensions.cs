@@ -156,6 +156,16 @@ internal static class ServiceCollectionExtensions
             // Per-org SSO config store — the client secret is sealed with the same SecretBox (#72).
             services.AddSingleton(new PostgresSsoConfigStore(postgres));
         }
+
+        // TOTP second factor (ADR-0039). The store and the service register unconditionally, unlike the
+        // SecretBox-gated blocks above: MultiFactor takes a NULLABLE SecretBox and reports Available,
+        // so a deployment without CONDUX_SECRET_KEY answers "not configured" and names the variable
+        // rather than 404ing the routes, which would read as "this product has no MFA".
+        services.AddSingleton(new UserMfaRepository(postgres));
+        services.AddSingleton(sp => new MultiFactor(
+            sp.GetRequiredService<UserMfaRepository>(),
+            sp.GetRequiredService<SessionRepository>(),
+            sp.GetService<SecretBox>()));
         // The per-org AI-fix allowance counter RequestFix reserves against (#100, ADR-0017).
         services.AddSingleton<IAiFixQuota>(new PostgresAiFixQuota(postgres));
         // The per-org month-to-date Conductor spend, for the cost cap + the usage meter (#120).

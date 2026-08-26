@@ -15,6 +15,13 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageTags>condux;error-monitoring;sentry;observability;crash-reporting</PackageTags>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The icon has to travel inside the package: PackageIconUrl is deprecated and nuget.org will not
+         render it. Packed from here so all three SDK packages carry the same mark. -->
+    <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
 </Project>

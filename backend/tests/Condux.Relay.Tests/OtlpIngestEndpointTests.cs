@@ -116,6 +116,28 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
             (await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch, key: "wrong"))).StatusCode);
     }
 
+    /// <summary>
+    /// A rejected DSN is a 4xx like any other, so it owes the sender a Status in the request's encoding.
+    /// This is the refusal a misconfigured exporter meets first, and it used to answer JSON to a protobuf
+    /// sender: the fix covered the paths that read the body and left the ones that never get that far.
+    /// 16 is UNAUTHENTICATED.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_WrongKeyOnAProtobufRequest_Returns401_WithAStatusInProtobuf()
+    {
+        var client = With(new InMemoryEventPublisher()).CreateClient();
+
+        var resp = await client.SendAsync(ProtobufPost("1", CollectorExport(), key: "wrong"));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+        Assert.Equal("application/x-protobuf", resp.Content.Headers.ContentType?.MediaType);
+
+        var body = await resp.Content.ReadAsByteArrayAsync();
+        Assert.NotEmpty(body);
+        Assert.Equal(0x08, body[0]);   // field 1, varint
+        Assert.Equal(0x10, body[1]);   // 16, UNAUTHENTICATED
+    }
+
     [Fact]
     public async Task Otlp_InvalidJson_Returns400_PublishesNothing()
     {
@@ -128,13 +150,124 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
         Assert.Empty(pub.Published);
     }
 
+    /// <summary>
+    /// The binary encoding, from a real collector's export. It is what an OpenTelemetry exporter sends
+    /// unless it is told otherwise, so this is the path most installations actually use.
+    /// </summary>
     [Fact]
-    public async Task Otlp_ProtobufContentType_Returns415()
+    public async Task Otlp_ProtobufExport_IsIngested()
+    {
+        var pub = new InMemoryEventPublisher();
+        var client = With(pub).CreateClient();
+
+        var resp = await client.SendAsync(ProtobufPost("1", CollectorExport()));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var published = Assert.Single(pub.Published);
+        Assert.Equal(Level.Error, published.Event.Level);
+        Assert.Equal("checkout-api", published.Event.ServerName);
+    }
+
+    /// <summary>
+    /// The protocol requires a server to answer in the content type it received, and a full success is an
+    /// empty message. A JSON body here would be a response the sender cannot parse.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_ProtobufExport_IsAnsweredInProtobuf()
     {
         var client = With(new InMemoryEventPublisher()).CreateClient();
 
-        var resp = await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch, contentType: "application/x-protobuf"));
+        var resp = await client.SendAsync(ProtobufPost("1", CollectorExport()));
 
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, resp.StatusCode);
+        Assert.Equal("application/x-protobuf", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Empty(await resp.Content.ReadAsByteArrayAsync());
+    }
+
+    /// <summary>
+    /// The protocol requires the body of every 4xx and 5xx to be a google.rpc.Status in the content type
+    /// the request arrived in. Asserting the status code alone is what let this ship answering a protobuf
+    /// sender with a bare 400 carrying no content type and no body at all, so the body is read back here:
+    /// code is field 1 as a varint, and 3 is INVALID_ARGUMENT.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_MalformedProtobuf_Returns400_WithAStatusInProtobuf()
+    {
+        var client = With(new InMemoryEventPublisher()).CreateClient();
+
+        var resp = await client.SendAsync(ProtobufPost("1", [0x00, 0x00]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/x-protobuf", resp.Content.Headers.ContentType?.MediaType);
+
+        var body = await resp.Content.ReadAsByteArrayAsync();
+        Assert.NotEmpty(body);
+        Assert.Equal(0x08, body[0]);   // field 1, varint
+        Assert.Equal(0x03, body[1]);   // INVALID_ARGUMENT
+    }
+
+    /// <summary>
+    /// The JSON path had its own non-conformance: it answered this service's {"error": "..."} shape,
+    /// which is not a Status, so a sender parsing the protocol found nothing it recognised.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_InvalidJson_Returns400_WithAStatusInJson()
+    {
+        var client = With(new InMemoryEventPublisher()).CreateClient();
+
+        var resp = await client.SendAsync(OtlpPost("1", "not json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/json", resp.Content.Headers.ContentType?.MediaType);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("\"code\":3", body);
+        Assert.DoesNotContain("\"error\"", body);
+    }
+
+    /// <summary>
+    /// Gzipped, which is what the OpenTelemetry Collector's exporter sends by default. The decompression
+    /// middleware has to run before the decoder sees the body, and the bound on the read has to apply to
+    /// the expanded bytes rather than the compressed ones.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_GzippedProtobufExport_IsIngested()
+    {
+        var pub = new InMemoryEventPublisher();
+        var client = With(pub).CreateClient();
+
+        var request = ProtobufPost("1", Gzip(CollectorExport()));
+        request.Content.Headers.ContentEncoding.Add("gzip");
+        var resp = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("checkout-api", Assert.Single(pub.Published).Event.ServerName);
+    }
+
+    private static byte[] Gzip(byte[] payload)
+    {
+        using var buffer = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(buffer, System.IO.Compression.CompressionLevel.Fastest))
+        {
+            gzip.Write(payload);
+        }
+
+        return buffer.ToArray();
+    }
+
+    private static byte[] CollectorExport() =>
+        File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Golden", "otlp-logs-collector.protobuf.bin"));
+
+    private static HttpRequestMessage ProtobufPost(string projectId, byte[] body, string? key = "devkey")
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, $"/api/{projectId}/v1/logs")
+        {
+            Content = new ByteArrayContent(body),
+        };
+        req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-protobuf");
+        if (key is not null)
+        {
+            req.Headers.Add("x-condux-auth", key);
+        }
+        return req;
     }
 }

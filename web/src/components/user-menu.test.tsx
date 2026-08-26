@@ -16,7 +16,7 @@ const replaceMock = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: replaceMock }) }));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-query")>()),
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn(), removeQueries: vi.fn() }),
 }));
 
 // The dev-only replay toggle reads this; default it off so it is absent (as in production).

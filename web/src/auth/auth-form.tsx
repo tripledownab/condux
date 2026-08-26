@@ -13,6 +13,7 @@ import { AlternativeSignIn } from "./alternative-sign-in";
 import { authErrorKey, redirectErrorKey } from "./auth-error";
 import { AuthMode } from "./auth-mode";
 import { LegalNotice } from "./legal-notice";
+import { MfaChallenge } from "./mfa-challenge";
 
 // Non-text, per-mode config. All copy comes from the "auth" catalog namespace keyed by mode
 // (auth.login.*, auth.signup.*), so signup and login share this one declarative form.
@@ -33,6 +34,9 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const errorId = useId();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Set when login reports the account has a second factor. The session cookie is already set at that
+  // point, half-authenticated, so the challenge needs nothing else carried across.
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   // A failed Google/SSO callback redirects back to /login?error=<code>; surface it once on mount.
   // Also read an optional `next` (an app-internal path to land on after auth, e.g. an invite accept
@@ -44,6 +48,12 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     const params = new URLSearchParams(window.location.search);
     setRedirectError(redirectErrorKey(params.get("error")));
     setNext(safeInternalPath(params.get("next")));
+    // A redirect sign-in (Google) cannot hand back JSON, so it says "challenge needed" in the URL. The
+    // cookie already holds the real state, so this only decides which form to draw: setting it by hand
+    // gets an attacker a code box and a session that still authenticates nothing.
+    if (params.get("mfa") === "1") {
+      setMfaRequired(true);
+    }
   }, []);
 
   // Both hooks are always called (hooks cannot be conditional); the active one is picked by mode.
@@ -56,11 +66,26 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     mutation.mutate(
       { data: { email, password } },
       {
-        onSuccess: async () => {
+        onSuccess: (result) => {
+          // A second factor means the session just issued authenticates nothing yet, so do NOT navigate:
+          // the guard would bounce straight back. Swap in the challenge instead.
+          // Optional chaining because this is only a UX hint. If it were ever absent the client would
+          // navigate, the still-pending session would fail /me, and AuthGuard would send the user back
+          // to sign in. The gate is the server refusing to resolve the session, never this branch.
+          if (result?.status === 200 && result.data.mfaRequired) {
+            setMfaRequired(true);
+            return;
+          }
+
           // A fresh session invalidates the cached "me" so the guard re-fetches. An explicit `next`
           // (e.g. an invite accept page) wins; otherwise a signup has no org yet (ADR-0018) so it lands
           // on onboarding to create one, and a login lands on home.
-          await queryClient.invalidateQueries({ queryKey: getMeQueryKey() });
+          // Remove, not invalidate. Invalidating marks the cached identity stale but leaves it readable, and an
+          // INACTIVE query is not refetched until something mounts it. AuthGuard then mounts, reads the
+          // stale value synchronously (a cached 401 keeps isError true while the refetch is in flight) and
+          // redirects to /login before the fresh answer lands. Removing it means the guard sees no data at
+          // all, shows its spinner, and decides on the real response.
+          queryClient.removeQueries({ queryKey: getMeQueryKey() });
           router.replace(next ?? (mode === AuthMode.Signup ? ROUTES.onboarding : ROUTES.home));
         },
       },
@@ -75,6 +100,14 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
       ? translate(authErrorKey(mutation.error) ?? `${mode}.error`)
       : null;
   const describedBy = errorMessage ? errorId : undefined;
+
+  if (mfaRequired) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-6">
+        <MfaChallenge onVerified={() => router.replace(next ?? ROUTES.home)} />
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-border bg-card p-6">

@@ -2,6 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 import {
   getListMembersQueryKey,
   useListMembers,
@@ -10,6 +11,7 @@ import {
   useUpdateMemberRole,
 } from "@/src/api/generated/condux";
 import type { OrgMemberResponse } from "@/src/api/generated/model";
+import { ConfirmDialog } from "@/src/components/confirm-dialog";
 import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
@@ -103,6 +105,7 @@ function MemberRow({
   const queryClient = useQueryClient();
   const updateRole = useUpdateMemberRole();
   const removeMember = useRemoveMember();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getListMembersQueryKey(orgId) });
@@ -134,6 +137,10 @@ function MemberRow({
             }
             options={roleOptions}
             aria-label={translate("role")}
+            // The trigger is w-full by default, which is right in a stacked form and wrong in a row:
+            // here it claims the full row width and pushes Remove outside the card. Same trap as the
+            // invite form above it.
+            className="w-36"
             searchPlaceholder={tCommon("comboboxSearch")}
             emptyText={tCommon("comboboxEmpty")}
           />
@@ -145,9 +152,7 @@ function MemberRow({
         {editable ? (
           <button
             type="button"
-            onClick={() =>
-              removeMember.mutate({ orgId, userId: member.userId }, { onSuccess: invalidate })
-            }
+            onClick={() => setConfirmOpen(true)}
             disabled={removeMember.isPending}
             className={SECONDARY_BUTTON_CLASS}
           >
@@ -155,6 +160,30 @@ function MemberRow({
           </button>
         ) : null}
       </div>
+      {/* Removing someone takes away their access to everything in the org, and the button sits next to
+          a dropdown, so a misclick is easy. The admin console already confirmed this exact action; the
+          customer-facing surface, which is used far more often, did not. */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={translate("removeConfirmTitle")}
+        body={translate("removeConfirmBody", { email: member.email })}
+        confirmLabel={translate("remove")}
+        cancelLabel={translate("cancel")}
+        pending={removeMember.isPending}
+        destructive
+        onConfirm={() =>
+          removeMember.mutate(
+            { orgId, userId: member.userId },
+            {
+              onSuccess: () => {
+                setConfirmOpen(false);
+                invalidate();
+              },
+            },
+          )
+        }
+      />
     </li>
   );
 }

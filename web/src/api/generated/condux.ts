@@ -103,6 +103,10 @@ import type {
   LlmConfigResponse,
   LlmModelsResponse,
   McpTokenResponse,
+  MfaChallenge,
+  MfaConfirmation,
+  MfaEnrolmentResponse,
+  MfaStatusResponse,
   MintedMcpTokenResponse,
   MintedReleaseTokenResponse,
   MintedRunnerTokenResponse,
@@ -112,11 +116,13 @@ import type {
   Org,
   OrgMemberResponse,
   OrgMembershipResponse,
+  PasswordConfirmation,
   PlatformStatsResponse,
   ProjectRecord,
   ProvisionProjectResponse,
   RecordReleaseRequest,
   RecordReleaseViaTokenRequest,
+  RecoveryCodesResponse,
   Release,
   ReleaseTokenResponse,
   RepoLink,
@@ -9299,6 +9305,536 @@ export function useMe<TData = Awaited<ReturnType<typeof me>>, TError = unknown>(
 
 
 
+export type mfaStatusResponse200 = {
+  data: MfaStatusResponse
+  status: 200
+}
+    
+export type mfaStatusResponseSuccess = (mfaStatusResponse200) & {
+  headers: Headers;
+};
+;
+
+export type mfaStatusResponse = (mfaStatusResponseSuccess)
+
+export const getMfaStatusUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa`
+}
+
+export const mfaStatus = async ( options?: RequestInit): Promise<mfaStatusResponse> => {
+  
+  return conduxFetch<mfaStatusResponse>(getMfaStatusUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getMfaStatusQueryKey = () => {
+    return [
+    `/api/auth/mfa`
+    ] as const;
+    }
+
+    
+export const getMfaStatusQueryOptions = <TData = Awaited<ReturnType<typeof mfaStatus>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getMfaStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof mfaStatus>>> = ({ signal }) => mfaStatus({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type MfaStatusQueryResult = NonNullable<Awaited<ReturnType<typeof mfaStatus>>>
+export type MfaStatusQueryError = unknown
+
+
+export function useMfaStatus<TData = Awaited<ReturnType<typeof mfaStatus>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof mfaStatus>>,
+          TError,
+          Awaited<ReturnType<typeof mfaStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMfaStatus<TData = Awaited<ReturnType<typeof mfaStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof mfaStatus>>,
+          TError,
+          Awaited<ReturnType<typeof mfaStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMfaStatus<TData = Awaited<ReturnType<typeof mfaStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useMfaStatus<TData = Awaited<ReturnType<typeof mfaStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mfaStatus>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getMfaStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type enrollMfaResponse200 = {
+  data: MfaEnrolmentResponse
+  status: 200
+}
+
+export type enrollMfaResponse404 = {
+  data: ErrorResponse
+  status: 404
+}
+
+export type enrollMfaResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+    
+export type enrollMfaResponseSuccess = (enrollMfaResponse200) & {
+  headers: Headers;
+};
+export type enrollMfaResponseError = (enrollMfaResponse404 | enrollMfaResponse409) & {
+  headers: Headers;
+};
+
+export type enrollMfaResponse = (enrollMfaResponseSuccess | enrollMfaResponseError)
+
+export const getEnrollMfaUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa/enroll`
+}
+
+export const enrollMfa = async (passwordConfirmation: PasswordConfirmation, options?: RequestInit): Promise<enrollMfaResponse> => {
+  
+  return conduxFetch<enrollMfaResponse>(getEnrollMfaUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordConfirmation,)
+  }
+);}
+
+
+
+
+export const getEnrollMfaMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollMfa>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enrollMfa>>, TError,{data: PasswordConfirmation}, TContext> => {
+
+const mutationKey = ['enrollMfa'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enrollMfa>>, {data: PasswordConfirmation}> = (props) => {
+          const {data} = props ?? {};
+
+          return  enrollMfa(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnrollMfaMutationResult = NonNullable<Awaited<ReturnType<typeof enrollMfa>>>
+    export type EnrollMfaMutationBody = PasswordConfirmation
+    export type EnrollMfaMutationError = ErrorResponse
+
+    export const useEnrollMfa = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollMfa>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof enrollMfa>>,
+        TError,
+        {data: PasswordConfirmation},
+        TContext
+      > => {
+
+      const mutationOptions = getEnrollMfaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type confirmMfaResponse200 = {
+  data: RecoveryCodesResponse
+  status: 200
+}
+
+export type confirmMfaResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+    
+export type confirmMfaResponseSuccess = (confirmMfaResponse200) & {
+  headers: Headers;
+};
+export type confirmMfaResponseError = (confirmMfaResponse400) & {
+  headers: Headers;
+};
+
+export type confirmMfaResponse = (confirmMfaResponseSuccess | confirmMfaResponseError)
+
+export const getConfirmMfaUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa/confirm`
+}
+
+export const confirmMfa = async (mfaConfirmation: MfaConfirmation, options?: RequestInit): Promise<confirmMfaResponse> => {
+  
+  return conduxFetch<confirmMfaResponse>(getConfirmMfaUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      mfaConfirmation,)
+  }
+);}
+
+
+
+
+export const getConfirmMfaMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmMfa>>, TError,{data: MfaConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmMfa>>, TError,{data: MfaConfirmation}, TContext> => {
+
+const mutationKey = ['confirmMfa'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmMfa>>, {data: MfaConfirmation}> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmMfa(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmMfaMutationResult = NonNullable<Awaited<ReturnType<typeof confirmMfa>>>
+    export type ConfirmMfaMutationBody = MfaConfirmation
+    export type ConfirmMfaMutationError = ErrorResponse
+
+    export const useConfirmMfa = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmMfa>>, TError,{data: MfaConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmMfa>>,
+        TError,
+        {data: MfaConfirmation},
+        TContext
+      > => {
+
+      const mutationOptions = getConfirmMfaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type regenerateRecoveryCodesResponse200 = {
+  data: RecoveryCodesResponse
+  status: 200
+}
+
+export type regenerateRecoveryCodesResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+    
+export type regenerateRecoveryCodesResponseSuccess = (regenerateRecoveryCodesResponse200) & {
+  headers: Headers;
+};
+export type regenerateRecoveryCodesResponseError = (regenerateRecoveryCodesResponse400) & {
+  headers: Headers;
+};
+
+export type regenerateRecoveryCodesResponse = (regenerateRecoveryCodesResponseSuccess | regenerateRecoveryCodesResponseError)
+
+export const getRegenerateRecoveryCodesUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa/recovery-codes`
+}
+
+export const regenerateRecoveryCodes = async (passwordConfirmation: PasswordConfirmation, options?: RequestInit): Promise<regenerateRecoveryCodesResponse> => {
+  
+  return conduxFetch<regenerateRecoveryCodesResponse>(getRegenerateRecoveryCodesUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordConfirmation,)
+  }
+);}
+
+
+
+
+export const getRegenerateRecoveryCodesMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateRecoveryCodes>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof regenerateRecoveryCodes>>, TError,{data: PasswordConfirmation}, TContext> => {
+
+const mutationKey = ['regenerateRecoveryCodes'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof regenerateRecoveryCodes>>, {data: PasswordConfirmation}> = (props) => {
+          const {data} = props ?? {};
+
+          return  regenerateRecoveryCodes(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegenerateRecoveryCodesMutationResult = NonNullable<Awaited<ReturnType<typeof regenerateRecoveryCodes>>>
+    export type RegenerateRecoveryCodesMutationBody = PasswordConfirmation
+    export type RegenerateRecoveryCodesMutationError = ErrorResponse
+
+    export const useRegenerateRecoveryCodes = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateRecoveryCodes>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof regenerateRecoveryCodes>>,
+        TError,
+        {data: PasswordConfirmation},
+        TContext
+      > => {
+
+      const mutationOptions = getRegenerateRecoveryCodesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type disableMfaResponse204 = {
+  data: void
+  status: 204
+}
+    
+export type disableMfaResponseSuccess = (disableMfaResponse204) & {
+  headers: Headers;
+};
+;
+
+export type disableMfaResponse = (disableMfaResponseSuccess)
+
+export const getDisableMfaUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa/disable`
+}
+
+export const disableMfa = async (passwordConfirmation: PasswordConfirmation, options?: RequestInit): Promise<disableMfaResponse> => {
+  
+  return conduxFetch<disableMfaResponse>(getDisableMfaUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      passwordConfirmation,)
+  }
+);}
+
+
+
+
+export const getDisableMfaMutationOptions = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMfa>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disableMfa>>, TError,{data: PasswordConfirmation}, TContext> => {
+
+const mutationKey = ['disableMfa'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableMfa>>, {data: PasswordConfirmation}> = (props) => {
+          const {data} = props ?? {};
+
+          return  disableMfa(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisableMfaMutationResult = NonNullable<Awaited<ReturnType<typeof disableMfa>>>
+    export type DisableMfaMutationBody = PasswordConfirmation
+    export type DisableMfaMutationError = unknown
+
+    export const useDisableMfa = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMfa>>, TError,{data: PasswordConfirmation}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disableMfa>>,
+        TError,
+        {data: PasswordConfirmation},
+        TContext
+      > => {
+
+      const mutationOptions = getDisableMfaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type verifyMfaResponse200 = {
+  data: AuthUserResponse
+  status: 200
+}
+
+export type verifyMfaResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+    
+export type verifyMfaResponseSuccess = (verifyMfaResponse200) & {
+  headers: Headers;
+};
+export type verifyMfaResponseError = (verifyMfaResponse400) & {
+  headers: Headers;
+};
+
+export type verifyMfaResponse = (verifyMfaResponseSuccess | verifyMfaResponseError)
+
+export const getVerifyMfaUrl = () => {
+
+
+  
+
+  return `/api/auth/mfa/verify`
+}
+
+export const verifyMfa = async (mfaChallenge: MfaChallenge, options?: RequestInit): Promise<verifyMfaResponse> => {
+  
+  return conduxFetch<verifyMfaResponse>(getVerifyMfaUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      mfaChallenge,)
+  }
+);}
+
+
+
+
+export const getVerifyMfaMutationOptions = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyMfa>>, TError,{data: MfaChallenge}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyMfa>>, TError,{data: MfaChallenge}, TContext> => {
+
+const mutationKey = ['verifyMfa'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyMfa>>, {data: MfaChallenge}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyMfa(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyMfaMutationResult = NonNullable<Awaited<ReturnType<typeof verifyMfa>>>
+    export type VerifyMfaMutationBody = MfaChallenge
+    export type VerifyMfaMutationError = ErrorResponse
+
+    export const useVerifyMfa = <TError = ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyMfa>>, TError,{data: MfaChallenge}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof verifyMfa>>,
+        TError,
+        {data: MfaChallenge},
+        TContext
+      > => {
+
+      const mutationOptions = getVerifyMfaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 export type completeOnboardingResponse204 = {
   data: void
   status: 204

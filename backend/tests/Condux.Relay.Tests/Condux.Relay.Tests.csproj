@@ -11,4 +11,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Condux.Relay/Condux.Relay.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- OTLP wire fixtures, read at test time. The protobuf one was captured from a real collector. -->
+    <None Include="Golden/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

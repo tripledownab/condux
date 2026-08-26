@@ -40,6 +40,14 @@ public static class ControlPlaneApp
                 b.UseSetting("CONDUX_IMPERSONATION_SIGNING_KEY", impersonationSigningKey);
             }
 
+            // A fixed AES-256 key so SecretBox is available, which MFA needs to seal the TOTP secret.
+            // Set unconditionally rather than per-test: every real deployment should have this, and a
+            // suite where it is absent by default would quietly test the not-configured path instead of
+            // the feature. Fixed rather than random so a failure is reproducible; it protects nothing
+            // outside an ephemeral container.
+            b.UseSetting("CONDUX_SECRET_KEY", Convert.ToBase64String(Enumerable.Range(0, 32)
+                .Select(i => (byte)i).ToArray()));
+
             b.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IFixRequestPublisher>(new NoopFixRequestPublisher());

@@ -150,9 +150,30 @@ internal sealed record ErrorResponse(string Error);
 // Id/Email/IsPlatformAdmin are always the caller's REAL identity. Impersonation is non-null only while a
 // platform admin is in a read-only "view as org" session (ADR-0027); the dashboard shows it as a banner.
 internal sealed record AuthUserResponse(
-    long Id, string Email, bool IsPlatformAdmin, bool Onboarded, ImpersonationStateResponse? Impersonation = null);
+    long Id, string Email, bool IsPlatformAdmin, bool Onboarded, ImpersonationStateResponse? Impersonation = null,
+    // True only on the login response, meaning the cookie just issued is half-authenticated and the
+    // client must complete the challenge. /me never sets it: by the time /me can be reached the session
+    // has already resolved, which it cannot do while pending.
+    bool MfaRequired = false);
 /// <summary>Which external sign-in providers are configured, so the login page shows only enabled ones.</summary>
 internal sealed record AuthProvidersResponse(bool Google, bool Sso);
+
+/// <summary>Whether the caller has a second factor, and whether the server can offer one at all.</summary>
+internal sealed record MfaStatusResponse(bool Enabled, bool Available, int RemainingRecoveryCodes);
+
+/// <summary>The secret and the otpauth URI, returned once at enrolment and never recoverable after.</summary>
+internal sealed record MfaEnrolmentResponse(string Secret, string Uri);
+
+/// <summary>Recovery codes, shown exactly once. Never returned again by any route.</summary>
+internal sealed record RecoveryCodesResponse(string[] Codes);
+
+/// <summary>Re-authentication for a route that changes the second factor.</summary>
+internal sealed record PasswordConfirmation(string? Password);
+
+internal sealed record MfaConfirmation(string? Password, string? Code);
+
+/// <summary>A TOTP code or a recovery code. One field, because the caller must not distinguish them.</summary>
+internal sealed record MfaChallenge(string? Code);
 /// <summary>Start a Stripe subscription checkout for a plan tier (e.g. "Team", "Business").</summary>
 internal sealed record CheckoutRequest(string Tier);
 /// <summary>The hosted Stripe Checkout URL to redirect the browser to.</summary>

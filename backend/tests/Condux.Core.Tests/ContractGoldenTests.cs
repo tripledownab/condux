@@ -10,7 +10,7 @@ namespace Condux.Core.Tests;
 /// <c>Golden/</c> are parsed and asserted field-by-field, locking the wire contract we accept so a
 /// parser change can't silently break SDK compatibility. Covers the shapes unit tests skip:
 /// numeric epoch timestamps, message-object events, breadcrumbs, and multi-item envelopes.
-/// (Native OTLP-logs ingestion has its own golden coverage in <see cref="OtlpLogParserTests"/>, #79.)
+/// (Native OTLP-logs ingestion has its own golden coverage in Condux.Relay.Tests, #79.)
 /// </summary>
 public class ContractGoldenTests
 {

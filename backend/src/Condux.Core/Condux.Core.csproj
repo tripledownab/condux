@@ -7,5 +7,12 @@
          use a vetted, battle-tested library rather than hand-rolling it: Argon2id (OWASP's first
          choice for password storage). Pure-managed, MIT-licensed. -->
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+    <!-- TOTP (RFC 6238) code arithmetic and the base32 codec, which the BCL does not provide. Same
+         reasoning as Argon2 above, and ADR-0039 records it: this is Core's second dependency ever, and
+         Core's dependency-light status is deliberate because Condux.Agent references it and nothing
+         else. What we keep in Totp.cs is the policy the library has no opinion on (drift window, fixed
+         time comparison, the matched step), and the RFC's own published vectors are asserted against it
+         so the dependency is checked rather than trusted. MIT, petrsnd/OtpCore. -->
+    <PackageReference Include="OtpCore" Version="1.2.0" />
   </ItemGroup>
 </Project>

@@ -11,6 +11,7 @@
     "dev:smee": "bash scripts/smee.sh",
     "dev:web": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml stop web && cd web && NEXT_PUBLIC_CONDUX_API_URL=http://localhost:8080 NEXT_PUBLIC_CONDUX_INGEST_URL=http://localhost:9010 pnpm dev",
     "dev:landing": "cd landing && NEXT_PUBLIC_CONDUX_APP_URL=http://localhost:3000 pnpm dev --port 3002",
+    "check:style": "bash scripts/check-style.sh",
     "clean:docker": "docker builder prune -f && docker image prune -f",
     "gen:postman": "node scripts/gen-postman.mjs",
     "seed:demo": "bash scripts/seed-demo.sh"

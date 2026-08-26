@@ -36,6 +36,13 @@ internal static class OidcFlow
     /// <summary>Land on the dashboard root after a successful sign-in.</summary>
     public static string DashboardUrl(IConfiguration cfg) => $"{DashboardOrigin(cfg)}/";
 
+    /// <summary>
+    /// Back to login to finish a second factor. A redirect sign-in cannot return JSON, so the page is
+    /// told to show the challenge by a query flag; the session cookie already carries the actual state,
+    /// so this parameter is a hint and forging it grants nothing.
+    /// </summary>
+    public static string MfaChallengeUrl(IConfiguration cfg) => $"{DashboardOrigin(cfg)}/login?mfa=1";
+
     /// <summary>Back to login with an error code the page surfaces as a banner.</summary>
     public static string LoginUrl(IConfiguration cfg, string error) => $"{DashboardOrigin(cfg)}/login?error={error}";
 

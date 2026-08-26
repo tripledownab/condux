@@ -13,4 +13,5 @@ export interface AuthUserResponse {
   onboarded: boolean;
   /** @nullable */
   impersonation?: AuthUserResponseImpersonation;
+  mfaRequired?: boolean;
 }

@@ -1,6 +1,9 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithIntl } from "@/src/test-utils/render-with-intl";
+
+const removeMutate = vi.fn();
 
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -19,7 +22,7 @@ vi.mock("@/src/api/generated/condux", () => ({
   useListMembers: () => useListMembersMock(),
   useMe: () => useMeMock(),
   useUpdateMemberRole: () => ({ mutate: vi.fn(), isPending: false }),
-  useRemoveMember: () => ({ mutate: vi.fn(), isPending: false }),
+  useRemoveMember: () => ({ mutate: removeMutate, isPending: false }),
   useCreateInvite: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useListInvites: () => useListInvitesMock(),
   useRevokeInvite: () => ({ mutate: vi.fn(), isPending: false }),
@@ -73,5 +76,44 @@ describe("OrgMembers", () => {
     expect(screen.getByText("owner@acme.test")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Invite a member" })).not.toBeInTheDocument();
+  });
+
+  // An owner looking at someone else's row, which is the only state where Remove is offered.
+  const asOwner = () => {
+    useCurrentOrgMock.mockReturnValue({ status: OrgStatus.Ready, org, role: "owner" });
+    useListMembersMock.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: { data: members },
+    });
+    useMeMock.mockReturnValue({ data: { data: { id: 10, email: "owner@acme.test" } } });
+    useListInvitesMock.mockReturnValue({ isPending: false, isError: false, data: { data: [] } });
+  };
+
+  // The point of the dialog is that the FIRST click removes nobody, so the absence is asserted before
+  // the confirmation. Without that half this would pass just as well if Remove still fired immediately.
+  it("asks before removing a member, and only removes once confirmed", async () => {
+    asOwner();
+    renderWithIntl(<OrgMembers />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(removeMutate).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("member@acme.test");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(removeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes nobody when the confirmation is cancelled", async () => {
+    asOwner();
+    renderWithIntl(<OrgMembers />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(removeMutate).not.toHaveBeenCalled();
   });
 });

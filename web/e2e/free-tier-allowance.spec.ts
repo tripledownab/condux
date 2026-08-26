@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./sign-in";
 
 // The two Free-tier behaviours that unit tests cover in halves but nothing covered together, which is
 // exactly how the bug they now guard survived: a client-side tier mirror hid the AI-fix section from
@@ -8,21 +9,6 @@ import { expect, test } from "@playwright/test";
 //
 // Requires the full compose stack and the seeded dev admin, whose personal org is Free.
 // Run with `pnpm e2e` (local only; not in CI).
-
-const ADMIN_EMAIL = process.env.CONDUX_E2E_ADMIN_EMAIL ?? "admin@condux.dev";
-const ADMIN_PASSWORD = process.env.CONDUX_E2E_ADMIN_PASSWORD ?? "condux-dev-admin";
-
-async function signIn(page: import("@playwright/test").Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(ADMIN_EMAIL);
-  await page.getByLabel("Password").fill(ADMIN_PASSWORD);
-  // exact:true — "Sign in with SSO" also matches a loose name, and the issues surface has no "Issues"
-  // heading since the quad-pane redesign, so assert on the shell instead of a heading that no longer
-  // exists. The account menu only renders once a session resolves, which is what we actually mean by
-  // "signed in".
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Account menu/ })).toBeVisible();
-}
 
 test("a Free org can see its AI-fix allowance and compute ceiling", async ({ page }) => {
   await signIn(page);

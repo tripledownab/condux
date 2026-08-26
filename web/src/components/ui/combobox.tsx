@@ -112,6 +112,11 @@ export function Combobox({
           aria-expanded={open}
           aria-label={ariaLabel}
           disabled={disabled}
+          // w-full suits the common case, a stacked form where the control fills its column. IN A
+          // HORIZONTAL ROW IT IS A TRAP: it claims the remaining width and pushes whatever follows out
+          // of the container, which has happened four times now (both member lists, the invite form and
+          // the release form). Pass an explicit width via className when this sits beside other
+          // controls; twMerge resolves it over this default.
           className={cn(
             "w-full justify-between font-normal",
             !selected && "text-muted-foreground",

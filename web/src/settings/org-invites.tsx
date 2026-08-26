@@ -82,13 +82,19 @@ function InviteForm({ orgId }: { orgId: number }) {
           onChange={(event) => setEmail(event.target.value)}
           placeholder={translate("emailPlaceholder")}
           aria-label={translate("email")}
-          className={FIELD_CLASS}
+          // Both controls are sized explicitly so the row stays a row. The Combobox trigger is w-full by
+          // default, which is right inside a stacked form and wrong here: in a flex row it takes the
+          // remaining space and pushes the button onto its own line, which on a wide screen leaves a
+          // role picker several hundred pixels wide. Matches create-project-form, where the same pair
+          // sits inline.
+          className={`${FIELD_CLASS} w-72`}
         />
         <Combobox
           value={role}
           onValueChange={setRole}
           options={roleOptions}
           aria-label={translate("role")}
+          className="w-36"
           searchPlaceholder={tCommon("comboboxSearch")}
           emptyText={tCommon("comboboxEmpty")}
         />

@@ -77,6 +77,7 @@ export function AdminOrgBilling({ orgId }: { orgId: number }) {
             onValueChange={setTier}
             options={tierOptions}
             aria-label={translate("changePlan")}
+            className="w-44"
             searchPlaceholder={tCommon("comboboxSearch")}
             emptyText={tCommon("comboboxEmpty")}
           />

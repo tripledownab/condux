@@ -256,6 +256,40 @@
       "ssoDomainMismatch": "Your identity provider returned an email outside your organization's domain.",
       "alreadyInOrg": "You already belong to another organization.",
       "signInFailed": "Sign-in failed. Try again."
+    },
+    "mfa": {
+      "title": "Two-factor authentication",
+      "description": "Require a code from your authenticator app when you sign in, so a stolen password is not enough on its own.",
+      "loading": "Loading…",
+      "unavailable": "Two-factor authentication is not configured on this server. An administrator needs to set CONDUX_SECRET_KEY.",
+      "enabled": "Two-factor authentication is on.",
+      "enable": "Turn on two-factor authentication",
+      "disable": "Turn off",
+      "confirm": "Confirm",
+      "confirmPassword": "Confirm your password",
+      "setupTitle": "Set up your authenticator",
+      "setupStep1": "Scan this with your authenticator app.",
+      "setupStep2": "Then enter the six-digit code it shows",
+      "manualEntry": "Can't scan? Enter this key manually:",
+      "recoveryTitle": "Save your recovery codes",
+      "recoveryWarning": "These are shown once and never again. Each works a single time, and they are the only way back in if you lose your device.",
+      "recoveryRemaining": "{count} recovery codes remaining.",
+      "regenerate": "Generate new recovery codes",
+      "copyAll": "Copy all",
+      "download": "Download",
+      "savedConfirmation": "I have saved these somewhere safe",
+      "done": "Done",
+      "challengeTitle": "Two-factor authentication",
+      "challengeHint": "Enter the code from your authenticator app.",
+      "codeLabel": "Authentication code",
+      "verify": "Verify",
+      "verifying": "Verifying…",
+      "recoveryHint": "Lost your device? Enter one of your recovery codes instead.",
+      "errors": {
+        "invalidCode": "That code is not valid. Check your authenticator and try again.",
+        "tooManyAttempts": "Too many attempts. Sign in again to start over.",
+        "wrongPassword": "That password is not correct."
+      }
     }
   },
   "org": {
@@ -290,7 +324,8 @@
       "notifications": "Notifications",
       "github": "GitHub",
       "sso": "SSO",
-      "provider": "AI provider"
+      "provider": "AI provider",
+      "security": "Security"
     },
     "sso": {
       "title": "Enterprise SSO",
@@ -489,7 +524,10 @@
       "loadingInvites": "Loading invites.",
       "noInvites": "No pending invites.",
       "expires": "Expires {time}",
-      "revoke": "Revoke"
+      "revoke": "Revoke",
+      "cancel": "Cancel",
+      "removeConfirmTitle": "Remove this member?",
+      "removeConfirmBody": "{email} will lose access to this organisation and everything in it. You can invite them again afterwards."
     },
     "createProject": {
       "title": "Create a project",

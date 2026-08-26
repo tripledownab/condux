@@ -6,8 +6,11 @@ import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn(), removeQueries: vi.fn() }),
 }));
+
+// The shape orval actually hands back, so the success path is exercised as it runs in the browser.
+const SUCCESSFUL_LOGIN = { status: 200, data: { mfaRequired: false } };
 
 const loginMutate = vi.fn();
 const signupMutate = vi.fn();
@@ -15,6 +18,10 @@ vi.mock("@/src/api/generated/condux", () => ({
   getMeQueryKey: () => ["me"],
   useLogin: () => ({ mutate: loginMutate, isPending: false, isError: false }),
   useSignup: () => ({ mutate: signupMutate, isPending: false, isError: false }),
+  // AuthForm renders MfaChallenge, which reaches for this. Mocked here rather than in the challenge's
+  // own file because the module mock is whole-module: omitting it makes the import fail and the form
+  // never renders, which surfaces as "replace was not called" rather than as a missing export.
+  useVerifyMfa: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 // The Google button has its own test; stub it here so this suite doesn't need the react-query provider.
 vi.mock("./alternative-sign-in", () => ({ AlternativeSignIn: () => null }));
@@ -56,7 +63,7 @@ describe("AuthForm", () => {
 
   it("redirects to a safe next path after login", async () => {
     window.history.replaceState(null, "", `/login?next=${encodeURIComponent("/invite?token=abc")}`);
-    loginMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.());
+    loginMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.(SUCCESSFUL_LOGIN));
     renderWithIntl(<AuthForm mode={AuthMode.Login} />);
 
     await userEvent.type(screen.getByLabelText("Email"), "dev@condux.ai");
@@ -68,7 +75,7 @@ describe("AuthForm", () => {
 
   it("ignores an unsafe cross-origin next and falls back to home", async () => {
     window.history.replaceState(null, "", `/login?next=${encodeURIComponent("//evil.com")}`);
-    loginMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.());
+    loginMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.(SUCCESSFUL_LOGIN));
     renderWithIntl(<AuthForm mode={AuthMode.Login} />);
 
     await userEvent.type(screen.getByLabelText("Email"), "dev@condux.ai");

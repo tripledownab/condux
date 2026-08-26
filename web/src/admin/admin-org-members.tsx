@@ -78,6 +78,9 @@ function MemberRow({ orgId, member }: { orgId: number; member: OrgMemberResponse
           }
           options={roleOptions}
           aria-label={translate("role")}
+          // Same trap as the org settings member row: the trigger is w-full by default, which in a
+          // horizontal row claims the whole width and pushes Remove outside the card.
+          className="w-36"
           searchPlaceholder={tCommon("comboboxSearch")}
           emptyText={tCommon("comboboxEmpty")}
         />

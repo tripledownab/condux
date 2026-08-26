@@ -33,8 +33,13 @@ export function UserMenu({ compact }: { compact?: boolean }) {
 
   const signOut = () => {
     logout.mutate(undefined, {
-      onSuccess: async () => {
-        await queryClient.invalidateQueries({ queryKey: getMeQueryKey() });
+      onSuccess: () => {
+        // Remove, not invalidate. Invalidating marks the cached identity stale but leaves it readable, and an
+        // INACTIVE query is not refetched until something mounts it. AuthGuard then mounts, reads the
+        // stale value synchronously (a cached 401 keeps isError true while the refetch is in flight) and
+        // redirects to /login before the fresh answer lands. Removing it means the guard sees no data at
+        // all, shows its spinner, and decides on the real response.
+        queryClient.removeQueries({ queryKey: getMeQueryKey() });
         router.replace(ROUTES.login);
       },
     });

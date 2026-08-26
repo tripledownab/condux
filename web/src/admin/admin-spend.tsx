@@ -34,6 +34,7 @@ export function AdminSpend() {
           onValueChange={(value) => setDays(Number(value))}
           options={windowOptions}
           aria-label={translate("window.label")}
+          className="w-40"
           searchPlaceholder={tCommon("comboboxSearch")}
           emptyText={tCommon("comboboxEmpty")}
         />

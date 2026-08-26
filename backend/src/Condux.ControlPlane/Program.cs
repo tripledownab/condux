@@ -107,6 +107,7 @@ app.MapWeeklySummaryEndpoints();
 app.MapMemberEndpoints();
 app.MapInviteEndpoints();
 app.MapAuthEndpoints();
+app.MapMfaEndpoints();
 app.MapOnboardingEndpoints();
 app.MapOAuthEndpoints();
 app.MapSsoEndpoints();

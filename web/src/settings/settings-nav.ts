@@ -10,4 +10,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { href: "/settings/notifications", labelKey: "notifications" },
   { href: "/settings/sso", labelKey: "sso" },
   { href: "/settings/provider", labelKey: "provider" },
+  // Account-level, unlike every tab above it, which are all organisation-scoped. It sits here because
+  // it is where a user looks for it; what it controls belongs to the person and follows them between
+  // organisations.
+  { href: "/settings/security", labelKey: "security" },
 ];

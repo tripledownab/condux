@@ -120,6 +120,7 @@ function RecordForm({ projectId, repos }: { projectId: number; repos: RepoLink[]
         onValueChange={setRepoLinkId}
         options={repoOptions}
         aria-label={translate("repo")}
+        className="w-56"
         searchPlaceholder={tCommon("comboboxSearch")}
         emptyText={tCommon("comboboxEmpty")}
       />

@@ -4,6 +4,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <!-- Reads both OTLP encodings. It sits here rather than in Condux.Core because Core stays
+         dependency-light for Condux.Agent, which references it and decodes no OTLP. -->
+    <PackageReference Include="Condux.Otlp" Version="0.2.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
