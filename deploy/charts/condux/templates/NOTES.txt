@@ -28,4 +28,11 @@ Before it works:
      control-plane's public URL is set as the App's setup/webhook URL.
 {{- end }}
 
-Docs: docs/architecture.md (topology), docs/runbooks/backup-restore.md (backups).
+Two things worth knowing now rather than later:
+
+  Topology: the relay takes ingest, the control-plane serves the API and dashboard, and two workers
+  (consumer, conductor) run behind them. Postgres, ClickHouse, Kafka/Redpanda and Valkey are external
+  and yours to run; this chart does not bring them.
+
+  Backups: Postgres is the store that cannot be rebuilt. ClickHouse events are large and refill from
+  new traffic, so back up Postgres on a schedule and treat ClickHouse as optional.

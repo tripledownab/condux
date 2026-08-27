@@ -1,6 +1,7 @@
 -- The Conductor (AI fix engine): a fix run per issue and its audit trail. The provider is pluggable
 -- (fake in CI, Anthropic Managed Agents in prod); the safety guarantees live above this in the
--- orchestrator (draft-PR-only, scoped context). See docs/conductor.md + ADR-0010. Idempotent.
+-- orchestrator: it opens draft PRs only, never merges, and the model sees a scoped context rather
+-- than the repository. Idempotent.
 
 CREATE TABLE IF NOT EXISTS fix_suggestions (
     id             UUID        PRIMARY KEY,

@@ -35,20 +35,6 @@
     <url>https://github.com/tripledownab/condux/tree/main/sdks/jvm</url>
   </scm>
 
-  <!-- Publishing target: GitHub Packages Maven registry. The publish workflow supplies credentials via a
-       generated settings.xml using the built-in GITHUB_TOKEN, and that token can only write packages to
-       the repository the workflow runs in — so this URL must name that repository, not the public mirror,
-       or the deploy is rejected. Note GitHub Packages requires a token to READ as well, so this is not a
-       substitute for Maven Central: publishing there instead means swapping this repository and adding
-       GPG signing. -->
-  <distributionManagement>
-    <repository>
-      <id>github</id>
-      <name>GitHub Packages</name>
-      <url>https://maven.pkg.github.com/tripledownab/condux-private</url>
-    </repository>
-  </distributionManagement>
-
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

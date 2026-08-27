@@ -89,6 +89,10 @@ app.MapOpenApi();
 
 app.MapOperationalEndpoints(builder.Configuration);
 app.MapIssueEndpoints();
+app.MapIssueTriageEndpoints();
+app.MapIssueStatsEndpoints();
+app.MapSavedViewEndpoints();
+app.MapProjectEventStreamEndpoints();
 app.MapIssueNoteEndpoints();
 app.MapProvisioningEndpoints();
 app.MapRepoEndpoints();

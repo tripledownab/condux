@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Nightly Postgres backup with 14-day rotation for the single-VPS prod deploy
-# (docs/runbooks/backup-restore.md, docs/runbooks/production-deploy.md).
+# Nightly Postgres backup with 14-day rotation, for a deployment running the compose stack on one host.
 #
-# Versioned + run in place from the repo's deploy/ dir (~/condux/deploy on the box), so a deploy
-# (git reset --hard origin/main) keeps it current. Dumps via the postgres container using that container's
-# OWN POSTGRES_* env (no creds hardcoded here), gzips to ./backups/, and prunes dumps older than 14 days.
-# Installed cron (see the runbook): 30 3 * * * /root/condux/deploy/backup.sh >> /root/condux/deploy/backups/backup.log 2>&1
+# Run it in place from the repo's deploy/ directory, so redeploying (git reset --hard origin/main) keeps
+# it current. It dumps through the postgres container using that container's OWN POSTGRES_* environment,
+# so no credentials live here, gzips into ./backups/, and prunes dumps older than 14 days.
 #
-# Scope: Postgres only. It is the critical, non-rebuildable store (orgs/users/sessions, projects + DSN
-# keys, grouped issues, alert rules + channels, repo links, fix runs, encrypted llm_configs, quota/spend).
-# ClickHouse events are large + rebuildable (issues live in Postgres and new events refill), so they are
-# NOT in this nightly; if you need event history, run the runbook's native ClickHouse BACKUP separately.
+# Schedule it with cron, pointing at wherever the repository is checked out:
+#   30 3 * * * /opt/condux/deploy/backup.sh >> /opt/condux/deploy/backups/backup.log 2>&1
 #
-# NOTE: writes to the box's OWN disk, which protects against bad migrations / accidental drops but NOT box
-# loss. For box-loss durability also enable your provider's server snapshots or ship ./backups off-box
-# (see runbook).
+# Scope: Postgres only, because it is the store that cannot be rebuilt (orgs, users and sessions,
+# projects and their DSN keys, grouped issues, alert rules and channels, repo links, fix runs, the
+# encrypted LLM configs, quota and spend). ClickHouse events are large and ARE rebuildable, since the
+# issues live in Postgres and new events refill the rest, so they are deliberately not in this nightly.
+# To keep event history as well, run ClickHouse's own native BACKUP separately.
+#
+# This writes to the same host's disk. That protects against a bad migration or an accidental drop, and
+# not against losing the host. For that, also enable your provider's snapshots or ship ./backups
+# somewhere else.
 set -euo pipefail
 cd "$(dirname "$0")"
 

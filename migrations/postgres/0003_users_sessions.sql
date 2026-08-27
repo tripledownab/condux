@@ -1,7 +1,7 @@
 -- Auth: local user accounts and server-side sessions (#47).
 -- Local email+password accounts; opaque session tokens are stored only as a hash (never in
 -- plaintext) and carried in a first-party HttpOnly cookie for the same-origin dashboard
--- (app.condux.ai — see docs/architecture.md "Deployment topology & domains").
+-- (the dashboard and the API share one origin, which is what lets the cookie be first-party).
 -- Idempotent (IF NOT EXISTS), applied in filename order after 0002_orgs_projects_dsns.sql.
 -- (Org membership + RBAC land next, in #48.)
 

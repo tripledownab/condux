@@ -7,6 +7,83 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.3.0
+
+**If you use the JVM, .NET or Go SDK, this release regroups your existing issues.** Read the first
+section before upgrading. Everything else here is additive.
+
+### Your stack traces were mostly not your code
+
+Each SDK marks a frame as belonging to your application or to something underneath it. That flag is not
+cosmetic. It decides how events group into issues, which frame is named as the culprit, and which files
+the fix engine is allowed to read. Three of our SDKs got it wrong.
+
+Measured against a real Spring application, the JVM SDK reported 53 frames and called 48 of them yours.
+One of them actually was. The .NET SDK counted its own reporting middleware as your code, so it rode
+along in every report. The Go SDK excluded only the standard library, which left every dependency, and
+the SDK itself, looking like your application.
+
+All three now exclude their ecosystem's dependency locations and their own frames.
+
+**The consequence: because grouping is computed from those frames, events arriving after you upgrade
+will not match issues created before it.** Expect existing JVM, .NET and Go issues to stop receiving
+events, and new issues to appear in their place. Nothing is lost and no action is required, but it will
+look like a spike of new issues on the day you upgrade, so it is worth doing deliberately rather than
+being surprised by it.
+
+The JVM has no file path to work from, so it decides by package prefix. If your application lives inside
+a framework's namespace, tell the SDK explicitly:
+
+```java
+ConduxClient condux = ConduxClient.builder(dsn)
+    .inAppPackages("com.acme.")
+    .build();
+```
+
+Keep the trailing dot. Prefixes are matched with `startsWith`, so `com.acme` without it would also
+claim `com.acmecorp`. Setting this replaces the built in guess rather than adding to it: what you list
+is your application and everything else is not.
+
+### Two-factor authentication
+
+Available to every account on every plan. Charging for account security is not something we intend to
+do.
+
+Enrol from Settings. You scan a QR code with any authenticator app and confirm one code, and you are
+issued **10 single use recovery codes** at the same time. Store them somewhere other than the device
+holding your authenticator, because they are the only way back into an account whose second factor is
+lost. Each one works once.
+
+Signing in with a password or with Google now asks for a code. **Signing in through your organisation's
+own identity provider does not**, because that provider already decides how you authenticate and how
+strongly, and asking twice for the same login is not more secure.
+
+Self-hosting: this needs `CONDUX_SECRET_KEY` to be set, since the shared secret behind each account's
+codes is encrypted with it rather than hashed. Without it, enrolling answers `404` with the body
+`secret_key_not_configured`, so if enrolment appears to be missing entirely, read the response body
+before concluding the build lacks the feature.
+
+### OpenTelemetry exporters that send protobuf now work
+
+The logs endpoint previously accepted only the JSON encoding. It now accepts protobuf as well, which is
+what most OpenTelemetry exporters send by default, so pointing one at Condux no longer requires
+reconfiguring it.
+
+Failures are also reported properly now. Every error response carries a `google.rpc.Status` in the same
+encoding the request arrived in, rather than an empty body or a shape of our own invention, so your
+exporter can tell you what went wrong instead of only that something did.
+
+### Installing the JVM SDK no longer needs a token
+
+`ai.condux:condux` is published to Maven Central. Maven and Gradle both resolve it anonymously with no
+repository declaration and no credentials, so the snippet in the JVM SDK's README now works as written.
+
+### Also in this release
+
+- Removing someone from an organisation asks for confirmation first, and the role selector no longer
+  breaks out of its row on a narrow screen.
+- The published source tree explains itself without pointing at documents it does not ship.
+
 ## 0.2.1
 
 **If you report errors from a Flask or Django app, upgrade the Python SDK.** Those two integrations

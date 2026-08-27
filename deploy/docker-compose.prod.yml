@@ -1,6 +1,6 @@
 name: condux
 
-# Production override for a single-VPS deploy. See docs/runbooks/production-deploy.md.
+# Production override for running the whole stack on one host.
 # Layered on the base file (the base defines the services; this hardens them for prod):
 #
 #   docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d --build

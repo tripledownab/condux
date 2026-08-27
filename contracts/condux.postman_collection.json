@@ -423,6 +423,102 @@
           }
         },
         {
+          "name": "get Issue Stats",
+          "request": {
+            "name": "get Issue Stats",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "issues",
+                ":issueId",
+                "stats"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "disabled": false,
+                  "key": "hours",
+                  "value": "<integer>"
+                }
+              ],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "issueId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "list Issue Sparklines",
+          "request": {
+            "name": "list Issue Sparklines",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "issues",
+                "stats"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
           "name": "list Saved Views",
           "request": {
             "name": "list Saved Views",
@@ -611,102 +707,6 @@
               ]
             },
             "method": "DELETE",
-            "auth": null
-          },
-          "event": [],
-          "protocolProfileBehavior": {
-            "disableBodyPruning": true
-          }
-        },
-        {
-          "name": "get Issue Stats",
-          "request": {
-            "name": "get Issue Stats",
-            "description": {},
-            "url": {
-              "path": [
-                "api",
-                "projects",
-                ":projectId",
-                "issues",
-                ":issueId",
-                "stats"
-              ],
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "query": [
-                {
-                  "disabled": false,
-                  "key": "hours",
-                  "value": "<integer>"
-                }
-              ],
-              "variable": [
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<long>",
-                  "key": "projectId",
-                  "description": "(Required) "
-                },
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<uuid>",
-                  "key": "issueId",
-                  "description": "(Required) "
-                }
-              ]
-            },
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "method": "GET",
-            "auth": null
-          },
-          "event": [],
-          "protocolProfileBehavior": {
-            "disableBodyPruning": true
-          }
-        },
-        {
-          "name": "list Issue Sparklines",
-          "request": {
-            "name": "list Issue Sparklines",
-            "description": {},
-            "url": {
-              "path": [
-                "api",
-                "projects",
-                ":projectId",
-                "issues",
-                "stats"
-              ],
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "query": [],
-              "variable": [
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<long>",
-                  "key": "projectId",
-                  "description": "(Required) "
-                }
-              ]
-            },
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "method": "GET",
             "auth": null
           },
           "event": [],

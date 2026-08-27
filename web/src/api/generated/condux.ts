@@ -1044,6 +1044,255 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
     
+export type getIssueStatsResponse200 = {
+  data: IssueStatsResponse
+  status: 200
+}
+
+export type getIssueStatsResponse400 = {
+  data: ErrorResponse
+  status: 400
+}
+
+export type getIssueStatsResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type getIssueStatsResponseSuccess = (getIssueStatsResponse200) & {
+  headers: Headers;
+};
+export type getIssueStatsResponseError = (getIssueStatsResponse400 | getIssueStatsResponse404) & {
+  headers: Headers;
+};
+
+export type getIssueStatsResponse = (getIssueStatsResponseSuccess | getIssueStatsResponseError)
+
+export const getGetIssueStatsUrl = (projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/projects/${projectId}/issues/${issueId}/stats?${stringifiedParams}` : `/api/projects/${projectId}/issues/${issueId}/stats`
+}
+
+export const getIssueStats = async (projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams, options?: RequestInit): Promise<getIssueStatsResponse> => {
+  
+  return conduxFetch<getIssueStatsResponse>(getGetIssueStatsUrl(projectId,issueId,params),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetIssueStatsQueryKey = (projectId?: number,
+    issueId?: string,
+    params?: GetIssueStatsParams,) => {
+    return [
+    `/api/projects/${projectId}/issues/${issueId}/stats`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetIssueStatsQueryOptions = <TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIssueStatsQueryKey(projectId,issueId,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIssueStats>>> = ({ signal }) => getIssueStats(projectId,issueId,params, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(projectId && issueId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIssueStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getIssueStats>>>
+export type GetIssueStatsQueryError = ErrorResponse | void
+
+
+export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
+ projectId: number,
+    issueId: string,
+    params: undefined |  GetIssueStatsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIssueStats>>,
+          TError,
+          Awaited<ReturnType<typeof getIssueStats>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
+ projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIssueStats>>,
+          TError,
+          Awaited<ReturnType<typeof getIssueStats>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
+ projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
+ projectId: number,
+    issueId: string,
+    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIssueStatsQueryOptions(projectId,issueId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type listIssueSparklinesResponse200 = {
+  data: IssueSparklinesResponse
+  status: 200
+}
+    
+export type listIssueSparklinesResponseSuccess = (listIssueSparklinesResponse200) & {
+  headers: Headers;
+};
+;
+
+export type listIssueSparklinesResponse = (listIssueSparklinesResponseSuccess)
+
+export const getListIssueSparklinesUrl = (projectId: number,) => {
+
+
+  
+
+  return `/api/projects/${projectId}/issues/stats`
+}
+
+export const listIssueSparklines = async (projectId: number, options?: RequestInit): Promise<listIssueSparklinesResponse> => {
+  
+  return conduxFetch<listIssueSparklinesResponse>(getListIssueSparklinesUrl(projectId),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getListIssueSparklinesQueryKey = (projectId?: number,) => {
+    return [
+    `/api/projects/${projectId}/issues/stats`
+    ] as const;
+    }
+
+    
+export const getListIssueSparklinesQueryOptions = <TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListIssueSparklinesQueryKey(projectId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listIssueSparklines>>> = ({ signal }) => listIssueSparklines(projectId, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(projectId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListIssueSparklinesQueryResult = NonNullable<Awaited<ReturnType<typeof listIssueSparklines>>>
+export type ListIssueSparklinesQueryError = unknown
+
+
+export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
+ projectId: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listIssueSparklines>>,
+          TError,
+          Awaited<ReturnType<typeof listIssueSparklines>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
+ projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listIssueSparklines>>,
+          TError,
+          Awaited<ReturnType<typeof listIssueSparklines>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
+ projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
+ projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListIssueSparklinesQueryOptions(projectId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 export type listSavedViewsResponse200 = {
   data: SavedView[]
   status: 200
@@ -1416,255 +1665,6 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
     
-export type getIssueStatsResponse200 = {
-  data: IssueStatsResponse
-  status: 200
-}
-
-export type getIssueStatsResponse400 = {
-  data: ErrorResponse
-  status: 400
-}
-
-export type getIssueStatsResponse404 = {
-  data: void
-  status: 404
-}
-    
-export type getIssueStatsResponseSuccess = (getIssueStatsResponse200) & {
-  headers: Headers;
-};
-export type getIssueStatsResponseError = (getIssueStatsResponse400 | getIssueStatsResponse404) & {
-  headers: Headers;
-};
-
-export type getIssueStatsResponse = (getIssueStatsResponseSuccess | getIssueStatsResponseError)
-
-export const getGetIssueStatsUrl = (projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/projects/${projectId}/issues/${issueId}/stats?${stringifiedParams}` : `/api/projects/${projectId}/issues/${issueId}/stats`
-}
-
-export const getIssueStats = async (projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams, options?: RequestInit): Promise<getIssueStatsResponse> => {
-  
-  return conduxFetch<getIssueStatsResponse>(getGetIssueStatsUrl(projectId,issueId,params),
-  {      
-    ...options,
-    method: 'GET'
-    
-    
-  }
-);}
-
-
-
-
-
-export const getGetIssueStatsQueryKey = (projectId?: number,
-    issueId?: string,
-    params?: GetIssueStatsParams,) => {
-    return [
-    `/api/projects/${projectId}/issues/${issueId}/stats`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetIssueStatsQueryOptions = <TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetIssueStatsQueryKey(projectId,issueId,params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIssueStats>>> = ({ signal }) => getIssueStats(projectId,issueId,params, { signal, ...requestOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(projectId && issueId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type GetIssueStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getIssueStats>>>
-export type GetIssueStatsQueryError = ErrorResponse | void
-
-
-export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
- projectId: number,
-    issueId: string,
-    params: undefined |  GetIssueStatsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getIssueStats>>,
-          TError,
-          Awaited<ReturnType<typeof getIssueStats>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
- projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getIssueStats>>,
-          TError,
-          Awaited<ReturnType<typeof getIssueStats>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
- projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-
-export function useGetIssueStats<TData = Awaited<ReturnType<typeof getIssueStats>>, TError = ErrorResponse | void>(
- projectId: number,
-    issueId: string,
-    params?: GetIssueStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIssueStats>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getGetIssueStatsQueryOptions(projectId,issueId,params,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
-export type listIssueSparklinesResponse200 = {
-  data: IssueSparklinesResponse
-  status: 200
-}
-    
-export type listIssueSparklinesResponseSuccess = (listIssueSparklinesResponse200) & {
-  headers: Headers;
-};
-;
-
-export type listIssueSparklinesResponse = (listIssueSparklinesResponseSuccess)
-
-export const getListIssueSparklinesUrl = (projectId: number,) => {
-
-
-  
-
-  return `/api/projects/${projectId}/issues/stats`
-}
-
-export const listIssueSparklines = async (projectId: number, options?: RequestInit): Promise<listIssueSparklinesResponse> => {
-  
-  return conduxFetch<listIssueSparklinesResponse>(getListIssueSparklinesUrl(projectId),
-  {      
-    ...options,
-    method: 'GET'
-    
-    
-  }
-);}
-
-
-
-
-
-export const getListIssueSparklinesQueryKey = (projectId?: number,) => {
-    return [
-    `/api/projects/${projectId}/issues/stats`
-    ] as const;
-    }
-
-    
-export const getListIssueSparklinesQueryOptions = <TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListIssueSparklinesQueryKey(projectId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listIssueSparklines>>> = ({ signal }) => listIssueSparklines(projectId, { signal, ...requestOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(projectId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type ListIssueSparklinesQueryResult = NonNullable<Awaited<ReturnType<typeof listIssueSparklines>>>
-export type ListIssueSparklinesQueryError = unknown
-
-
-export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
- projectId: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listIssueSparklines>>,
-          TError,
-          Awaited<ReturnType<typeof listIssueSparklines>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
- projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listIssueSparklines>>,
-          TError,
-          Awaited<ReturnType<typeof listIssueSparklines>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
- projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-
-export function useListIssueSparklines<TData = Awaited<ReturnType<typeof listIssueSparklines>>, TError = unknown>(
- projectId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listIssueSparklines>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getListIssueSparklinesQueryOptions(projectId,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
 export type listIssueNotesResponse200 = {
   data: NoteResponse[]
   status: 200

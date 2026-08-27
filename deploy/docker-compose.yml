@@ -68,8 +68,8 @@ services:
     ports: ["127.0.0.1:6379:6379"]
 
   # MinIO is AGPL-3.0 — LOCAL DEV ONLY (S3-compatible target). Not bundled or
-  # redistributed in the product; production targets the S3 API (BYO bucket /
-  # cloud S3). See docs/oss-and-licensing.md.
+  # redistributed in the product, which is why its licence does not reach it;
+  # production targets the S3 API instead (your own bucket, or cloud S3).
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -106,9 +106,9 @@ services:
   # boot (deploy/keycloak/condux-test-realm.json): realm `condux-test`, confidential client `condux`
   # (secret `condux-test-secret`), and a verified test user alice@condux.test / password. The control-plane
   # reaches it over the compose network at http://keycloak:8080 (the token exchange), the browser at
-  # http://localhost:8180 (the login redirect). See docs/runbooks/sso-local-testing.md for the exact steps
-  # and the SSO-config values to paste into Settings -> SSO. No other service depends_on it (it is optional),
-  # so leaving the profile off cannot affect the rest of the stack.
+  # http://localhost:8180 (the login redirect). Those two URLs are what the org's SSO config needs in
+  # Settings -> SSO. No other service depends_on it (it is optional), so leaving the profile off
+  # cannot affect the rest of the stack.
   keycloak:
     image: quay.io/keycloak/keycloak:26.0.0
     profiles: ["sso-test"]

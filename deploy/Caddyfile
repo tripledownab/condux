@@ -1,6 +1,6 @@
-# Condux production edge (see docs/runbooks/production-deploy.md). Caddy terminates TLS with automatic
-# Let's Encrypt certificates and reverse-proxies to the compose services on the private network. Replace
-# the two hostnames with yours, and set an email for ACME notifications.
+# Condux production edge. Caddy terminates TLS with automatic Let's Encrypt certificates and
+# reverse-proxies to the compose services on the private network. Replace the two hostnames with
+# yours, and set an email for ACME notifications.
 #
 # app.condux.ai serves the dashboard AND the control-plane API on ONE origin, so the session cookie and
 # the Google OAuth callback stay first-party. Requests under /api and /openapi go to the control-plane;

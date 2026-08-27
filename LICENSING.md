@@ -42,5 +42,9 @@ allowlist so a copyleft or otherwise incompatible license cannot enter the tree 
 
 FSL is the source-available license the direct incumbent (Sentry) uses. It keeps the code open to read,
 self-host, and learn from, protects the project from a cloud provider reselling it, and guarantees each
-release turns into permissive open source in two years. The decision is recorded in
-[ADR-0013](docs/adr/0013-source-available-fsl-license.md).
+release turns into permissive open source in two years.
+
+Two years is the whole bargain, and it is worth being precise about it: every release carries its own
+conversion date, so the code you are reading today becomes Apache-2.0 on a date already fixed and
+published, whatever anyone decides later. That is what separates this from a license that can be
+tightened once adoption arrives.

@@ -88,8 +88,8 @@ internal sealed record GitHubAppConfig(
                 $"The GitHub App private key at '{path}' exists but could not be read as "
                 + $"'{Environment.UserName}'. A host-mounted key must be owned by the user the container "
                 + "runs as, not root: derive that uid from the image rather than assuming it "
-                + "(docker inspect <container> --format '{{.Config.User}}') and chown the file to it. "
-                + "See docs/github-app-setup.md.", failure);
+                + "(docker inspect <container> --format '{{.Config.User}}') and chown the file to it.",
+                failure);
         }
     }
 }
