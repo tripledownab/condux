@@ -23,7 +23,7 @@ public sealed class SessionRepository(string connectionString)
     // session becomes an identity, so a half-authenticated one resolves to nobody EVERYWHERE at once. The
     // alternative, checking at each endpoint, protects only the endpoints somebody remembered.
     private const string ActiveUserSql = """
-        SELECT u.id, u.email, u.password_hash, u.created_at, u.onboarded_at
+        SELECT u.id, u.email, u.password_hash, u.created_at, u.onboarded_at, u.weekly_summary_opt_out
         FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = @hash AND s.revoked_at IS NULL AND s.expires_at > now()
           AND NOT s.mfa_pending;
@@ -33,7 +33,7 @@ public sealed class SessionRepository(string connectionString)
     // into a second named method rather than a boolean parameter makes "reads a pending session" a
     // greppable property of exactly one route.
     private const string PendingUserSql = """
-        SELECT u.id, u.email, u.password_hash, u.created_at, u.onboarded_at
+        SELECT u.id, u.email, u.password_hash, u.created_at, u.onboarded_at, u.weekly_summary_opt_out
         FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = @hash AND s.revoked_at IS NULL AND s.expires_at > now()
           AND s.mfa_pending;
@@ -97,7 +97,8 @@ public sealed class SessionRepository(string connectionString)
             ? new User(reader.GetInt64(0), reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2), // null for federated (Google) accounts
                 reader.GetFieldValue<DateTimeOffset>(3),
-                reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4))
+                reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
+                reader.GetBoolean(5))
             : null;
     }
 

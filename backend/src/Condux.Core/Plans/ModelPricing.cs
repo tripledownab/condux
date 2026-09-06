@@ -17,7 +17,6 @@ public static class ModelPricing
     // BYO models so a bring-your-own-key org's spend can be priced for its budget cap (ADR-0020/0027).
     // Rates are the providers' published list prices; keep them here only, never scattered across
     // services. A model not in the table (an exotic / self-hosted endpoint) still yields cost null.
-    // TODO: verify the OpenAI rates against openai.com/api/pricing when calibrating.
     private static readonly IReadOnlyDictionary<string, Rate> Rates =
         new Dictionary<string, Rate>(StringComparer.OrdinalIgnoreCase)
         {

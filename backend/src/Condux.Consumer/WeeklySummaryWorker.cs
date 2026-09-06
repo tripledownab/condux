@@ -119,7 +119,7 @@ public sealed class WeeklySummaryWorker(
                 return; // an evaluated empty week keeps its claim — do not recompute it every tick
             }
 
-            var recipients = (await members.ListByOrgAsync(org.Id, ct)).Select(m => m.Email).ToList();
+            var recipients = await members.WeeklySummaryRecipientsAsync(org.Id, ct);
             var sent = await mailer.SendAsync(summary, recipients, ct);
             logger.LogInformation(
                 "weekly summary sent org={OrgId} recipients={Recipients} events={Events}", org.Id, sent, summary.Events);

@@ -16,7 +16,7 @@ public class WeeklySummaryEmailTests
         WeekEnd: new DateTimeOffset(2024, 1, 8, 9, 0, 0, TimeSpan.Zero),
         Events: 18432, PreviousEvents: 15120,
         NewIssues: 12, Regressions: 3, Resolved: 8, OpenIssues: 41, UsersAffected: 1204,
-        TopIssues: top ?? [new TopIssue("TypeError: undefined is not a function", 4231)],
+        TopIssues: top ?? [new TopIssue(Guid.Parse("11111111-1111-1111-1111-111111111111"), "TypeError: undefined is not a function", 4231)],
         Fixes: fixes ?? new WeeklyFixActivity(5, 4, 2, 1));
 
     [Fact]
@@ -48,7 +48,7 @@ public class WeeklySummaryEmailTests
     public void Content_TruncatesLongTopIssueTitles()
     {
         var longTitle = new string('x', 80);
-        var content = WeeklySummaryEmail.Content(Sample(top: [new TopIssue(longTitle, 10)]), null);
+        var content = WeeklySummaryEmail.Content(Sample(top: [new TopIssue(Guid.NewGuid(), longTitle, 10)]), null);
         var row = Assert.Single(content.Facts!, f => f.Label.StartsWith("1. "));
         Assert.True(row.Label.Length <= "1. ".Length + 44, $"label too long: {row.Label.Length}");
         Assert.EndsWith("…", row.Label);
@@ -82,6 +82,50 @@ public class WeeklySummaryEmailTests
         Assert.Contains("4,231 events", html);
         Assert.Contains("Open Condux", html);
         Assert.DoesNotContain("&rarr;", html); // the button arrow was removed
+    }
+
+    [Fact]
+    public void TopIssueFact_LinksToTheIssue_AndOmitsTheLinkWithoutABaseUrl()
+    {
+        var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var linked = Assert.Single(
+            WeeklySummaryEmail.Content(Sample(), "https://app.condux.ai").Facts!,
+            f => f.Label.StartsWith("1. "));
+        Assert.Equal($"https://app.condux.ai/issues/{id}", linked.LabelHref);
+
+        // Without a base URL there is nothing to link to, and a relative path is useless in an email
+        // client, so the row must render as plain text rather than a broken anchor.
+        var unlinked = Assert.Single(
+            WeeklySummaryEmail.Content(Sample(), dashboardUrl: null).Facts!,
+            f => f.Label.StartsWith("1. "));
+        Assert.Null(unlinked.LabelHref);
+    }
+
+    [Fact]
+    public void RenderedHtml_WrapsALinkedTopIssueInAnAnchor_ButNotAnUnlinkedRow()
+    {
+        var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var html = EmailLayout.RenderHtml(WeeklySummaryEmail.Content(Sample(), "https://app.condux.ai"));
+        Assert.Contains($"<a href=\"https://app.condux.ai/issues/{id}\"", html);
+
+        // A metric row shares the same facts table and must not become a link.
+        Assert.Contains(">New issues</td>", html);
+    }
+
+    [Fact]
+    public void RenderedHtml_EncodesTheLabelHref()
+    {
+        // The href is attribute-encoded like every other value in the layout, so a quote in a URL cannot
+        // break out of the attribute. Uses the layout directly, since a real issue URL never contains one.
+        var content = new EmailContent(
+            Heading: "h",
+            Paragraphs: [],
+            Facts: [new EmailFact("label", "value", null, "https://x.test/\"onmouseover=alert(1)")]);
+
+        var html = EmailLayout.RenderHtml(content);
+
+        Assert.DoesNotContain("\"onmouseover=", html);
+        Assert.Contains("&quot;onmouseover=", html);
     }
 
     [Fact]

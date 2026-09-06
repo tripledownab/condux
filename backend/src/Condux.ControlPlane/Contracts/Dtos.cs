@@ -94,6 +94,10 @@ internal sealed record SsoConfigResponse(
     string EmailDomain, string Issuer, int Protocol,
     string? AuthorizationEndpoint, string? TokenEndpoint, string? ClientId,
     string? SamlSsoUrl, string? SamlCertificate, DateTimeOffset UpdatedAt);
+// The addresses an admin registers in their IdP. Deployment-wide rather than per-org, and served rather
+// than derived in the browser: the server is what actually sends the redirect URI and checks the SAML
+// audience, so it has to be the one that says what they are.
+internal sealed record SsoMetadataResponse(string RedirectUri, string SamlEntityId, string SamlAcsUrl);
 internal sealed record LlmModelsResponse(IReadOnlyList<Condux.ControlPlane.Llm.LlmModel> Models);
 internal sealed record CreateAlertRuleRequest(
     string Name, IReadOnlyList<int> Events, IReadOnlyList<int> Levels);
@@ -154,9 +158,16 @@ internal sealed record AuthUserResponse(
     // True only on the login response, meaning the cookie just issued is half-authenticated and the
     // client must complete the challenge. /me never sets it: by the time /me can be reached the session
     // has already resolved, which it cannot do while pending.
-    bool MfaRequired = false);
+    bool MfaRequired = false,
+    // The caller's own choice about the weekly digest, so the settings toggle renders from /me rather
+    // than needing a second request. The org-level schedule stays on the org endpoint; this is the one
+    // part of it a member decides for themselves.
+    bool WeeklySummaryOptOut = false);
 /// <summary>Which external sign-in providers are configured, so the login page shows only enabled ones.</summary>
 internal sealed record AuthProvidersResponse(bool Google, bool Sso);
+
+/// <summary>The caller opting into or out of their org's weekly digest.</summary>
+internal sealed record UpdateWeeklySummarySubscriptionRequest(bool OptOut);
 
 /// <summary>Whether the caller has a second factor, and whether the server can offer one at all.</summary>
 internal sealed record MfaStatusResponse(bool Enabled, bool Available, int RemainingRecoveryCodes);

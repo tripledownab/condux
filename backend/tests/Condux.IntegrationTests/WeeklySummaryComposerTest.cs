@@ -1,5 +1,6 @@
 using System.Globalization;
 using Condux.Core.Events;
+using Condux.Core.Auth;
 using Condux.Core.FixEngine;
 using Condux.Core.Grouping;
 using Condux.IntegrationTests.Fixtures;
@@ -186,4 +187,56 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     private static DateTimeOffset[] Repeat(DateTimeOffset t, int count) => [.. Enumerable.Repeat(t, count)];
 
     private static DateTimeOffset FloorHour(DateTimeOffset t) => new(t.Year, t.Month, t.Day, t.Hour, 0, 0, t.Offset);
+    [Fact]
+    public async Task Recipients_exclude_members_who_opted_out()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var orgs = new OrgRepository(pg.ConnectionString);
+        var users = new UserRepository(pg.ConnectionString);
+        var members = new OrgMemberRepository(pg.ConnectionString);
+
+        var org = await orgs.CreateAsync($"org-{Guid.NewGuid():N}", "Acme", 0);
+        var staying = await users.CreateAsync($"stay-{Guid.NewGuid():N}@x.test", "hash");
+        var leaving = await users.CreateAsync($"leave-{Guid.NewGuid():N}@x.test", "hash");
+        await members.AddAsync(org.Id, staying.Id, OrgRole.Member);
+        await members.AddAsync(org.Id, leaving.Id, OrgRole.Member);
+
+        // Both receive it by default: the column defaults to false, so the migration changes nothing for
+        // anyone who never touches the setting. Asserted rather than assumed, because if the default were
+        // wrong this whole feature would silently unsubscribe an entire install.
+        var before = await members.WeeklySummaryRecipientsAsync(org.Id);
+        Assert.Contains(staying.Email, before);
+        Assert.Contains(leaving.Email, before);
+
+        await users.SetWeeklySummaryOptOutAsync(leaving.Id, optOut: true);
+
+        var after = await members.WeeklySummaryRecipientsAsync(org.Id);
+        Assert.Contains(staying.Email, after);
+        Assert.DoesNotContain(leaving.Email, after);
+
+        // Reversible, and it is the same one query deciding both directions.
+        await users.SetWeeklySummaryOptOutAsync(leaving.Id, optOut: false);
+        Assert.Contains(leaving.Email, await members.WeeklySummaryRecipientsAsync(org.Id));
+    }
+
+    [Fact]
+    public async Task Opt_out_is_per_user_not_per_org()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var orgs = new OrgRepository(pg.ConnectionString);
+        var users = new UserRepository(pg.ConnectionString);
+        var members = new OrgMemberRepository(pg.ConnectionString);
+
+        var org = await orgs.CreateAsync($"org-{Guid.NewGuid():N}", "Acme", 0);
+        var optedOut = await users.CreateAsync($"a-{Guid.NewGuid():N}@x.test", "hash");
+        await members.AddAsync(org.Id, optedOut.Id, OrgRole.Member);
+        await users.SetWeeklySummaryOptOutAsync(optedOut.Id, optOut: true);
+
+        // The point of the feature: one member opting out must not switch the digest off for the org, which
+        // is the workaround it replaces.
+        var reloaded = await orgs.GetAsync(org.Id);
+        Assert.NotNull(reloaded);
+        Assert.Empty(await members.WeeklySummaryRecipientsAsync(org.Id));
+        Assert.True((await users.GetByIdAsync(optedOut.Id))!.WeeklySummaryOptOut);
+    }
 }

@@ -92,11 +92,26 @@ Condux.capture_exception(error, request: { "url" => "/api/sync" }, tags: { "job"
 require "condux/rack"
 use Condux::Rack::CaptureExceptions
 
-# Rails (config/application.rb)
-config.middleware.use "Condux::Rack::CaptureExceptions"
+# Rails (config/application.rb), the require at the top of the file
+require "condux/rack"
+config.middleware.use Condux::Rack::CaptureExceptions
 ```
 
 Uncaught exceptions are reported as unhandled and re-raised, so the app's own error handling still runs.
+
+**On Rails, caller-caused exceptions are re-raised but not reported.** Rails already classifies them:
+`ActionDispatch::ExceptionWrapper.rescue_responses` maps an exception class to a status, and anything it
+answers with a 4xx describes what the client sent rather than a defect in your app. A malformed JSON
+body and a bad percent-encoded query both land there, and anyone can send those at will, so filing them
+would let a stranger bury your real errors. Add your own with
+`config.action_dispatch.rescue_responses`, which Condux reads too, so one setting governs your error
+pages and your reporting together. Anything Rails does not classify still reports, since the registry
+defaults to 500. Under bare Rack there is no such registry, so nothing is filtered.
+
+**Pass the class, not its name as a string.** Rails builds each middleware with `klass.new(app)`, so a
+string aborts boot with `undefined method 'new' for an instance of String`. Rails deprecated string
+middleware in 5.0 and removed it in 5.1, so no supported version accepts it. The `require` matters too:
+Bundler loads `condux`, which does not define `Condux::Rack`.
 
 **On Rails use `config.middleware.use`, and nothing else.** `use` appends, which puts the middleware at
 the bottom of the stack, inside `ActionDispatch::ShowExceptions`. That position is why it works:

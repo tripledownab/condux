@@ -105,7 +105,9 @@ stack, so run them with that stack stopped.
 
 `deploy/docker-compose.yml` runs the whole platform on a single host. `deploy/charts/condux` is a Helm
 chart that deploys the services against externally managed PostgreSQL, ClickHouse and a Kafka-API
-broker rather than running datastores in the cluster.
+broker rather than running datastores in the cluster. Its [`README.md`](deploy/charts/condux/README.md)
+covers the values, including `config.ingestHost`, which is required because every DSN the control plane
+mints points at it. You build and push the service images yourself; the chart does not ship any.
 
 ## Security
 

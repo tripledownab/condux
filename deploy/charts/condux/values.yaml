@@ -42,9 +42,19 @@ secret:
 
 # Non-secret app config.
 config:
+  # The public address of your relay, which the control-plane writes into every DSN it mints, and which
+  # the ingress below routes to the relay. REQUIRED: the code falls back to the dev localhost, so
+  # leaving this empty ships DSNs no SDK can reach. The dashboard also displays a DSN it rebuilds
+  # client-side, from the web image's build arg NEXT_PUBLIC_CONDUX_INGEST_URL, so set that at build too.
+  ingestHost: ""            # e.g. ingest.example.com
+  ingestScheme: https       # http only for a cluster with no TLS at the edge
   corsOrigins: ""           # leave empty when the dashboard is same-origin (prod); set for split-origin
   platformAdminEmails: ""   # comma-separated allowlist for the /admin console (empty → none)
-  appBaseUrl: ""            # absolute dashboard URL for links in emails (invite accept); e.g. https://app.example.com
+  # Absolute dashboard URL for the links in email. Leaving it empty degrades each mailer differently:
+  # the consumer still sends the weekly summary but without its button, while the control-plane skips
+  # the invite email entirely. Neither fails a request, and an invite still works, since its accept
+  # link is returned to the inviter to pass on.
+  appBaseUrl: ""            # e.g. https://app.example.com
   sampleKeepFirst: "50"     # consumer: keep the first N raw events per issue
   sampleEvery: "20"         # then store 1-in-M repeats
 
@@ -134,6 +144,8 @@ ingress:
   enabled: false
   className: ""
   annotations: {}
-  appHost: app.condux.example       # dashboard (web) + API (control-plane, under /api)
-  ingestHost: ingest.condux.example # SDK/OTLP ingest (relay)
-  tls: []                           # [{ secretName: condux-tls, hosts: [app.condux.example, ingest.condux.example] }]
+  appHost: app.condux.example # dashboard (web) + API (control-plane, under /api)
+  # The ingest host is not repeated here. It is `config.ingestHost` above, because the SDK reaches the
+  # relay by the host in its DSN, so a second value could only ever disagree with the one that routes.
+  # Cover both hosts: this appHost and config.ingestHost above.
+  tls: [] # [{ secretName: condux-tls, hosts: [app.condux.example, ingest.example.com] }]

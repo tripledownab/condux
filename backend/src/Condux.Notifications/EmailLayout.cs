@@ -12,7 +12,11 @@ public sealed record EmailButton(string Label, string Url);
 /// <summary>A label/value row rendered in the email's facts table (value shown in monospace). An optional
 /// <see cref="ValueColorHex"/> tints the value (e.g. a red/green week-over-week trend); null keeps the
 /// default text color.</summary>
-public sealed record EmailFact(string Label, string Value, string? ValueColorHex = null);
+/// <summary>A label/value row in the facts table. <paramref name="LabelHref"/> turns the label into a link,
+/// which is how the weekly digest reaches an issue: the label is the only part long enough to be a useful
+/// link target, and the value column is a number.</summary>
+public sealed record EmailFact(
+    string Label, string Value, string? ValueColorHex = null, string? LabelHref = null);
 
 /// <summary>The structured content of a styled email. The plain-text body is passed separately (it stays
 /// the source of truth for the text/plain part and the other channels), so this drives only the HTML view.</summary>
@@ -116,7 +120,10 @@ public static class EmailLayout
             foreach (var fact in facts)
             {
                 sb.Append("<tr>");
-                sb.Append($"<td style=\"padding:5px 12px 5px 0;font-family:{EmailTheme.BodyFont};font-size:13px;color:{EmailTheme.Muted};vertical-align:top;white-space:nowrap;\">{Enc(fact.Label)}</td>");
+                var label = string.IsNullOrWhiteSpace(fact.LabelHref)
+                    ? Enc(fact.Label)
+                    : $"<a href=\"{Enc(fact.LabelHref)}\" style=\"color:{EmailTheme.LinkText};text-decoration:none;\">{Enc(fact.Label)}</a>";
+                sb.Append($"<td style=\"padding:5px 12px 5px 0;font-family:{EmailTheme.BodyFont};font-size:13px;color:{EmailTheme.Muted};vertical-align:top;white-space:nowrap;\">{label}</td>");
                 sb.Append($"<td style=\"padding:5px 0;font-family:{EmailTheme.MonoFont};font-size:13px;color:{fact.ValueColorHex ?? EmailTheme.Text};width:100%;\">{Enc(fact.Value)}</td>");
                 sb.Append("</tr>");
             }

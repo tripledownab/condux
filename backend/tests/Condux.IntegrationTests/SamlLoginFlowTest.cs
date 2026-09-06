@@ -76,6 +76,40 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     }
 
     [Fact]
+    public async Task A_perfectly_signed_response_for_someone_elses_account_is_refused()
+    {
+        // Every check above this one passes: the certificate is the org's own pinned key, the response
+        // answers this browser's in-flight request, the signature is real. The refusal can only come
+        // from the shared tail (ADR-0042), which is the point. SAML reaches that tail through its own
+        // endpoint, so a rule proven only on the OIDC side is proven on one of the two ways in.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        const string victimEmail = "victim@eta.test";
+        var app = CreateApp();
+
+        var victimClient = app.CreateClient();
+        await ApiAuth.SignUpAsync(victimClient, victimEmail);
+        var own = await victimClient.PostAsJsonAsync("/api/orgs",
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Their own org" });
+        Assert.Equal(HttpStatusCode.Created, own.StatusCode);
+
+        var idpCertificate = SsoFlow.MakeCertificate();
+        var orgId = await SetUpOrgWithSamlAsync(app, "eta.test", idpCertificate);
+
+        var sso = SsoClient(app);
+        var start = await sso.GetAsync($"/api/auth/sso/start?email={victimEmail}");
+        var relayState = SsoFlow.QueryParam(start.Headers.Location!, "RelayState");
+        var requestId = CookieValue(start, "condux_saml_req");
+
+        var acs = await PostAcsAsync(sso, SignedResponse(idpCertificate, requestId, victimEmail), relayState);
+
+        Assert.Equal("/login?error=sso_invite_required", acs.Headers.Location!.ToString());
+        IEnumerable<string> setCookies =
+            acs.Headers.TryGetValues("Set-Cookie", out var values) ? values : [];
+        Assert.DoesNotContain(setCookies, c => c.StartsWith("condux_session="));
+        Assert.Equal(0, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, victimEmail));
+    }
+
+    [Fact]
     public async Task A_response_signed_by_a_different_certificate_is_refused()
     {
         await Migrations.ApplyAllAsync(pg.ConnectionString);

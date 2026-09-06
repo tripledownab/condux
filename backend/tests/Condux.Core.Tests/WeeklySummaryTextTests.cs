@@ -13,8 +13,8 @@ public class WeeklySummaryTextTests
         NewIssues: 12, Regressions: 3, Resolved: 8, OpenIssues: 41, UsersAffected: 1204,
         TopIssues:
         [
-            new TopIssue("TypeError: undefined is not a function", 4231),
-            new TopIssue("NullReferenceException in Pay", 2890),
+            new TopIssue(Guid.Parse("11111111-1111-1111-1111-111111111111"), "TypeError: undefined is not a function", 4231),
+            new TopIssue(Guid.Parse("22222222-2222-2222-2222-222222222222"), "NullReferenceException in Pay", 2890),
         ],
         Fixes: new WeeklyFixActivity(5, 4, 2, 1));
 
@@ -111,5 +111,36 @@ public class WeeklySummaryTextTests
     {
         Assert.True(Full().HadActivity);
         Assert.False((Quiet() with { Events = 0 }).HadActivity);
+    }
+
+    [Fact]
+    public void Body_LinksEachTopIssue_AndOmitsLinksWithoutABaseUrl()
+    {
+        var withUrl = WeeklySummaryText.Body(Full(), "https://app.condux.ai");
+        Assert.Contains("https://app.condux.ai/issues/11111111-1111-1111-1111-111111111111", withUrl);
+        Assert.Contains("https://app.condux.ai/issues/22222222-2222-2222-2222-222222222222", withUrl);
+
+        // No base URL means no link. A relative path in a text/plain body is not clickable and not useful.
+        var without = WeeklySummaryText.Body(Full());
+        Assert.DoesNotContain("/issues/", without);
+        Assert.Contains("TypeError: undefined is not a function", without);
+    }
+
+    [Theory]
+    [InlineData("https://app.condux.ai")]
+    [InlineData("https://app.condux.ai/")]
+    public void IssueUrl_IsStableWhetherOrNotTheBaseUrlHasATrailingSlash(string baseUrl)
+    {
+        var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        Assert.Equal($"https://app.condux.ai/issues/{id}", WeeklySummaryFormat.IssueUrl(baseUrl, id));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IssueUrl_IsNull_WhenThereIsNoBaseUrl(string? baseUrl)
+    {
+        Assert.Null(WeeklySummaryFormat.IssueUrl(baseUrl, Guid.NewGuid()));
     }
 }

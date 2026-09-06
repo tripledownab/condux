@@ -2,7 +2,9 @@
 
 ASP.NET Core integration for the [`Condux.Sdk`](../Condux.Sdk) .NET SDK. A middleware that reports an
 **unhandled request exception** to a Condux relay (as unhandled) and re-throws, so the app's own error
-handling still runs.
+handling still runs. Exceptions that describe what the **caller** sent are re-thrown without being
+reported, so a stranger cannot fill your project with entries that are not defects; see
+[below](#caller-caused-exceptions-are-re-thrown-but-not-reported).
 
 ## Usage
 
@@ -37,6 +39,26 @@ the exception then escapes to whatever middleware is outermost.)
 registration throws once at startup naming the fix, rather than breaking every request the app serves.
 Capture manually anywhere by injecting the client and calling `CaptureExceptionAsync` /
 `CaptureMessageAsync`.
+
+## Caller-caused exceptions are re-thrown but not reported
+
+Some exceptions say what the client sent, not what your code got wrong. Anyone can trigger those at
+will, so filing them would let a stranger fill your project with entries naming your own code and bury
+the real errors. Three are skipped:
+
+| Exception | When | Why it is the caller's |
+|---|---|---|
+| `BadHttpRequestException` | always | body past `MaxRequestBodySize`, bad framing, a malformed chunked body, a caller hanging up mid-body |
+| `InvalidDataException` | only while reading a form | a form past the `FormOptions` limits |
+| `OperationCanceledException` | only when `RequestAborted` is cancelled | the caller disconnected |
+
+The two narrowings are deliberate. `InvalidDataException` is a general `System.IO` type that a corrupt
+stream in your own code also raises, so outside a form read it is still reported. And
+`TaskCanceledException` derives from `OperationCanceledException`, so a downstream `HttpClient` timeout
+arrives as one: without the `RequestAborted` check, every genuine timeout in your app would be silently
+dropped with it.
+
+Everything is re-thrown either way, so your own error handling and the status you return are unchanged.
 
 ## Develop
 

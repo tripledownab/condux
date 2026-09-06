@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Condux.Core.Events;
 
@@ -33,28 +32,8 @@ public sealed record EventRow(
 /// </summary>
 public sealed class ClickHouseEventWriter(HttpClient http)
 {
-    public async Task InsertAsync(IReadOnlyList<EventRow> rows, CancellationToken cancellationToken = default)
-    {
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        var body = new StringBuilder();
-        foreach (var row in rows)
-        {
-            body.Append(JsonSerializer.Serialize(row)).Append('\n');
-        }
-
-        var url = $"/?query={Uri.EscapeDataString("INSERT INTO condux.events FORMAT JSONEachRow")}";
-        using var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(body.ToString(), Encoding.UTF8),
-        };
-
-        using var resp = await http.SendAsync(req, cancellationToken);
-        resp.EnsureSuccessStatusCode();
-    }
+    public Task InsertAsync(IReadOnlyList<EventRow> rows, CancellationToken cancellationToken = default) =>
+        ClickHouseInsert.RowsAsync(http, "condux.events", rows, cancellationToken);
 
     /// <summary>Map a normalized event to a ClickHouse row. <paramref name="retentionDays"/> (the project's
     /// plan-tier retention) drives the row's column-based TTL (migration 0002).</summary>

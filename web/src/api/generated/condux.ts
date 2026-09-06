@@ -64,7 +64,7 @@ import type {
   CreateReleaseTokenRequest,
   CreateRunnerTokenRequest,
   Credentials,
-  CveFinding,
+  CveFindingWithExposure,
   CveFixRun,
   DerivedMapping,
   DsnKey,
@@ -134,6 +134,7 @@ import type {
   SetSsoConfigRequest,
   SourceMapArtifactResponse,
   SsoConfigResponse,
+  SsoMetadataResponse,
   SsoStartParams,
   StartCveFixRequest,
   TestChannelResponse,
@@ -147,6 +148,7 @@ import type {
   UpdateProjectRequest,
   UpdateRepoRequest,
   UpdateWeeklySummaryRequest,
+  UpdateWeeklySummarySubscriptionRequest,
   UploadSourceMapParams,
   WeeklySummarySettingsResponse,
   WeeklySummaryTestResponse
@@ -4004,128 +4006,6 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
     
-export type cveFindingsResponse200 = {
-  data: CveFinding[]
-  status: 200
-}
-
-export type cveFindingsResponse404 = {
-  data: void
-  status: 404
-}
-    
-export type cveFindingsResponseSuccess = (cveFindingsResponse200) & {
-  headers: Headers;
-};
-export type cveFindingsResponseError = (cveFindingsResponse404) & {
-  headers: Headers;
-};
-
-export type cveFindingsResponse = (cveFindingsResponseSuccess | cveFindingsResponseError)
-
-export const getCveFindingsUrl = (projectId: number,
-    repoId: string,) => {
-
-
-  
-
-  return `/api/projects/${projectId}/repos/${repoId}/cve-findings`
-}
-
-export const cveFindings = async (projectId: number,
-    repoId: string, options?: RequestInit): Promise<cveFindingsResponse> => {
-  
-  return conduxFetch<cveFindingsResponse>(getCveFindingsUrl(projectId,repoId),
-  {      
-    ...options,
-    method: 'GET'
-    
-    
-  }
-);}
-
-
-
-
-
-export const getCveFindingsQueryKey = (projectId?: number,
-    repoId?: string,) => {
-    return [
-    `/api/projects/${projectId}/repos/${repoId}/cve-findings`
-    ] as const;
-    }
-
-    
-export const getCveFindingsQueryOptions = <TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getCveFindingsQueryKey(projectId,repoId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof cveFindings>>> = ({ signal }) => cveFindings(projectId,repoId, { signal, ...requestOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(projectId && repoId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type CveFindingsQueryResult = NonNullable<Awaited<ReturnType<typeof cveFindings>>>
-export type CveFindingsQueryError = void
-
-
-export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
- projectId: number,
-    repoId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof cveFindings>>,
-          TError,
-          Awaited<ReturnType<typeof cveFindings>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof cveFindings>>,
-          TError,
-          Awaited<ReturnType<typeof cveFindings>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-
-export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getCveFindingsQueryOptions(projectId,repoId,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
 export type suggestedMappingsResponse200 = {
   data: DerivedMapping[]
   status: 200
@@ -5641,6 +5521,128 @@ export function useListFixes<TData = Awaited<ReturnType<typeof listFixes>>, TErr
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListFixesQueryOptions(projectId,issueId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type cveFindingsResponse200 = {
+  data: CveFindingWithExposure[]
+  status: 200
+}
+
+export type cveFindingsResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type cveFindingsResponseSuccess = (cveFindingsResponse200) & {
+  headers: Headers;
+};
+export type cveFindingsResponseError = (cveFindingsResponse404) & {
+  headers: Headers;
+};
+
+export type cveFindingsResponse = (cveFindingsResponseSuccess | cveFindingsResponseError)
+
+export const getCveFindingsUrl = (projectId: number,
+    repoId: string,) => {
+
+
+  
+
+  return `/api/projects/${projectId}/repos/${repoId}/cve-findings`
+}
+
+export const cveFindings = async (projectId: number,
+    repoId: string, options?: RequestInit): Promise<cveFindingsResponse> => {
+  
+  return conduxFetch<cveFindingsResponse>(getCveFindingsUrl(projectId,repoId),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getCveFindingsQueryKey = (projectId?: number,
+    repoId?: string,) => {
+    return [
+    `/api/projects/${projectId}/repos/${repoId}/cve-findings`
+    ] as const;
+    }
+
+    
+export const getCveFindingsQueryOptions = <TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getCveFindingsQueryKey(projectId,repoId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof cveFindings>>> = ({ signal }) => cveFindings(projectId,repoId, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(projectId && repoId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type CveFindingsQueryResult = NonNullable<Awaited<ReturnType<typeof cveFindings>>>
+export type CveFindingsQueryError = void
+
+
+export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
+ projectId: number,
+    repoId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof cveFindings>>,
+          TError,
+          Awaited<ReturnType<typeof cveFindings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof cveFindings>>,
+          TError,
+          Awaited<ReturnType<typeof cveFindings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useCveFindings<TData = Awaited<ReturnType<typeof cveFindings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof cveFindings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getCveFindingsQueryOptions(projectId,repoId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -9305,6 +9307,84 @@ export function useMe<TData = Awaited<ReturnType<typeof me>>, TError = unknown>(
 
 
 
+export type updateWeeklySummarySubscriptionResponse204 = {
+  data: void
+  status: 204
+}
+    
+export type updateWeeklySummarySubscriptionResponseSuccess = (updateWeeklySummarySubscriptionResponse204) & {
+  headers: Headers;
+};
+;
+
+export type updateWeeklySummarySubscriptionResponse = (updateWeeklySummarySubscriptionResponseSuccess)
+
+export const getUpdateWeeklySummarySubscriptionUrl = () => {
+
+
+  
+
+  return `/api/auth/me/weekly-summary`
+}
+
+export const updateWeeklySummarySubscription = async (updateWeeklySummarySubscriptionRequest: UpdateWeeklySummarySubscriptionRequest, options?: RequestInit): Promise<updateWeeklySummarySubscriptionResponse> => {
+  
+  return conduxFetch<updateWeeklySummarySubscriptionResponse>(getUpdateWeeklySummarySubscriptionUrl(),
+  {      
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateWeeklySummarySubscriptionRequest,)
+  }
+);}
+
+
+
+
+export const getUpdateWeeklySummarySubscriptionMutationOptions = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWeeklySummarySubscription>>, TError,{data: UpdateWeeklySummarySubscriptionRequest}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateWeeklySummarySubscription>>, TError,{data: UpdateWeeklySummarySubscriptionRequest}, TContext> => {
+
+const mutationKey = ['updateWeeklySummarySubscription'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateWeeklySummarySubscription>>, {data: UpdateWeeklySummarySubscriptionRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateWeeklySummarySubscription(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateWeeklySummarySubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof updateWeeklySummarySubscription>>>
+    export type UpdateWeeklySummarySubscriptionMutationBody = UpdateWeeklySummarySubscriptionRequest
+    export type UpdateWeeklySummarySubscriptionMutationError = unknown
+
+    export const useUpdateWeeklySummarySubscription = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWeeklySummarySubscription>>, TError,{data: UpdateWeeklySummarySubscriptionRequest}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateWeeklySummarySubscription>>,
+        TError,
+        {data: UpdateWeeklySummarySubscriptionRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateWeeklySummarySubscriptionMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 export type mfaStatusResponse200 = {
   data: MfaStatusResponse
   status: 200
@@ -10442,6 +10522,120 @@ export function useSsoCallback<TData = Awaited<ReturnType<typeof ssoCallback>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getSsoCallbackQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type getSsoMetadataResponse200 = {
+  data: SsoMetadataResponse
+  status: 200
+}
+
+export type getSsoMetadataResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type getSsoMetadataResponseSuccess = (getSsoMetadataResponse200) & {
+  headers: Headers;
+};
+export type getSsoMetadataResponseError = (getSsoMetadataResponse404) & {
+  headers: Headers;
+};
+
+export type getSsoMetadataResponse = (getSsoMetadataResponseSuccess | getSsoMetadataResponseError)
+
+export const getGetSsoMetadataUrl = () => {
+
+
+  
+
+  return `/api/auth/sso/metadata`
+}
+
+export const getSsoMetadata = async ( options?: RequestInit): Promise<getSsoMetadataResponse> => {
+  
+  return conduxFetch<getSsoMetadataResponse>(getGetSsoMetadataUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetSsoMetadataQueryKey = () => {
+    return [
+    `/api/auth/sso/metadata`
+    ] as const;
+    }
+
+    
+export const getGetSsoMetadataQueryOptions = <TData = Awaited<ReturnType<typeof getSsoMetadata>>, TError = void>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSsoMetadataQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSsoMetadata>>> = ({ signal }) => getSsoMetadata({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSsoMetadataQueryResult = NonNullable<Awaited<ReturnType<typeof getSsoMetadata>>>
+export type GetSsoMetadataQueryError = void
+
+
+export function useGetSsoMetadata<TData = Awaited<ReturnType<typeof getSsoMetadata>>, TError = void>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSsoMetadata>>,
+          TError,
+          Awaited<ReturnType<typeof getSsoMetadata>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSsoMetadata<TData = Awaited<ReturnType<typeof getSsoMetadata>>, TError = void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSsoMetadata>>,
+          TError,
+          Awaited<ReturnType<typeof getSsoMetadata>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSsoMetadata<TData = Awaited<ReturnType<typeof getSsoMetadata>>, TError = void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetSsoMetadata<TData = Awaited<ReturnType<typeof getSsoMetadata>>, TError = void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSsoMetadata>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSsoMetadataQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

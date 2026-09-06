@@ -22,23 +22,16 @@ public static class ClickHouseRegistration
     }
 
     /// <summary>
-    /// Registers <see cref="ClickHouseEventReader"/> as a resilient typed client — safe to inject into
-    /// transient/scoped request handlers (e.g. the control-plane's issue-detail endpoint).
+    /// Registers a reader as a resilient typed client, safe to inject into transient or scoped request
+    /// handlers such as the control-plane's endpoints. Every reader in this namespace takes the same
+    /// pre-configured <see cref="HttpClient"/> and wants the same resilience, so they share one
+    /// registration rather than each getting a near-identical copy of it.
     /// </summary>
-    public static IServiceCollection AddClickHouseEventReader(
+    public static IServiceCollection AddClickHouseReader<TReader>(
         this IServiceCollection services, string baseUrl, string user, string password)
+        where TReader : class
     {
-        services.AddHttpClient<ClickHouseEventReader>(c => Configure(c, baseUrl, user, password))
-            .AddStandardResilienceHandler();
-        return services;
-    }
-
-    /// <summary>Registers <see cref="ClickHouseIssueStatsReader"/> as a resilient typed client (the
-    /// issue histogram endpoint, #102).</summary>
-    public static IServiceCollection AddClickHouseIssueStatsReader(
-        this IServiceCollection services, string baseUrl, string user, string password)
-    {
-        services.AddHttpClient<ClickHouseIssueStatsReader>(c => Configure(c, baseUrl, user, password))
+        services.AddHttpClient<TReader>(c => Configure(c, baseUrl, user, password))
             .AddStandardResilienceHandler();
         return services;
     }

@@ -2,6 +2,7 @@
 
 require_relative "condux/level"
 require_relative "condux/send_result"
+require_relative "condux/modules"
 require_relative "condux/scope"
 require_relative "condux/client"
 
@@ -17,9 +18,13 @@ module Condux
     # Configure the SDK with a project DSN (and optional testing hooks). Raises on a malformed DSN:
     # setup runs once at developer time, so a typo is worth failing loudly for.
     def init(dsn:, environment: nil, release: nil, max_retries: Client::DEFAULT_MAX_RETRIES,
-             transport: nil, sleep: nil, clock: nil)
+             transport: nil, sleep: nil, clock: nil, send_modules: true)
       @client = Client.new(dsn: dsn, environment: environment, release: release,
-                           max_retries: max_retries, transport: transport, sleep: sleep, clock: clock)
+                           max_retries: max_retries, transport: transport, sleep: sleep, clock: clock,
+                           send_modules: send_modules)
+      # A re-init starts the interval afresh, so a new client does not inherit the previous one's
+      # "already sent recently" state and skip its first event.
+      Modules.reset
     end
 
     # Report an exception as an error-level event, with its stack trace. Never raises on delivery failure.

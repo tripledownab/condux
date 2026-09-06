@@ -22,6 +22,7 @@ import {
   parseDsn,
 } from "@condux/core";
 import { type BrowserOptions, init as initBrowser } from "@condux/browser";
+import { collectServerModules } from "./modules.ts";
 
 export {
   addBreadcrumb,
@@ -64,6 +65,7 @@ export function register(options: Partial<ConduxOptions> = {}): void {
     release: options.release ?? process.env.CONDUX_RELEASE,
   });
   serverInitialized = true;
+  collectServerModules();
 }
 
 /** The `request` Next passes to onRequestError. Headers are deliberately not read (see below). */

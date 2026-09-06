@@ -36,8 +36,9 @@ spec:
                 name: {{ .Release.Name }}-web
                 port:
                   number: {{ .Values.web.port }}
-    # The ingest host is the relay (SDK /store/ + OTLP /v1/logs).
-    - host: {{ .Values.ingress.ingestHost | quote }}
+    # The ingest host is the relay (SDK /store/ + OTLP /v1/logs). It comes from config.ingestHost, the
+    # same value the minted DSNs carry, because an SDK arrives with that host in its request.
+    - host: {{ include "condux.ingestHost" . | quote }}
       http:
         paths:
           - path: /

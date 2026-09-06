@@ -2,14 +2,15 @@ using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
 using Condux.Core.FixEngine;
 using Condux.Core.Plans;
-using Condux.Core.Projects;
 using Condux.Core.Quotas;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace Condux.ControlPlane.Endpoints;
 
-/// <summary>Orgs, projects, and DSN keys (#34), tenancy-enforced (#48).</summary>
+/// <summary>The org resource (#34), tenancy-enforced (#48): the caller's orgs, creating one and an
+/// org's settings and AI-fix usage meter. Projects live in <see cref="ProjectEndpoints"/> and a
+/// project's DSN keys in <see cref="DsnKeyEndpoints"/>.</summary>
 internal static class ProvisioningEndpoints
 {
     public static void MapProvisioningEndpoints(this IEndpointRouteBuilder app)
@@ -21,7 +22,8 @@ internal static class ProvisioningEndpoints
             .WithName("listMyOrgs").WithTags("Provisioning").RequireAuthorization();
 
         // A user belongs to exactly one org (ADR-0018): creating another while a member is refused.
-        // Signup mints the personal org, so this is reachable only for a user who left everything.
+        // This is how a user gets their first one. Signup deliberately creates none, so a brand-new
+        // account belongs to nothing until it comes through here or accepts an invite.
         app.MapPost("/api/orgs", async Task<Results<Created<Org>, Conflict<ErrorResponse>>> (
                 CreateOrgRequest req, HttpContext http,
                 OrgRepository orgs, OrgMemberRepository members) =>
@@ -128,137 +130,7 @@ internal static class ProvisioningEndpoints
             .WithName("aiFixUsage").WithTags("Provisioning")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
 
-        // Create a project and mint its first DSN key; returns the ready-to-use DSN.
-        app.MapPost("/api/orgs/{orgId:long}/projects",
-                async (long orgId, CreateProjectRequest req,
-                    ProjectRepository projects, DsnKeyRepository keys, IConfiguration cfg) =>
-                {
-                    var project = await projects.CreateAsync(orgId, req.Name, req.Platform ?? "other");
-                    var key = await keys.CreateAsync(project.Id, "default", DsnKeyGenerator.NewPublicKey());
-                    return TypedResults.Created($"/api/projects/{project.PublicId}",
-                        new ProvisionProjectResponse(project, key, BuildDsn(cfg, key.PublicKey, project.PublicId)));
-                })
-            .WithName("createProject").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
 
-        app.MapGet("/api/orgs/{orgId:long}/projects", async (long orgId, ProjectRepository projects) =>
-                TypedResults.Ok(await projects.ListByOrgAsync(orgId)))
-            .WithName("listProjects").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
-        // A single project by its public UUID — the per-project detail page, reading one row instead of
-        // the org list. The bigint id never appears in a URL (#125). Member+ on the owning org.
-        app.MapGet("/api/projects/{projectId:guid}",
-                async Task<Results<Ok<ProjectRecord>, NotFound>> (
-                    Guid projectId, ProjectRepository projects) =>
-                    await projects.GetByPublicIdAsync(projectId) is { } project
-                        ? TypedResults.Ok(project)
-                        : TypedResults.NotFound())
-            .WithName("getProject").WithTags("Provisioning")
-            .RequireAuthorization()
-            .AddEndpointFilter(OrgAuthorization.RequireProjectRoleByPublicId(OrgRole.Member));
-
-        // Rename a project (name + platform; the slug re-derives). Admin+ on the owning org.
-        app.MapPatch("/api/projects/{projectId:guid}",
-                async Task<Results<Ok<ProjectRecord>, NotFound, BadRequest<ErrorResponse>>> (
-                    Guid projectId, UpdateProjectRequest req, ProjectRepository projects) =>
-                {
-                    if (string.IsNullOrWhiteSpace(req.Name))
-                    {
-                        return TypedResults.BadRequest(new ErrorResponse("invalid_name"));
-                    }
-                    if (await projects.GetByPublicIdAsync(projectId) is not { } existing)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    return await projects.UpdateAsync(existing.Id, req.Name.Trim(), req.Platform ?? "other") is { } project
-                        ? TypedResults.Ok(project)
-                        : TypedResults.NotFound();
-                })
-            .WithName("updateProject").WithTags("Provisioning")
-            .RequireAuthorization()
-            .AddEndpointFilter(OrgAuthorization.RequireProjectRoleByPublicId(OrgRole.Admin));
-
-        // Delete a project and everything scoped to it (DSN keys, issues, repos, alerts cascade). Admin+.
-        app.MapDelete("/api/projects/{projectId:guid}",
-                async Task<Results<NoContent, NotFound>> (Guid projectId, ProjectRepository projects) =>
-                    await projects.GetByPublicIdAsync(projectId) is { } project
-                    && await projects.DeleteAsync(project.Id)
-                        ? TypedResults.NoContent()
-                        : TypedResults.NotFound())
-            .WithName("deleteProject").WithTags("Provisioning")
-            .RequireAuthorization()
-            .AddEndpointFilter(OrgAuthorization.RequireProjectRoleByPublicId(OrgRole.Admin));
-
-        app.MapGet("/api/projects/{projectId:long}/keys", async (long projectId, DsnKeyRepository keys) =>
-                TypedResults.Ok(await keys.ListByProjectAsync(projectId)))
-            .WithName("listKeys").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));
-
-        app.MapPost("/api/projects/{projectId:long}/keys",
-                async Task<Results<Created<CreateKeyResponse>, NotFound, BadRequest<ErrorResponse>>> (
-                    long projectId, CreateKeyRequest? req, DsnKeyRepository keys, ProjectRepository projects,
-                    IConfiguration cfg) =>
-                {
-                    // A blank name falls back to "default" (the auto-minted first key), but a too-long one is
-                    // rejected rather than silently truncated.
-                    var trimmed = req?.Label?.Trim();
-                    if (trimmed is { Length: > MaxLabelLength })
-                    {
-                        return TypedResults.BadRequest(new ErrorResponse("invalid_label"));
-                    }
-                    // The DSN carries the project's public UUID, so resolve it (the auth filter already
-                    // confirmed the project exists for this caller).
-                    if (await projects.GetAsync(projectId) is not { } project)
-                    {
-                        return TypedResults.NotFound();
-                    }
-                    var label = string.IsNullOrEmpty(trimmed) ? "default" : trimmed;
-                    var key = await keys.CreateAsync(projectId, label, DsnKeyGenerator.NewPublicKey());
-                    return TypedResults.Created($"/api/projects/{projectId}/keys/{key.Id}",
-                        new CreateKeyResponse(key, BuildDsn(cfg, key.PublicKey, project.PublicId)));
-                })
-            .WithName("createKey").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Admin));
-
-        // Rename a key (label only). Admin+, tenant-scoped by project. A blank/too-long name is rejected.
-        app.MapPatch("/api/projects/{projectId:long}/keys/{keyId:long}",
-                async Task<Results<Ok<DsnKey>, NotFound, BadRequest<ErrorResponse>>> (
-                    long projectId, long keyId, UpdateKeyRequest req, DsnKeyRepository keys) =>
-                {
-                    var label = req.Label?.Trim();
-                    if (string.IsNullOrEmpty(label) || label.Length > MaxLabelLength)
-                    {
-                        return TypedResults.BadRequest(new ErrorResponse("invalid_label"));
-                    }
-                    return await keys.UpdateLabelAsync(projectId, keyId, label) is { } key
-                        ? TypedResults.Ok(key)
-                        : TypedResults.NotFound();
-                })
-            .WithName("updateKey").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Admin));
-
-        app.MapPost("/api/projects/{projectId:long}/keys/{keyId:long}/revoke",
-                async Task<Results<NoContent, NotFound>> (long projectId, long keyId, DsnKeyRepository keys) =>
-                    await keys.RevokeAsync(projectId, keyId) ? TypedResults.NoContent() : TypedResults.NotFound())
-            .WithName("revokeKey").WithTags("Provisioning")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Admin));
-    }
-
-    // DSN key labels are cosmetic and user-supplied; cap the length so a create/rename can't store an
-    // unbounded string. Matches the frontend input's maxLength.
-    private const int MaxLabelLength = 100;
-
-    // Build a client-facing DSN string from a public key + the project's public UUID (#126). The
-    // sequential bigint never appears in a DSN; the relay resolves the UUID back to the numeric id.
-    // internal (not private) so the DSN-construction contract is unit-tested — the ingest host/scheme come
-    // from config (CONDUX_INGEST_HOST/SCHEME) so prod points DSNs at the public relay, not the dev default.
-    internal static string BuildDsn(IConfiguration cfg, string publicKey, Guid publicId)
-    {
-        var scheme = cfg["CONDUX_INGEST_SCHEME"] ?? "http";
-        var host = cfg["CONDUX_INGEST_HOST"] ?? "localhost:9010";
-        return $"{scheme}://{publicKey}@{host}/{publicId}";
     }
 
     // The runs the org can still start this period, for the Suggest-fix confirmation (#128): the tier's

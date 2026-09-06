@@ -25,4 +25,16 @@ public sealed class ConduxOptions
 
     /// <summary>Clock for the event timestamp. Defaults to <see cref="System.DateTimeOffset.UtcNow"/>.</summary>
     public Func<DateTimeOffset>? Clock { get; init; }
+
+    /// <summary>
+    /// Report the resolved NuGet package versions with each event (ADR-0041), so a security advisory
+    /// can be answered with the version actually running rather than the one a project file declares.
+    /// On by default.
+    ///
+    /// <para>Turn it off if the payload cost matters more than the answer. The inventory is read once
+    /// when the client is constructed and then repeated on an interval, which is what makes it survive
+    /// a dropped or rate-limited event, and also what makes it cost bytes on the ones that carry
+    /// it.</para>
+    /// </summary>
+    public bool SendModules { get; init; } = true;
 }

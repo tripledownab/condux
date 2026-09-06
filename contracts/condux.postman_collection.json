@@ -1873,55 +1873,6 @@
           }
         },
         {
-          "name": "cve Findings",
-          "request": {
-            "name": "cve Findings",
-            "description": {},
-            "url": {
-              "path": [
-                "api",
-                "projects",
-                ":projectId",
-                "repos",
-                ":repoId",
-                "cve-findings"
-              ],
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "query": [],
-              "variable": [
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<long>",
-                  "key": "projectId",
-                  "description": "(Required) "
-                },
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<uuid>",
-                  "key": "repoId",
-                  "description": "(Required) "
-                }
-              ]
-            },
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "method": "GET",
-            "auth": null
-          },
-          "event": [],
-          "protocolProfileBehavior": {
-            "disableBodyPruning": true
-          }
-        },
-        {
           "name": "suggested Mappings",
           "request": {
             "name": "suggested Mappings",
@@ -2045,6 +1996,55 @@
                   "type": "any",
                   "value": "<long>",
                   "key": "projectId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "cve Findings",
+          "request": {
+            "name": "cve Findings",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "repos",
+                ":repoId",
+                "cve-findings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "repoId",
                   "description": "(Required) "
                 }
               ]
@@ -4585,6 +4585,47 @@
           }
         },
         {
+          "name": "update Weekly Summary Subscription",
+          "request": {
+            "name": "update Weekly Summary Subscription",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "auth",
+                "me",
+                "weekly-summary"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PUT",
+            "auth": null,
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"optOut\": \"<boolean>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
           "name": "mfa Status",
           "request": {
             "name": "mfa Status",
@@ -4971,6 +5012,38 @@
               "query": [],
               "variable": []
             },
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "get Sso Metadata",
+          "request": {
+            "name": "get Sso Metadata",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "auth",
+                "sso",
+                "metadata"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
             "method": "GET",
             "auth": null
           },

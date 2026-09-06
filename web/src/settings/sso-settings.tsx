@@ -8,6 +8,7 @@ import {
   getGetSsoConfigQueryKey,
   useDeleteSsoConfig,
   useGetSsoConfig,
+  useGetSsoMetadata,
   useSetSsoConfig,
 } from "@/src/api/generated/condux";
 import {
@@ -76,11 +77,11 @@ export function SsoSettings() {
   const [clientSecret, setClientSecret] = useState("");
   const [samlSsoUrl, setSamlSsoUrl] = useState("");
   const [samlCertificate, setSamlCertificate] = useState("");
-  // What the org's admin registers in the IdP — this app's own endpoints (resolved on the client).
-  const [origin, setOrigin] = useState("");
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
+  // What the org's admin registers in the IdP. Served rather than built from window.location.origin:
+  // the server is what sends the redirect URI and checks the SAML audience, so showing anything but its
+  // own value hands the admin a string that looks right and fails at their IdP.
+  const metadata = useGetSsoMetadata();
+  const idp = metadata.data?.status === 200 ? metadata.data.data : null;
 
   // A 404 means no config yet (or the feature is off); either way there is nothing to show, so fall
   // through to the form and let a save clarify with the specific message.
@@ -92,7 +93,7 @@ export function SsoSettings() {
     }
   }, [existingProtocol]);
 
-  if (current.status === OrgStatus.Loading || config.isPending) {
+  if (current.status === OrgStatus.Loading || config.isPending || metadata.isPending) {
     return <Notice>{translate("loading")}</Notice>;
   }
   if (current.status === OrgStatus.Error) {
@@ -146,17 +147,19 @@ export function SsoSettings() {
       </div>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
-        {saml ? (
+        {/* Nothing rather than an empty value when the server did not supply these: a blank field beside
+            "Redirect URI" reads as a value, and an admin would paste it into their IdP. */}
+        {idp === null ? null : saml ? (
           <>
             <dt className="text-muted-foreground">{translate("acsUrlLabel")}</dt>
-            <dd className="break-all font-mono text-foreground">{`${origin}/api/auth/sso/saml/acs`}</dd>
+            <dd className="break-all font-mono text-foreground">{idp.samlAcsUrl}</dd>
             <dt className="text-muted-foreground">{translate("spEntityIdLabel")}</dt>
-            <dd className="break-all font-mono text-foreground">{`${origin}/api/auth/sso/saml`}</dd>
+            <dd className="break-all font-mono text-foreground">{idp.samlEntityId}</dd>
           </>
         ) : (
           <>
             <dt className="text-muted-foreground">{translate("callbackLabel")}</dt>
-            <dd className="break-all font-mono text-foreground">{`${origin}/api/auth/sso/callback`}</dd>
+            <dd className="break-all font-mono text-foreground">{idp.redirectUri}</dd>
           </>
         )}
         {existing !== null ? (

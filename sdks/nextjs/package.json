@@ -28,7 +28,8 @@
   "dependencies": {
     "@condux/core": "link:../core",
     "@condux/browser": "link:../browser",
-    "@condux/react": "link:../react"
+    "@condux/react": "link:../react",
+    "@condux/node": "link:../js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

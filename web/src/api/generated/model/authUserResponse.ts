@@ -14,4 +14,5 @@ export interface AuthUserResponse {
   /** @nullable */
   impersonation?: AuthUserResponseImpersonation;
   mfaRequired?: boolean;
+  weeklySummaryOptOut?: boolean;
 }

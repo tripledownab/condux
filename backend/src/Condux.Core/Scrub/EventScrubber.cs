@@ -3,10 +3,15 @@ using Condux.Core.Events;
 namespace Condux.Core.Scrub;
 
 /// <summary>
-/// Applies <see cref="Scrubber"/> across a full <see cref="Event"/> — message,
-/// exception values, breadcrumb messages, and tag/extra maps — so secrets never
-/// reach storage or a model. This is the second scrub layer (the relay also
-/// scrubs the raw body on ingest).
+/// Applies <see cref="Scrubber"/> across a full <see cref="Event"/>: message, exception values,
+/// breadcrumb messages, frame context and locals, and the breadcrumb data, tag, extra, context, request
+/// header and module maps, so secrets never reach storage or a model.
+///
+/// <para><b>This is the only scrub on the ingest path, not one of two.</b> A previous version of this
+/// comment said the relay also scrubbed the raw request body first. It does not, and it has no code
+/// that ever did: both ingest endpoints parse, call this once, and publish the result. The correction
+/// matters because a reader deciding how much this pass can safely be relaxed was being told there was
+/// another one behind it.</para>
 /// </summary>
 public static class EventScrubber
 {
@@ -23,7 +28,16 @@ public static class EventScrubber
             .ToList(),
         Tags = ScrubMap(e.Tags),
         Extra = ScrubMap(e.Extra),
-        Modules = ScrubMap(e.Modules),
+        // Modules keys are package names by convention, not field names, so the sensitive key rule does
+        // not fit here: it substring matches "token", "secret", "password" and "apikey", which redacted
+        // the version of jsonwebtoken, csrf-token, secretbox and tokenizer. Those are ordinary
+        // dependencies, and their installed version is what a CVE exposure read needs (ADR-0041).
+        // Values still go through the string scrub. Nothing validates these keys, so the exemption does
+        // give up a protection, and it is accepted because that protection was incidental rather than
+        // designed: it fired only when a key happened to contain one of four substrings, and no shape
+        // check replaces it, since a short unprefixed secret is not distinguishable from a version
+        // string. Reviewed deliberately, 2026-09-03. Fuller reasoning in ADR-0041.
+        Modules = ScrubMap(e.Modules, redactSensitiveKeys: false),
         // Privacy-first user capture (#105): derive the pseudonymous counting key from the raw
         // identifiers, then redact the email (ScrubString redacts email shapes) and drop the IP —
         // neither ever reaches storage.
@@ -63,12 +77,20 @@ public static class EventScrubber
         Vars = ScrubMap(f.Vars),
     };
 
-    private static IReadOnlyDictionary<string, string> ScrubMap(IReadOnlyDictionary<string, string> map)
+    /// <param name="redactSensitiveKeys">
+    /// Whether a key that names a credential drops its value outright. True for every map whose key is
+    /// a field name chosen by the reporting app: a header, a tag, an extra, a frame local. False only
+    /// where the key is data in its own right, which today means <see cref="Event.Modules"/> alone.
+    /// </param>
+    private static IReadOnlyDictionary<string, string> ScrubMap(
+        IReadOnlyDictionary<string, string> map, bool redactSensitiveKeys = true)
     {
         var result = new Dictionary<string, string>(map.Count);
         foreach (var (key, value) in map)
         {
-            result[key] = Scrubber.IsSensitiveKey(key) ? "[redacted]" : Scrubber.ScrubString(value);
+            result[key] = redactSensitiveKeys && Scrubber.IsSensitiveKey(key)
+                ? "[redacted]"
+                : Scrubber.ScrubString(value);
         }
         return result;
     }

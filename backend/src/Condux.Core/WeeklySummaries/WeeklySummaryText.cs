@@ -31,6 +31,12 @@ public static class WeeklySummaryText
             foreach (var issue in s.TopIssues)
             {
                 sb.Append($"{WeeklySummaryFormat.Number(rank)}. {issue.Title} ({WeeklySummaryFormat.Number(issue.Events)})\n");
+                // On its own line: a text/plain client turns a bare URL into a link, and appending it to the
+                // title line would make the wrapped result hard to click.
+                if (WeeklySummaryFormat.IssueUrl(dashboardUrl, issue.Id) is { } issueUrl)
+                {
+                    sb.Append($"   {issueUrl}\n");
+                }
                 rank++;
             }
         }

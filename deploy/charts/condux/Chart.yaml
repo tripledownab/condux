@@ -2,8 +2,8 @@ apiVersion: v2
 name: condux
 description: Condux — error monitoring + the Conductor (safe AI fix PRs). Deploys the relay, control-plane, consumer, conductor and dashboard against your own managed data stores.
 type: application
-version: 0.2.0
-appVersion: "0.1.0"
+version: 0.3.0
+appVersion: "0.3.0"
 home: https://condux.ai
 sources:
   - https://github.com/tripledownab/condux

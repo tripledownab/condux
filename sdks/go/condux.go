@@ -43,6 +43,11 @@ type Options struct {
 	Transport http.RoundTripper
 	Sleep     func(time.Duration)
 	Now       func() time.Time
+	// DisableModules turns off the runtime dependency inventory (ADR-0041), which otherwise reports the
+	// module versions built into this binary so a security advisory can be answered with the version
+	// actually running. Off by default because the inventory is worth having; set it when the payload
+	// cost matters more than the answer.
+	DisableModules bool
 }
 
 // Client reports errors to a Condux relay. One Client is cheap to hold for the process lifetime and is
@@ -79,6 +84,9 @@ func New(opts Options) (*Client, error) {
 	if now == nil {
 		now = time.Now
 	}
+
+	// The runtime dependency inventory (ADR-0041); see initModules for why it is read here.
+	initModules(opts.DisableModules)
 
 	return &Client{
 		opts:       opts,
@@ -153,10 +161,19 @@ func (c *Client) dispatch(e event) SendResult {
 	}
 
 	e.EventID = newEventID()
-	e.Timestamp = float64(c.now().UnixNano()) / float64(time.Second) // epoch seconds, the store convention
+	// Read the clock once. It is a caller-supplied hook, so calling it twice per event would advance a
+	// test clock that returns a sequence, and would date the event and the inventory's interval from two
+	// different instants.
+	now := c.now()
+	e.Timestamp = float64(now.UnixNano()) / float64(time.Second) // epoch seconds, the store convention
 	e.Platform = "go"
 	e.Environment = c.opts.Environment
 	e.Release = c.opts.Release
+	if !c.opts.DisableModules {
+		// The runtime dependency inventory (ADR-0041), attached on the first event and then only once
+		// per interval; nil the rest of the time, so the key is absent rather than empty.
+		e.Modules = modulesField(now)
+	}
 
 	// Per-event tags are carried on the event before the ambient scope is applied, so hold them aside and
 	// merge them back on top: applyScope would otherwise overwrite them with the process-wide map.

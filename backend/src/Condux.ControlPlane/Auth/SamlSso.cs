@@ -17,9 +17,10 @@ namespace Condux.ControlPlane.Auth;
 /// </summary>
 internal static class SamlSso
 {
-    // Our SP entity ID — a stable URI the org's admin registers in their IdP (the settings tab shows it,
-    // computed client-side like the OIDC redirect URI).
-    private static string EntityId(IConfiguration cfg) => $"{AppUrls.BaseUrl(cfg)}/api/auth/sso/saml";
+    // Our SP entity ID: a stable URI the org's admin registers in their IdP, and the audience their
+    // assertion is checked against. Built by SsoUrls so the dashboard shows this exact string rather
+    // than its own guess at it.
+    private static string EntityId(IConfiguration cfg) => SsoUrls.SamlEntityId(cfg);
 
     public static Saml2Configuration Configuration(StoredSsoConfig config, IConfiguration cfg)
     {

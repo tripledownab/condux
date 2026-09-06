@@ -8,5 +8,11 @@ export function recordingFetch() {
     sent.push({ url, body: init.body });
     return { status: 202, headers: { get: () => null } };
   };
-  return { fetch, last: () => JSON.parse(sent[sent.length - 1].body) };
+  return {
+    fetch,
+    last: () => JSON.parse(sent[sent.length - 1].body),
+    // Every event, for the assertions that are about what differs BETWEEN events rather than what one
+    // of them contains.
+    all: () => sent.map((request) => JSON.parse(request.body)),
+  };
 }

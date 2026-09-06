@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 
 namespace Condux.Storage.ClickHouse;
@@ -69,7 +68,7 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         var payload = await JsonSerializer.DeserializeAsync<Response>(stream, cancellationToken: cancellationToken);
 
         var row = payload?.data is [var only, ..] ? only : null;
-        return row is not null && TryReadInt64(row.c, out var count) ? count : 0;
+        return row is not null && ClickHouseJson.TryReadInt64(row.c, out var count) ? count : 0;
     }
 
     /// <summary>Sparse hourly bucket counts for every issue of a project over the window — one query
@@ -90,8 +89,8 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         var byIssue = new Dictionary<long, Dictionary<long, long>>();
         foreach (var row in payload?.data ?? [])
         {
-            if (TryReadInt64(row.issue_id, out var issueId) && TryReadInt64(row.ts, out var ts)
-                && TryReadInt64(row.c, out var count))
+            if (ClickHouseJson.TryReadInt64(row.issue_id, out var issueId) && ClickHouseJson.TryReadInt64(row.ts, out var ts)
+                && ClickHouseJson.TryReadInt64(row.c, out var count))
             {
                 (byIssue.TryGetValue(issueId, out var sparse)
                     ? sparse
@@ -134,8 +133,8 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         var list = new List<IssueVolume>();
         foreach (var row in payload?.data ?? [])
         {
-            if (TryReadInt64(row.issue_id, out var issueId) && TryReadInt64(row.this_week, out var thisWeek)
-                && TryReadInt64(row.prev_week, out var previousWeek))
+            if (ClickHouseJson.TryReadInt64(row.issue_id, out var issueId) && ClickHouseJson.TryReadInt64(row.this_week, out var thisWeek)
+                && ClickHouseJson.TryReadInt64(row.prev_week, out var previousWeek))
             {
                 list.Add(new IssueVolume(issueId, thisWeek, previousWeek));
             }
@@ -158,30 +157,16 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         await using var stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
         var payload = await JsonSerializer.DeserializeAsync<Response>(stream, cancellationToken: cancellationToken);
 
-        // FORMAT JSON quotes 64-bit integers (sum -> UInt64 string) but not 32-bit ones
-        // (toUnixTimestamp -> UInt32 number), so read both kinds.
         var sparse = new Dictionary<long, long>();
         foreach (var row in payload?.data ?? [])
         {
-            if (TryReadInt64(row.ts, out var ts) && TryReadInt64(row.c, out var count))
+            if (ClickHouseJson.TryReadInt64(row.ts, out var ts) && ClickHouseJson.TryReadInt64(row.c, out var count))
             {
                 sparse[ts] = count;
             }
         }
 
         return sparse;
-    }
-
-    private static bool TryReadInt64(JsonElement element, out long value)
-    {
-        value = 0;
-        return element.ValueKind switch
-        {
-            JsonValueKind.Number => element.TryGetInt64(out value),
-            JsonValueKind.String => long.TryParse(
-                element.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out value),
-            _ => false,
-        };
     }
 
     private sealed record Response(List<Row> data);

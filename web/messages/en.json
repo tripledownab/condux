@@ -254,7 +254,7 @@
       "ssoFailed": "Single sign-on failed. Try again.",
       "ssoNotAvailable": "No single sign-on is configured for that email domain.",
       "ssoDomainMismatch": "Your identity provider returned an email outside your organization's domain.",
-      "alreadyInOrg": "You already belong to another organization.",
+      "ssoInviteRequired": "That account is not a member of this organization. Ask an administrator to invite you, then sign in again.",
       "signInFailed": "Sign-in failed. Try again."
     },
     "mfa": {
@@ -378,7 +378,9 @@
       "disabledHint": "Turn the weekly summary on to set its schedule.",
       "readOnlyOn": "Weekly summary is on, sent {day} at {time} {timezone}.",
       "readOnlyOff": "Weekly summary is off.",
-      "saveFailed": "Could not save. Try again."
+      "saveFailed": "Could not save. Try again.",
+      "subscriptionLabel": "Email me the weekly summary",
+      "subscriptionHint": "Your own preference. Turning this off does not change it for anyone else in the organisation."
     },
     "channels": {
       "email": "Email",
@@ -654,6 +656,11 @@
         "costCap": "Monthly fair-use compute limit reached",
         "enqueueFailed": "Could not start the fix, try again",
         "generic": "Could not start the fix"
+      },
+      "exposure": {
+        "running": "Running",
+        "where": "in {environment}",
+        "noEnvironment": "an unnamed environment"
       }
     },
     "alerts": {

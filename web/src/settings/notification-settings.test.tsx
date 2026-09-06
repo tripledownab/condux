@@ -27,6 +27,7 @@ vi.mock("@/src/orgs/current-org", () => ({
 // The weekly-summary section has its own test; stub it here so this suite stays focused on channels
 // (and doesn't need the weekly-summary hooks mocked).
 vi.mock("./weekly-summary-settings", () => ({ WeeklySummarySettings: () => null }));
+vi.mock("./weekly-summary-subscription", () => ({ WeeklySummarySubscription: () => null }));
 
 import { NotificationSettings } from "./notification-settings";
 

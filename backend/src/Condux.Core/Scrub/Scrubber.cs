@@ -10,7 +10,12 @@ namespace Condux.Core.Scrub;
 /// </summary>
 public static partial class Scrubber
 {
-    private const string Redacted = "[redacted]";
+    /// <summary>
+    /// What replaces a redacted value. Public because a reader downstream has to be able to recognise
+    /// it: a scrubbed value is not data, and code that would otherwise store or match on it needs to
+    /// compare against the same constant rather than restate the literal and drift from it.
+    /// </summary>
+    public const string Redacted = "[redacted]";
 
     [GeneratedRegex(@"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")]
     private static partial Regex EmailRegex();

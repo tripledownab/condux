@@ -20,10 +20,17 @@ helm install condux deploy/charts/condux \
   --set externalStores.clickhouse.url=http://clickhouse:8123 \
   --set externalStores.kafka.bootstrap=redpanda:9092 \
   --set externalStores.valkey.url=valkey:6379 \
+  --set config.ingestHost=ingest.example.com \
   --set ingress.enabled=true \
-  --set ingress.appHost=app.example.com \
-  --set ingress.ingestHost=ingest.example.com
+  --set ingress.appHost=app.example.com
 ```
+
+`config.ingestHost` is required and the render fails without it. It is the public relay address the
+control-plane writes into every DSN it mints, and the code's own default is the dev `localhost:9010`,
+so an unset host mints DSNs that reach no relay while every pod still reports healthy. The ingress rule
+for the relay reads the same value, since an SDK arrives carrying the host from its DSN. Build the web
+image with a matching `NEXT_PUBLIC_CONDUX_INGEST_URL` too, which is what the dashboard rebuilds a key's
+displayed DSN from.
 
 For a quick dev install you can inline the credentials instead of `existingSecret`
 (`--set secret.postgresConnectionString=... --set secret.clickhouseUser=... --set secret.clickhousePassword=...`)

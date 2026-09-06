@@ -14,6 +14,28 @@ We aim to acknowledge a report within **3 business days** and to keep you update
 practice coordinated disclosure: we agree a timeline with you and credit you unless you prefer to stay
 anonymous.
 
+**If you have evidence that the issue is being exploited, say so in the first line and use email.**
+That case is handled immediately rather than on the acknowledgement target above, because evidence of
+real exploitation starts a legal reporting deadline for us that is shorter than our triage window.
+Include what the evidence is, even briefly.
+
+## Reporting to authorities
+
+Condux is a manufacturer under the EU Cyber Resilience Act, so from 11 September 2026 we are required
+to report an **actively exploited** vulnerability in the software we distribute to the relevant
+national CSIRT and to ENISA: an early warning within 24 hours, a fuller notification within 72
+hours, and a final report within 14 days of a corrective or mitigating measure becoming available.
+
+The same article also requires us to tell **affected users** about the vulnerability and about any
+fix or workaround they can apply themselves. Reporting to a CSIRT does not discharge that, and it is
+not at our discretion, so if a version you run is being exploited you will hear from us.
+
+Two things this does not mean. It is not public disclosure, and it does not shorten or override a
+coordinated disclosure timeline we agreed with you. It also does not apply to an ordinary report: the
+legal threshold is reliable evidence that someone exploited the issue against a real system without
+permission, so a proof of concept, a severity score or a reachable weakness does not meet it. We will
+tell you if a report of yours crosses that line.
+
 ## Scope
 
 In scope: the Condux platform code in this repository (relay, control-plane, consumer, conductor,

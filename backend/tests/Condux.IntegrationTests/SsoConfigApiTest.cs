@@ -197,13 +197,47 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     public async Task The_routes_404_when_the_secret_store_is_not_configured()
     {
         await Migrations.ApplyAllAsync(pg.ConnectionString);
-        // No CONDUX_SECRET_KEY → the feature is off.
-        var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
+        // The shared app factory sets CONDUX_SECRET_KEY unconditionally, so the key has to be cleared
+        // explicitly to reach the not-configured path. Without this the request 404s anyway, because
+        // the org simply has no config, and the assertion below would hold with the gate deleted.
+        var client = ControlPlaneApp.Create(pg.ConnectionString)
+            .WithWebHostBuilder(b => b.UseSetting("CONDUX_SECRET_KEY", ""))
+            .CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2);
 
         Assert.Equal(HttpStatusCode.NotFound,
             (await client.GetAsync($"/api/orgs/{orgId}/sso-config")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Metadata_is_served_from_configuration_and_is_absent_when_the_feature_is_off()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var app = ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
+        {
+            b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
+            b.UseSetting("CONDUX_APP_BASE_URL", "https://app.example.test/");
+        });
+        var client = app.CreateClient();
+        await ApiAuth.SignUpAsync(client);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/auth/sso/metadata");
+
+        // The trailing slash on the base URL must not survive: a doubled slash is a different entity id
+        // to the IdP than the one without, and the assertion audience would stop matching.
+        Assert.Equal("https://app.example.test/api/auth/sso/callback", body.GetProperty("redirectUri").GetString());
+        Assert.Equal("https://app.example.test/api/auth/sso/saml", body.GetProperty("samlEntityId").GetString());
+        Assert.Equal("https://app.example.test/api/auth/sso/saml/acs", body.GetProperty("samlAcsUrl").GetString());
+
+        // With the key cleared the whole SSO surface is off, and this route hides with the rest.
+        // Unlike the org-scoped config route, a 404 here can only mean that: it does not depend on
+        // whether any org has a config, so it is the one that actually pins the gate.
+        var off = ControlPlaneApp.Create(pg.ConnectionString)
+            .WithWebHostBuilder(b => b.UseSetting("CONDUX_SECRET_KEY", ""))
+            .CreateClient();
+        await ApiAuth.SignUpAsync(off);
+        Assert.Equal(HttpStatusCode.NotFound, (await off.GetAsync("/api/auth/sso/metadata")).StatusCode);
     }
 
     private async Task<byte[]> ReadEncryptedSecretAsync(long orgId)

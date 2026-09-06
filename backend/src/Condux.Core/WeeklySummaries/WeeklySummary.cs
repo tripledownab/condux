@@ -1,7 +1,9 @@
 namespace Condux.Core.WeeklySummaries;
 
-/// <summary>One of an org's most active issues over the week, for the report's top-issues list.</summary>
-public sealed record TopIssue(string Title, long Events);
+/// <summary>One of an org's most active issues over the week, for the report's top-issues list. Carries the
+/// issue's PUBLIC id, because the digest links each one and the internal bigint never leaves the server.
+/// </summary>
+public sealed record TopIssue(Guid Id, string Title, long Events);
 
 /// <summary>The Conductor's activity for an org over the week — the fix-engine section of the report that
 /// Sentry has no equivalent to. Counts of runs proposed, draft PRs opened, PRs merged, and issues the

@@ -96,6 +96,12 @@ public final class ConduxClient {
         event.put("event_id", UUID.randomUUID().toString().replace("-", "")); // 32 lowercase hex
         event.put("timestamp", clock.getAsDouble());                          // epoch seconds
         event.put("platform", "java");
+        // No "modules" here, unlike every other Condux SDK. The runtime dependency inventory
+        // (ADR-0041) cannot be gathered honestly on a plain JVM classpath: a jar manifest carries a
+        // version but not the groupId:artifactId that advisories are indexed against, and some jars
+        // carry several conflicting versions in per-package sections. An absent inventory reads as
+        // unknown on the server, which is true; a guessed one would be believed. The README explains
+        // what was measured and what would have to change.
         event.putAll(ConduxScope.fields());
         if (context != null) {
             Map<String, String> request = context.request();

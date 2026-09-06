@@ -18,6 +18,7 @@ import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { WeeklySummarySettings } from "./weekly-summary-settings";
+import { WeeklySummarySubscription } from "./weekly-summary-subscription";
 
 // The Notifications settings tab (#129): the org's delivery channels for operational notices — today a
 // Conductor pause when the AI-fix cost cap or allowance is reached in auto mode (#130). Org-scoped;
@@ -41,6 +42,7 @@ export function NotificationSettings() {
     <div className="flex flex-col gap-8">
       <Channels orgId={current.org.id} canManage={canManage} />
       <WeeklySummarySettings org={current.org} canManage={canManage} />
+      <WeeklySummarySubscription />
     </div>
   );
 }

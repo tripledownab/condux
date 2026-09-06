@@ -51,7 +51,7 @@ internal static class SamlSsoEndpoints
         app.MapPost("/api/auth/sso/saml/acs",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     SecretsConfig secrets, UserRepository users, OrgMemberRepository members,
-                    OrgRepository orgs, SessionRepository sessions, IConfiguration cfg,
+                    SessionRepository sessions, IConfiguration cfg,
                     ILoggerFactory loggerFactory, HttpContext http) =>
                 {
                     if (!secrets.Enabled)
@@ -112,7 +112,7 @@ internal static class SamlSsoEndpoints
                     }
 
                     return TypedResults.Redirect(await SsoSignIn.CompleteAsync(
-                        config, email, users, members, orgs, sessions, cfg, http));
+                        config, email, users, members, sessions, cfg, http));
                 })
             .WithName("ssoSamlAcs").WithTags("Auth").ExcludeFromDescription();
     }

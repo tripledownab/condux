@@ -9,6 +9,14 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="Testcontainers" Version="4.1.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.1.0" />
+    <!-- Pin past two vulnerable transitives that arrive with the SAML library and Testcontainers.
+         System.Security.Cryptography.Xml <= 10.0.9 is the XML-signature DoS set (GHSA-8q5v-6pqq-x66h,
+         -cvvh-rhrc-wg4q, -g8r8-53c2-pm3f, -mmjf-rqrv-855v, -23rf-6693-g89p), patched in 10.0.10.
+         SSH.NET <= 2025.1.0 is GHSA-q939-rpr3-3284, patched in 2026.0.0.
+         The services themselves resolve the framework-provided assembly, not this package, so only the
+         test projects need the pin. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.11" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.101.5" />
     <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
     <PackageReference Include="Npgsql" Version="8.0.5" />

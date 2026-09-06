@@ -31,8 +31,6 @@ public sealed class ConsumerWorker(
     AlertDispatcher alertDispatcher, AutoFixDispatcher autoFixDispatcher, ConduxSelfReporter selfReport)
     : BackgroundService
 {
-    private const int BatchSize = 100;
-
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.Run(() => RunAsync(stoppingToken), stoppingToken);
 
@@ -57,9 +55,15 @@ public sealed class ConsumerWorker(
         // Live dashboard badges (ADR-0030): nudges a project's SSE stream on a new/regressed issue.
         var projectEvents = new ProjectEventNotifier(pgConn);
         // Resilient ClickHouse client from the factory (retry/timeout/circuit-breaker configured in Program).
-        var eventWriter = new ClickHouseEventWriter(httpClientFactory.CreateClient(ClickHouseRegistration.ClientName));
-        var statsWriter = new ClickHouseIssueStatsWriter(
-            httpClientFactory.CreateClient(ClickHouseRegistration.ClientName));
+        var clickHouse = () => httpClientFactory.CreateClient(ClickHouseRegistration.ClientName);
+        var batch = new ClickHouseBatch(
+            new ClickHouseEventWriter(clickHouse()),
+            new ClickHouseIssueStatsWriter(clickHouse()),
+            new ClickHouseReleaseModuleWriter(clickHouse()),
+            logger);
+        // The runtime dependency inventory (ADR-0041): what an event says is actually installed, kept
+        // once per release rather than once per event.
+        var moduleRecorder = new ReleaseModuleRecorder(logger);
 
         using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
         {
@@ -73,9 +77,6 @@ public sealed class ConsumerWorker(
             "consumer subscribed bootstrap={Bootstrap} topic={Topic} sample=keepFirst:{KeepFirst}/every:{SampleEvery}",
             bootstrap, topic, sampler.KeepFirst, sampler.SampleEvery);
 
-        var buffer = new List<EventRow>();
-        var statsBuffer = new List<IssueStatsRow>();
-        var sampledOut = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -108,16 +109,21 @@ public sealed class ConsumerWorker(
                         }
                         // Count EVERY event in the hourly rollup (exact time series, #102); only the raw
                         // payload row below is subject to sampling.
-                        statsBuffer.Add(ClickHouseIssueStatsWriter.ToRow(projectKey, (ulong)upsert.Id, seenAt));
+                        batch.AddStats(ClickHouseIssueStatsWriter.ToRow(projectKey, (ulong)upsert.Id, seenAt));
+                        var retentionDays = ReadRetentionDays(result.Message.Headers);
+                        // Record the dependency inventory before the sampling decision. Sampling sheds
+                        // redundant copies of the same payload, and the inventory is deduplicated on its
+                        // own terms, so tying it to a sampled event would drop a release's only chance
+                        // to report what it is running.
+                        batch.AddModules(moduleRecorder.Collect(projectKey, e, seenAt, retentionDays));
                         if (sampler.ShouldStore(upsert.Occurrence))
                         {
-                            var retentionDays = ReadRetentionDays(result.Message.Headers);
-                            buffer.Add(ClickHouseEventWriter.ToRow(
+                            batch.AddEvent(ClickHouseEventWriter.ToRow(
                                 projectKey, (ulong)upsert.Id, e, grouping.Fingerprint, retentionDays));
                         }
                         else
                         {
-                            sampledOut++;
+                            batch.CountSampledOut();
                         }
                     }
                     else
@@ -126,18 +132,10 @@ public sealed class ConsumerWorker(
                     }
                 }
 
-                // Flush on a full batch, or when the topic is idle (result == null on timeout). Stats
-                // rows flush with the same cadence (they accumulate faster — one per event, unsampled).
-                if (statsBuffer.Count >= BatchSize || (statsBuffer.Count > 0 && result is null))
+                // Flush on a full batch, or when the topic is idle (result == null on timeout).
+                if (batch.ShouldFlush(idle: result is null))
                 {
-                    await statsWriter.InsertAsync(statsBuffer, stoppingToken);
-                    await eventWriter.InsertAsync(buffer, stoppingToken);
-                    logger.LogInformation(
-                        "flushed {Stats} stat rows + {Count} events to ClickHouse (sampled out {Sampled})",
-                        statsBuffer.Count, buffer.Count, sampledOut);
-                    statsBuffer.Clear();
-                    buffer.Clear();
-                    sampledOut = 0;
+                    await batch.FlushAsync(stoppingToken);
                 }
             }
             catch (OperationCanceledException)
@@ -159,6 +157,9 @@ public sealed class ConsumerWorker(
             }
         }
 
+        // The loop exits with rows still buffered, and stoppingToken is already cancelled, so the batch
+        // owns both the fresh token and the never-throw contract (see FlushOnShutdownAsync).
+        await batch.FlushOnShutdownAsync();
         consumer.Close();
     }
 

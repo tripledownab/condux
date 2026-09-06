@@ -235,9 +235,8 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
         var pub = new InMemoryEventPublisher();
         var client = With(pub).CreateClient();
 
-        var request = ProtobufPost("1", Gzip(CollectorExport()));
-        request.Content.Headers.ContentEncoding.Add("gzip");
-        var resp = await client.SendAsync(request);
+        var resp = await client.SendAsync(
+            ProtobufPost("1", Gzip(CollectorExport()), contentEncoding: "gzip"));
 
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Equal("checkout-api", Assert.Single(pub.Published).Event.ServerName);
@@ -257,13 +256,20 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     private static byte[] CollectorExport() =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Golden", "otlp-logs-collector.protobuf.bin"));
 
-    private static HttpRequestMessage ProtobufPost(string projectId, byte[] body, string? key = "devkey")
+    private static HttpRequestMessage ProtobufPost(
+        string projectId, byte[] body, string? key = "devkey", string? contentEncoding = null)
     {
         var req = new HttpRequestMessage(HttpMethod.Post, $"/api/{projectId}/v1/logs")
         {
             Content = new ByteArrayContent(body),
         };
         req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-protobuf");
+        // Set here rather than by the caller: HttpRequestMessage.Content is nullable once the object is
+        // handed back, so reaching into it outside this method is a null dereference the compiler flags.
+        if (contentEncoding is not null)
+        {
+            req.Content.Headers.ContentEncoding.Add(contentEncoding);
+        }
         if (key is not null)
         {
             req.Headers.Add("x-condux-auth", key);

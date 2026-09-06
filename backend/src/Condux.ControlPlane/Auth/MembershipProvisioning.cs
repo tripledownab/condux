@@ -19,9 +19,13 @@ internal enum JoinOutcome
 /// <summary>
 /// The one place the single-org-per-user invariant (ADR-0018) is applied when adding a user to an org: a
 /// solo personal org (the user is its only member) is deleted on the way in, membership in a different
-/// shared org is refused, and re-joining the same org is a no-op. Shared by invite-accept (#84) and
-/// enterprise-SSO domain provisioning (#72) so the rule can't drift between them; each caller maps the
-/// returned <see cref="JoinOutcome"/> to its own surface (a 409 for the JSON API, a redirect for the SSO flow).
+/// shared org is refused and re-joining the same org is a no-op. The caller maps the returned
+/// <see cref="JoinOutcome"/> to its own surface, a 409 for the JSON API.
+///
+/// Invite-accept is the only caller, and that is deliberate rather than incidental. Enterprise SSO used
+/// to come through here too, which read as a consent check and is not one: this asks how many orgs a
+/// user may belong to, never whether the joining org has any claim on them. An invite carries that
+/// claim, so it can adopt an existing account. SSO does its own membership check instead (ADR-0042).
 /// </summary>
 internal static class MembershipProvisioning
 {

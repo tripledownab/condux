@@ -31,7 +31,7 @@ const REDIRECT_ERROR_KEYS: Record<string, string> = {
   sso_failed: "errors.ssoFailed",
   sso_not_available: "errors.ssoNotAvailable",
   sso_domain_mismatch: "errors.ssoDomainMismatch",
-  already_in_org: "errors.alreadyInOrg",
+  sso_invite_required: "errors.ssoInviteRequired",
 };
 
 export function redirectErrorKey(code: string | null): string | null {

@@ -5,7 +5,8 @@ namespace Condux.Sdk.AspNetCore;
 /// <summary>
 /// ASP.NET Core middleware that reports an unhandled request exception to Condux (as unhandled) and
 /// re-throws, so the app's own error handling still runs. The <see cref="ConduxClient"/> is resolved from
-/// DI with <c>app.UseConduxExceptionReporting()</c>.
+/// DI with <c>app.UseConduxExceptionReporting()</c>. An exception describing what the CALLER sent is
+/// re-thrown without being reported: see <see cref="IsCallerCaused"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,11 +39,52 @@ public sealed class ConduxExceptionMiddleware(RequestDelegate next, ConduxClient
         }
         catch (Exception error)
         {
-            await client.CaptureExceptionAsync(
-                error, handled: false, new CaptureContext { Request = Describe(context.Request) });
+            if (!IsCallerCaused(context, error))
+            {
+                await client.CaptureExceptionAsync(
+                    error, handled: false, new CaptureContext { Request = Describe(context.Request) });
+            }
+            // Rethrown either way. Installing Condux must never change what the application returns.
             throw;
         }
     }
+
+    /// <summary>
+    /// True when the exception says what the CALLER did wrong, rather than naming a defect in the
+    /// application. Filing those lets anyone with network access bury the real ones, which is an
+    /// availability problem for the error store rather than untidiness. See ADR-0044.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ASP.NET Core is the one ecosystem with no registry to ask, so unlike the other adapters this is a
+    /// list. Each entry was measured against a real app rather than taken from a doc page.
+    /// </para>
+    /// <para>
+    /// <b>BadHttpRequestException</b> covers a body past <c>MaxRequestBodySize</c>, bad framing, a
+    /// malformed chunked body and a caller who hangs up mid-body. Matching the
+    /// <c>Microsoft.AspNetCore.Http</c> type rather than Kestrel's catches both: Kestrel's derives from
+    /// it (measured) and is marked obsolete in favour of it.
+    /// </para>
+    /// <para>
+    /// <b>InvalidDataException</b> only while reading a form, because it is a general
+    /// <c>System.IO</c> type the application's own code raises over a corrupt stream too, and ignoring it
+    /// everywhere would hide real defects. ASP.NET Core raises it for a form past the
+    /// <c>FormOptions</c> limits.
+    /// </para>
+    /// <para>
+    /// <b>OperationCanceledException</b> only when the caller actually disconnected. This narrowing is
+    /// load-bearing rather than cautious: <c>TaskCanceledException</c> derives from it (measured), so a
+    /// downstream HttpClient timeout arrives here as one, and matching the type alone would swallow every
+    /// genuine timeout in the application.
+    /// </para>
+    /// </remarks>
+    private static bool IsCallerCaused(HttpContext context, Exception error) => error switch
+    {
+        BadHttpRequestException => true,
+        InvalidDataException => context.Request.HasFormContentType,
+        OperationCanceledException => context.RequestAborted.IsCancellationRequested,
+        _ => false,
+    };
 
     /// <summary>
     /// The request, in the shape the relay parses. Headers are available on the context and deliberately

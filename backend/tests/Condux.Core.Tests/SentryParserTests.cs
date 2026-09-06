@@ -210,4 +210,56 @@ public class SentryParserTests
         Assert.Null(e.TraceId);
         Assert.Null(Assert.Single(e.Exceptions).Handled); // no mechanism reported = unknown, not false
     }
+
+    /// <summary>
+    /// The runtime dependency inventory arriving from a real SDK (ADR-0041). The body below was
+    /// captured verbatim from @condux/node rather than written here, because the failure this guards
+    /// against is the two sides disagreeing about the wire, and a payload composed by hand in this
+    /// file would agree with the parser by construction.
+    ///
+    /// Nothing covered `modules` before this, despite the parser having read it since it was written.
+    /// A rename or a nesting change on either side would have produced an empty inventory and an
+    /// exposure surface reporting "not observed" for everything, with no test going red.
+    /// </summary>
+    private const string NodeEventWithModules = """
+    {
+      "event_id": "687f28e20a1d497baec92ea7a8a11699",
+      "timestamp": 1788514972.082,
+      "platform": "javascript",
+      "environment": "production",
+      "release": "1.4.2",
+      "modules": { "@acme/widgets": "2.1.0", "jsonwebtoken": "8.5.1", "lodash": "4.17.11" },
+      "level": "error",
+      "exception": {
+        "values": [
+          {
+            "type": "Error",
+            "value": "boom",
+            "mechanism": { "type": "generic", "handled": true },
+            "stacktrace": { "frames": [] }
+          }
+        ]
+      }
+    }
+    """;
+
+    [Fact]
+    public void ParsesTheRuntimeModuleInventory()
+    {
+        var e = SentryParser.ParseStore(NodeEventWithModules).Event!;
+
+        Assert.Equal("4.17.11", e.Modules["lodash"]);
+        Assert.Equal("2.1.0", e.Modules["@acme/widgets"]);
+        // The package whose name matches the scrub's sensitive-key patterns. It is the most valuable
+        // entry the inventory can carry, and it must arrive as a version rather than as a redaction.
+        Assert.Equal("8.5.1", e.Modules["jsonwebtoken"]);
+    }
+
+    [Fact]
+    public void AnEventWithoutModulesReportsAnEmptyInventoryRatherThanNull()
+    {
+        var e = SentryParser.ParseStore(PythonExceptionEvent).Event!;
+
+        Assert.Empty(e.Modules);
+    }
 }

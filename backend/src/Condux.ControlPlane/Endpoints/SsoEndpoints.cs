@@ -55,7 +55,7 @@ internal static class SsoEndpoints
         app.MapGet("/api/auth/sso/callback",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     SecretsConfig secrets, SsoOidcClient oidc, UserRepository users,
-                    OrgMemberRepository members, OrgRepository orgs, SessionRepository sessions,
+                    OrgMemberRepository members, SessionRepository sessions,
                     IConfiguration cfg, HttpContext http) =>
                 {
                     if (!secrets.Enabled)
@@ -96,7 +96,7 @@ internal static class SsoEndpoints
                     }
 
                     return TypedResults.Redirect(await SsoSignIn.CompleteAsync(
-                        config, identity.Email, users, members, orgs, sessions, cfg, http));
+                        config, identity.Email, users, members, sessions, cfg, http));
                 })
             .WithName("ssoCallback").WithTags("Auth");
     }
@@ -122,6 +122,6 @@ internal static class SsoEndpoints
     }
 
     // Our own well-known OIDC callback URL, registered in each org's IdP. Absolute (the token exchange must
-    // send an identical redirect_uri), built from the app base URL like invite links.
-    private static string RedirectUri(IConfiguration cfg) => $"{AppUrls.BaseUrl(cfg)}/api/auth/sso/callback";
+    // send an identical redirect_uri). Built by SsoUrls, which is also what the dashboard displays.
+    private static string RedirectUri(IConfiguration cfg) => SsoUrls.RedirectUri(cfg);
 }

@@ -14,6 +14,9 @@ importers:
       '@condux/core':
         specifier: link:../core
         version: link:../core
+      '@condux/node':
+        specifier: link:../js
+        version: link:../js
       '@condux/react':
         specifier: link:../react
         version: link:../react

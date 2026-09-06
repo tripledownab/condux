@@ -24,6 +24,12 @@ from dataclasses import dataclass
 from typing import Mapping, Optional
 
 from .dsn import parse_dsn
+from .modules import (
+    clear_modules,
+    collect_modules,
+    modules_field,
+    set_modules,
+)
 from .payload import _to_exception
 from .scope import (
     add_breadcrumb,
@@ -49,6 +55,9 @@ __all__ = [
     "set_context",
     "add_breadcrumb",
     "clear_scope",
+    "set_modules",
+    "collect_modules",
+    "clear_modules",
 ]
 
 
@@ -84,6 +93,7 @@ def init(
     max_retries: Optional[int] = None,
     transport: Optional[Transport] = None,
     sleep: Optional[SleepFn] = None,
+    send_modules: bool = True,
 ) -> None:
     """Configure the SDK with a project DSN (and optional testing hooks).
 
@@ -93,6 +103,10 @@ def init(
     global _options
     parse_dsn(dsn)
     _options = _Options(dsn, environment, release, max_retries, transport, sleep)
+    # The runtime dependency inventory (ADR-0041), read once here rather than on first capture so the
+    # cost lands during startup, where an application expects work, instead of inside the handling of
+    # its first error. set_modules(None) when opted out, so a re-init cannot leave a stale inventory.
+    set_modules(collect_modules() if send_modules else None)
 
 
 def capture_exception(
@@ -157,6 +171,7 @@ def _dispatch(
         "timestamp": time.time(),  # epoch seconds, the Sentry store convention
         "platform": "python",
         **ambient,
+        **modules_field(),
         **fields,
     }
     if request:

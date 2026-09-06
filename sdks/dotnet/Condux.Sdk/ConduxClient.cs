@@ -36,6 +36,10 @@ public sealed class ConduxClient
         http = new HttpClient(options.Transport ?? new HttpClientHandler());
         clock = options.Clock ?? (() => DateTimeOffset.UtcNow);
         sleep = options.Sleep ?? Task.Delay;
+        // The runtime dependency inventory (ADR-0041), read once here rather than per capture: the
+        // resolved graph is fixed for the life of the process. Set explicitly either way, so a client
+        // constructed with it off cannot inherit an inventory a previous client declared.
+        ModuleInventory.Set(options.SendModules ? ModuleInventory.Collect() : null);
     }
 
     /// <summary>
@@ -80,10 +84,14 @@ public sealed class ConduxClient
         {
             var exception = error is null ? null : StackTraceReader.ToException(error, handled);
             var scope = ConduxScope.Fields();
+            // Read the clock once. It is a caller-supplied hook, so calling it twice per event would
+            // advance a test clock that returns a sequence, and would date the event and the
+            // inventory's interval from two different instants.
+            var now = clock();
             var payload = new EventPayload
             {
                 EventId = Guid.NewGuid().ToString("N"),
-                Timestamp = clock().ToUnixTimeMilliseconds() / 1000.0, // epoch seconds, the store convention
+                Timestamp = now.ToUnixTimeMilliseconds() / 1000.0, // epoch seconds, the store convention
                 Platform = "csharp",
                 Level = level.ToString().ToLowerInvariant(),
                 Environment = options.Environment,
@@ -97,6 +105,7 @@ public sealed class ConduxClient
                 Tags = MergeTags(scope.Tags, context?.Tags),
                 Contexts = scope.Contexts,
                 Breadcrumbs = scope.Breadcrumbs,
+                Modules = options.SendModules ? ModuleInventory.Fields(now) : null,
             };
 
             var body = JsonSerializer.Serialize(payload, Json);

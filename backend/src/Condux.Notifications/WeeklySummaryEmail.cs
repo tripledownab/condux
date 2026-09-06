@@ -25,7 +25,8 @@ public static class WeeklySummaryEmail
         {
             facts.Add(new EmailFact(
                 $"{WeeklySummaryFormat.Number(rank)}. {Truncate(issue.Title)}",
-                $"{WeeklySummaryFormat.Number(issue.Events)} events"));
+                $"{WeeklySummaryFormat.Number(issue.Events)} events",
+                LabelHref: WeeklySummaryFormat.IssueUrl(dashboardUrl, issue.Id)));
             rank++;
         }
 

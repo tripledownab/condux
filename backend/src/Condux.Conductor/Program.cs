@@ -145,7 +145,7 @@ builder.Services.AddSingleton<CveFixOrchestrator>();
 
 // The fix-verification watcher (ADR-0019) reads the issue's exact hourly stats from ClickHouse,
 // so the conductor now requires the same ClickHouse config as the control-plane and consumer.
-builder.Services.AddClickHouseIssueStatsReader(
+builder.Services.AddClickHouseReader<ClickHouseIssueStatsReader>(
     builder.Configuration.Require("CONDUX_CLICKHOUSE_URL"),
     builder.Configuration.Require("CONDUX_CLICKHOUSE_USER"),
     builder.Configuration.Require("CONDUX_CLICKHOUSE_PASSWORD"));

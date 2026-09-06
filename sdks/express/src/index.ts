@@ -45,6 +45,22 @@ function describe(req: unknown): { url?: string; method?: string; query_string?:
 }
 
 /**
+ * True when the error describes what the CALLER did wrong rather than what the application did.
+ *
+ * A 4xx on `status`/`statusCode` is the `http-errors` contract that Express's own `finalhandler` already
+ * reads to pick the response status, so this asks the ecosystem's own question instead of matching a
+ * list of type names that would need extending forever. Measured against a real app: body-parser's
+ * malformed-JSON `SyntaxError` carries 400 and its `PayloadTooLargeError` carries 413, while a genuine
+ * route failure carries no status at all. An app wanting a different answer throws an error carrying the
+ * status it means, which also decides what its own response will be.
+ */
+function isCallerCaused(error: unknown): boolean {
+  const carrier = error as { status?: unknown; statusCode?: unknown } | null | undefined;
+  const status = carrier?.status ?? carrier?.statusCode;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
  * Express error-handling middleware. Register it **after your routes**, so it catches anything they throw
  * or pass to `next(err)`:
  *
@@ -53,13 +69,19 @@ function describe(req: unknown): { url?: string; method?: string; query_string?:
  * ```
  *
  * The returned function declares four parameters, which is how Express recognizes error middleware.
+ *
+ * A caller-caused failure is passed on but not reported: filing what a client got wrong as an
+ * application defect lets anyone with network access bury the real ones. See ADR-0044.
  */
 export function conduxErrorHandler(): (err: unknown, req: unknown, res: unknown, next: Next) => void {
   return (err, req, _res, next) => {
-    // The request rides along per event rather than through setTag: the scope is module state, and a
-    // server handles requests concurrently, so one request's URL would attach to another's event.
-    const request = describe(req);
-    void captureException(err, false, Object.keys(request).length > 0 ? { request } : {});
+    if (!isCallerCaused(err)) {
+      // The request rides along per event rather than through setTag: the scope is module state, and a
+      // server handles requests concurrently, so one request's URL would attach to another's event.
+      const request = describe(req);
+      void captureException(err, false, Object.keys(request).length > 0 ? { request } : {});
+    }
+    // Always forwarded, reported or not. Installing Condux must not change what the app returns.
     next(err);
   };
 }

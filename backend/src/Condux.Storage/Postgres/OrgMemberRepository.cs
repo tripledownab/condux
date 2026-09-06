@@ -28,6 +28,16 @@ public sealed class OrgMemberRepository(string connectionString)
         WHERE m.org_id = @org ORDER BY m.created_at, m.user_id;
         """;
 
+    // Who the weekly digest actually goes to. The opt-out lives in this query rather than in a filter the
+    // worker applies afterwards, so there is exactly one definition of "recipient": a second copy in C#
+    // would be free to drift from this one, and the failure mode is mailing someone who asked us not to.
+    private const string WeeklySummaryRecipientsSql = """
+        SELECT u.email
+        FROM org_members m JOIN users u ON u.id = m.user_id
+        WHERE m.org_id = @org AND u.weekly_summary_opt_out = false
+        ORDER BY m.created_at, m.user_id;
+        """;
+
     // The full org column list, shared with OrgRepository, then the role. A hand-picked subset here is
     // how the dashboard came to see fix_execution as hosted regardless of the row: every column the
     // select forgot silently became the record's default.
@@ -67,6 +77,25 @@ public sealed class OrgMemberRepository(string connectionString)
         cmd.Parameters.AddWithValue("user", userId);
         var result = await cmd.ExecuteScalarAsync(ct);
         return result is null or DBNull ? null : (OrgRole)Convert.ToInt16(result);
+    }
+
+    /// <summary>The org members who should receive the weekly digest: everyone except those who opted out.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> WeeklySummaryRecipientsAsync(
+        long orgId, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(WeeklySummaryRecipientsSql, conn);
+        cmd.Parameters.AddWithValue("org", orgId);
+
+        var emails = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            emails.Add(reader.GetString(0));
+        }
+        return emails;
     }
 
     public async Task<IReadOnlyList<OrgMember>> ListByOrgAsync(long orgId, CancellationToken ct = default)

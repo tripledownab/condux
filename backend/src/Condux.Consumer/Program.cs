@@ -63,8 +63,8 @@ builder.Services.AddSingleton<AutoFixDispatcher>();
 // Weekly summary emails (ADR-0031): an hourly-wake worker sends each enabled org's digest once per week (a
 // ledger claim dedupes) to every member, via the shared branded-email path. Reuses the notifier SMTP stack
 // already registered above; adds the typed ClickHouse readers + the repos the digest aggregation needs.
-builder.Services.AddClickHouseIssueStatsReader(clickHouseUrl, clickHouseUser, clickHousePassword);
-builder.Services.AddClickHouseEventReader(clickHouseUrl, clickHouseUser, clickHousePassword);
+builder.Services.AddClickHouseReader<ClickHouseIssueStatsReader>(clickHouseUrl, clickHouseUser, clickHousePassword);
+builder.Services.AddClickHouseReader<ClickHouseEventReader>(clickHouseUrl, clickHouseUser, clickHousePassword);
 builder.Services.AddSingleton(new IssueRepository(pg));
 builder.Services.AddSingleton(new OrgMemberRepository(pg));
 builder.Services.AddSingleton(new PostgresFixStore(pg));

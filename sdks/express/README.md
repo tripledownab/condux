@@ -22,10 +22,17 @@ app.get("/", (_req, _res) => {
   throw new Error("boom");
 });
 
-// Register last, after your routes: it reports anything that reaches Express's error pipeline
-// (as unhandled) and passes it on so your own error handling still runs.
+// Register last, after your routes: it reports what reaches Express's error pipeline (as unhandled)
+// and passes it on so your own error handling still runs.
 app.use(conduxErrorHandler());
 ```
+
+**Caller-caused failures are passed on but not reported.** An error carrying a 4xx on `status` or
+`statusCode` describes what the client sent, not a defect in your application: `express.json()` raises
+one for a malformed body and another for a body over its limit, and anyone can send those at will, so
+filing them would let a stranger bury your real errors. That is the `http-errors` convention Express
+already uses to choose the response status, so throwing `createError(400, ...)` yourself is also how you
+mark your own errors as the caller's. Anything without a 4xx status, including a 5xx, is still reported.
 
 Capture manually anywhere with the re-exported `captureException` / `captureMessage`.
 

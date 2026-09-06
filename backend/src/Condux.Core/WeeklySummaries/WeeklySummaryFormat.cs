@@ -53,4 +53,13 @@ public static class WeeklySummaryFormat
             ("Issues auto-resolved", Number(s.Fixes.AutoResolved)),
         ]
         : [];
+
+    /// <summary>Absolute link to one issue, or null when no dashboard base URL is configured. Lives here so
+    /// the HTML and plain-text bodies build the same URL: they render separately and a reader comparing the
+    /// two would notice before we did. Null means the caller omits the link rather than emitting a relative
+    /// path, which is useless in an email client.</summary>
+    public static string? IssueUrl(string? dashboardBaseUrl, Guid issueId) =>
+        string.IsNullOrWhiteSpace(dashboardBaseUrl)
+            ? null
+            : $"{dashboardBaseUrl.TrimEnd('/')}/issues/{issueId}";
 }

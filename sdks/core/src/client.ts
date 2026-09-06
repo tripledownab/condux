@@ -6,6 +6,7 @@
 
 import { type DebugIdImage, debugIdImages } from "./debug-ids.ts";
 import { parseDsn } from "./dsn.ts";
+import { modulesField } from "./modules.ts";
 import { scopeFields } from "./scope.ts";
 import { type SentryException, toException } from "./stack.ts";
 import { sendEvent } from "./transport.ts";
@@ -73,6 +74,9 @@ function dispatch(fields: EventFields, context: CaptureContext = {}): Promise<Se
     environment: options.environment,
     release: options.release,
     ...ambient,
+    // The loaded package versions (ADR-0041). Absent unless something declared them, which on a
+    // browser or edge build is always, since neither has an installed tree to enumerate.
+    ...modulesField(),
     // Per-event tags merge OVER the ambient ones rather than replacing the object, so setting a
     // request-scoped tag cannot silently drop the app's ambient tags.
     ...(context.tags !== undefined ? { tags: { ...ambient.tags, ...context.tags } } : {}),

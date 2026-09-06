@@ -34,10 +34,15 @@ final class Client
         ?callable $transport = null,
         ?callable $sleep = null,
         ?callable $clock = null,
+        bool $sendModules = true,
     ) {
         $parsed = Dsn::parse($dsn);
         $this->transport = new EventTransport($parsed->storeUrl(), $parsed->publicKey, $maxRetries, $transport, $sleep);
         $this->clock = $clock ?? static fn (): float => microtime(true);
+        // The runtime dependency inventory (ADR-0041), read once here rather than on each capture:
+        // Composer's installed set is fixed for the life of the process. Set explicitly either way, so
+        // constructing a client with it off cannot inherit a previous client's inventory.
+        Modules::set($sendModules ? Modules::collect() : null);
     }
 
     /**
@@ -77,11 +82,14 @@ final class Client
     {
         try {
             $ambient = Scope::fields();
+            // Read the clock once, so the event's timestamp and the inventory's interval agree rather
+            // than being two calls apart.
+            $now = ($this->clock)();
             $event = [
                 'event_id' => bin2hex(random_bytes(16)), // 32 lowercase hex, the Sentry event_id shape
-                'timestamp' => ($this->clock)(),         // epoch seconds, the store convention
+                'timestamp' => $now,                     // epoch seconds, the store convention
                 'platform' => 'php',
-            ] + $ambient + $fields;
+            ] + $ambient + Modules::fields($now) + $fields;
             if ($context !== null) {
                 if ($context->request !== []) {
                     $event['request'] = $context->request;

@@ -33,12 +33,12 @@ spec:
             {{- include "condux.postgresEnv" . | nindent 12 }}
             {{- include "condux.kafkaEnv" . | nindent 12 }}
             {{- include "condux.clickhouseEnv" . | nindent 12 }}
+            {{- include "condux.ingestEnv" . | nindent 12 }}
             {{- if .Values.email.enabled }}
             {{- include "condux.smtpEnv" . | nindent 12 }}
             {{- end }}
             {{- if .Values.config.appBaseUrl }}
-            - name: CONDUX_APP_BASE_URL
-              value: {{ .Values.config.appBaseUrl | quote }}
+            {{- include "condux.appBaseUrlEnv" . | nindent 12 }}
             {{- end }}
             {{- if .Values.config.corsOrigins }}
             - name: CONDUX_CORS_ORIGINS

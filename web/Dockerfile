@@ -16,16 +16,18 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY web/package.json ./web/package.json
 COPY packages/brand/package.json ./packages/brand/package.json
 COPY packages/plans/package.json ./packages/plans/package.json
-# The link: target for @condux/nextjs (which itself links @condux/core + @condux/browser) must exist
-# before install; the whole chain is built right after (the context excludes **/dist, so the host build
-# never leaks in).
+# The link: targets for @condux/nextjs (which itself links @condux/core, @condux/node, @condux/browser
+# and @condux/react) must exist before install; the whole chain is built right after (the context
+# excludes **/dist, so the host build never leaks in).
 COPY sdks/core ./sdks/core
+# @condux/node: the nextjs adapter links it for the Node-runtime dependency inventory (ADR-0041).
+COPY sdks/js ./sdks/js
 COPY sdks/browser ./sdks/browser
 COPY sdks/react ./sdks/react
 COPY sdks/nextjs ./sdks/nextjs
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
-RUN for pkg in core browser react nextjs; do ( cd "sdks/$pkg" && pnpm install --ignore-workspace && pnpm run build ); done
+RUN for pkg in core js browser react nextjs; do ( cd "sdks/$pkg" && pnpm install --ignore-workspace && pnpm run build ); done
 
 # Source for the dashboard and the workspace deps it consumes.
 COPY packages/brand ./packages/brand

@@ -6,7 +6,7 @@
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:8099/"
+      "url": "http://localhost:8099/"
     }
   ],
   "paths": {
@@ -1693,52 +1693,6 @@
         }
       }
     },
-    "/api/projects/{projectId}/repos/{repoId}/cve-findings": {
-      "get": {
-        "tags": [
-          "Repos"
-        ],
-        "operationId": "cveFindings",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "repoId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CveFinding"
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found"
-          }
-        }
-      }
-    },
     "/api/projects/{projectId}/repos/{repoId}/suggested-mappings": {
       "get": {
         "tags": [
@@ -2382,6 +2336,52 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/FixSuggestion"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/repos/{repoId}/cve-findings": {
+      "get": {
+        "tags": [
+          "Repos"
+        ],
+        "operationId": "cveFindings",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "repoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CveFindingWithExposure"
                   }
                 }
               }
@@ -4027,6 +4027,29 @@
         }
       }
     },
+    "/api/auth/me/weekly-summary": {
+      "put": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "updateWeeklySummarySubscription",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWeeklySummarySubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/auth/mfa": {
       "get": {
         "tags": [
@@ -4328,6 +4351,29 @@
         ],
         "operationId": "ssoCallback",
         "responses": {
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/auth/sso/metadata": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getSsoMetadata",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsoMetadataResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found"
           }
@@ -6326,6 +6372,10 @@
           "mfaRequired": {
             "type": "boolean",
             "default": false
+          },
+          "weeklySummaryOptOut": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -6630,6 +6680,21 @@
           "manifestPath": {
             "type": "string",
             "nullable": true
+          }
+        }
+      },
+      "CveFindingWithExposure": {
+        "required": [
+          "finding",
+          "exposure"
+        ],
+        "type": "object",
+        "properties": {
+          "finding": {
+            "$ref": "#/components/schemas/CveFinding"
+          },
+          "exposure": {
+            "$ref": "#/components/schemas/ModuleExposure"
           }
         }
       },
@@ -7845,6 +7910,23 @@
           }
         }
       },
+      "ModuleExposure": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ModuleExposureState"
+          },
+          "observed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservedModule"
+            }
+          }
+        }
+      },
+      "ModuleExposureState": {
+        "type": "integer"
+      },
       "NewIssueCountResponse": {
         "required": [
           "count"
@@ -7907,6 +7989,30 @@
           },
           "target": {
             "type": "string"
+          }
+        }
+      },
+      "ObservedModule": {
+        "type": "object",
+        "properties": {
+          "ecosystem": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "release": {
+            "type": "string"
+          },
+          "lastSeen": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -8521,6 +8627,25 @@
           }
         }
       },
+      "SsoMetadataResponse": {
+        "required": [
+          "redirectUri",
+          "samlEntityId",
+          "samlAcsUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "redirectUri": {
+            "type": "string"
+          },
+          "samlEntityId": {
+            "type": "string"
+          },
+          "samlAcsUrl": {
+            "type": "string"
+          }
+        }
+      },
       "StartCveFixRequest": {
         "required": [
           "ghsaId"
@@ -8754,6 +8879,17 @@
           },
           "timezone": {
             "type": "string"
+          }
+        }
+      },
+      "UpdateWeeklySummarySubscriptionRequest": {
+        "required": [
+          "optOut"
+        ],
+        "type": "object",
+        "properties": {
+          "optOut": {
+            "type": "boolean"
           }
         }
       },

@@ -14,11 +14,27 @@ namespace Condux.ControlPlane.Endpoints;
 /// registry (<see cref="LlmConfigEndpoints"/>). Opt-in behind <see cref="SecretsConfig"/> (404 when the
 /// secret store isn't configured) and gated on the plan's <c>Sso</c> feature. Reads member+, writes admin+
 /// (an org-level integration secret, like the GitHub connect / LLM key).
+///
+/// Also serves <c>/api/auth/sso/metadata</c>, which is the one route here that is NOT org-scoped: the
+/// addresses an admin registers in their IdP are deployment-wide, and they have to be readable before a
+/// config exists, since that is when they are needed. It lives beside the config it is used to fill in.
 /// </summary>
 internal static class SsoConfigEndpoints
 {
     public static void MapSsoConfigEndpoints(this IEndpointRouteBuilder app)
     {
+        // What the admin registers in their IdP. Deployment-wide, so it is not org-scoped and it answers
+        // before any config exists, which is exactly when it is needed. Any signed-in user may read it:
+        // the values are public by nature (the entity ID rides every AuthnRequest we send), so the only
+        // reason to require a session at all is to keep deployment configuration off an anonymous route.
+        app.MapGet("/api/auth/sso/metadata",
+                Results<Ok<SsoMetadataResponse>, NotFound> (SecretsConfig secrets, IConfiguration cfg) =>
+                    secrets.Enabled
+                        ? TypedResults.Ok(new SsoMetadataResponse(
+                            SsoUrls.RedirectUri(cfg), SsoUrls.SamlEntityId(cfg), SsoUrls.SamlAcsUrl(cfg)))
+                        : TypedResults.NotFound())
+            .WithName("getSsoMetadata").WithTags("Auth").RequireAuthorization();
+
         app.MapGet("/api/orgs/{orgId:long}/sso-config",
                 async Task<Results<Ok<SsoConfigResponse>, NotFound>> (
                     long orgId, SecretsConfig secrets, HttpContext http) =>

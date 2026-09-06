@@ -13,12 +13,14 @@ module Condux
   class Client
     DEFAULT_MAX_RETRIES = 3
 
-    def initialize(dsn:, environment:, release:, max_retries:, transport:, sleep:, clock:)
+    def initialize(dsn:, environment:, release:, max_retries:, transport:, sleep:, clock:,
+                   send_modules: true)
       parsed = Dsn.parse(dsn)
       @transport = EventTransport.new(parsed.store_url, parsed.public_key, max_retries, transport, sleep)
       @environment = environment
       @release = release
       @clock = clock || -> { Time.now }
+      @send_modules = send_modules
     end
 
     # +request+ (url/method/query_string) and +tags+ describe this one event. They are passed here
@@ -43,6 +45,9 @@ module Condux
         "platform" => "ruby",
         "level" => level,
       }.merge(Scope.fields)
+      # The runtime dependency inventory (ADR-0041). Collected HERE rather than at init because
+      # Gem.loaded_specs reports activated gems, and at boot almost nothing is activated yet.
+      event.merge!(Modules.fields(event["timestamp"])) if @send_modules
       event["request"] = request if request && !request.empty?
       # Merged over the ambient tags rather than replacing them, so a per-event tag cannot silently drop
       # the deployment-wide ones.

@@ -94,10 +94,50 @@ It runs before the resolvers that would claim the exception and **never claims i
 error handling is untouched and responses are unchanged. Registering both is correct: they cover
 different halves and will not double report.
 
+**Caller-caused exceptions are not reported.** Running ahead of Spring's own classifier is what lets the
+resolver see an exception a `@ControllerAdvice` would swallow, and it is equally what would otherwise
+show it every malformed request in flight. So it asks the question `DefaultHandlerExceptionResolver`
+would: anything Spring answers with a **4xx** describes what the client sent, not a defect in your code,
+and anyone can send those at will. A malformed JSON body, a wrong content type, a failed validation, an
+unknown path and a bad path variable are all skipped. Anything Spring answers with a 5xx is still
+reported, including `ConversionNotSupportedException` and `HttpMessageNotWritableException`, which are
+your application's own failures even though Spring handles them.
+
 Its only dependency is the servlet API (`jakarta.servlet-api`, `provided` scope), which the container
 supplies at runtime, so the SDK stays runtime dependency-free; the resolver additionally needs Spring,
 which is `provided` and `optional` for the same reason. The filter refuses to be constructed without a
 client, so a missing registration fails at startup rather than on every request.
+
+## Why this SDK reports no dependency inventory
+
+Every other Condux SDK reports the package versions it is running, so a security advisory can be
+answered with "and you are running 2.3.0 in production" rather than only "your build file says so".
+This one does not, and that is a measured decision rather than a missing feature.
+
+Across 30 real dependency jars taken from a Gradle cache:
+
+| Where a jar can state its identity | How many had it |
+| --- | --- |
+| `META-INF/maven/<groupId>/<artifactId>/pom.properties` | 1 of 30 |
+| `Implementation-Version` in the manifest | 29 of 30 |
+
+So a **version** is nearly always available and a **name** almost never is. Advisories for Maven are
+indexed against `groupId:artifactId`, and a manifest does not carry it: `checker-qual-3.41.0.jar`
+announces itself as `checker-qual`, while its coordinate is `org.checkerframework:checker-qual`. Half
+the identity is missing, so a reported entry would match no advisory and the finding would read "not
+observed" for a dependency that is running.
+
+The versions are not dependable either. `xercesImpl-2.12.0.jar` carries twelve `Implementation-Version`
+entries in per-package manifest sections, valued `1.0`, `2.0.2` and `1.4.01` among others, none of
+which is the version of the jar itself.
+
+Condux treats an absent inventory as **unknown**, never as "not affected". Your CVE findings still
+appear; they simply do not claim to know which version is running. That is truthful, where a scan of
+manifests would produce something that looks like an answer and is sometimes wrong.
+
+Reporting an inventory here needs a source that yields a real `groupId:artifactId`: coordinates
+recorded into the artifact at build time, or a framework that already holds them, such as Spring
+Boot's `BuildProperties`. That is a different feature from a classpath scan.
 
 ## Verify your setup
 

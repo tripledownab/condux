@@ -17,6 +17,11 @@ namespace Condux.IntegrationTests;
 /// the code (against a stubbed IdP), asserts the returned email belongs to the org's domain, and JIT
 /// provisions the user into the org before issuing the session. The single-org invariant itself lives in
 /// the shared MembershipProvisioning service (covered via invite-accept); here we prove the SSO wiring.
+///
+/// Also pins who an org's provider may sign in (ADR-0042): an address nobody holds, or one held by a
+/// member the org already has, and nobody else. The org supplies both the provider and the domain, so
+/// this rule is what makes an assertion from it worth honouring. Both directions are covered, because a
+/// rule that refused everything would satisfy a test that only checks the refusal.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -88,6 +93,116 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     }
 
     [Fact]
+    public async Task An_existing_account_the_org_does_not_have_is_refused_and_keeps_its_own_org()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        const string victimEmail = "victim@claimed.test";
+        var app = CreateApp(idpEmail: victimEmail);
+
+        // Someone already holds that address and has an org of their own. Signup alone does not give
+        // them one (ADR-0018 moved that into onboarding), so the test creates it the way onboarding does.
+        var victimClient = app.CreateClient();
+        await ApiAuth.SignUpAsync(victimClient, victimEmail);
+        var own = await victimClient.PostAsJsonAsync("/api/orgs",
+            new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Their own org" });
+        Assert.Equal(HttpStatusCode.Created, own.StatusCode);
+        var ownOrgId = await OnlyOrgIdAsync(victimClient);
+
+        // A different org then claims the domain and points its IdP at that same address.
+        var orgId = await SetUpOrgWithSsoAsync(app, "claimed.test");
+        Assert.NotEqual(ownOrgId, orgId);
+
+        var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var start = await sso.GetAsync($"/api/auth/sso/start?email={victimEmail}");
+        var state = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
+
+        var callback = await sso.GetAsync($"/api/auth/sso/callback?code=any&state={Uri.EscapeDataString(state)}");
+
+        Assert.Equal(HttpStatusCode.Redirect, callback.StatusCode);
+        Assert.Equal("/login?error=sso_invite_required", callback.Headers.Location!.ToString());
+        IEnumerable<string> setCookies =
+            callback.Headers.TryGetValues("Set-Cookie", out var values) ? values : [];
+        Assert.DoesNotContain(setCookies, c => c.StartsWith("condux_session="));
+        Assert.Equal(0, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, victimEmail));
+
+        // Their own org is still there and still theirs, so nothing was moved or deleted on the way.
+        Assert.Equal(ownOrgId, await OnlyOrgIdAsync(victimClient));
+    }
+
+    [Fact]
+    public async Task An_existing_account_with_no_org_at_all_is_refused_rather_than_absorbed()
+    {
+        // Signup creates the account but no org (ADR-0018 moved that into onboarding), so every user
+        // who stops before finishing sits with no membership at all. That has to read as "not a member
+        // of this org", not as "unclaimed": it is the emptiest possible state, not the freest.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        const string strandedEmail = "stranded@orphan.test";
+        var app = CreateApp(idpEmail: strandedEmail);
+        await ApiAuth.SignUpAsync(app.CreateClient(), strandedEmail);
+        var orgId = await SetUpOrgWithSsoAsync(app, "orphan.test");
+
+        var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var start = await sso.GetAsync($"/api/auth/sso/start?email={strandedEmail}");
+        var state = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
+
+        var callback = await sso.GetAsync($"/api/auth/sso/callback?code=any&state={Uri.EscapeDataString(state)}");
+
+        Assert.Equal("/login?error=sso_invite_required", callback.Headers.Location!.ToString());
+        Assert.Equal(0, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, strandedEmail));
+    }
+
+    [Fact]
+    public async Task A_member_provisioned_by_an_earlier_sign_in_can_sign_in_again()
+    {
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        const string email = "bob@repeat.test";
+        var app = CreateApp(idpEmail: email);
+        var orgId = await SetUpOrgWithSsoAsync(app, "repeat.test");
+
+        async Task<HttpResponseMessage> SignInAsync()
+        {
+            var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var start = await sso.GetAsync($"/api/auth/sso/start?email={email}");
+            var state = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
+            return await sso.GetAsync($"/api/auth/sso/callback?code=any&state={Uri.EscapeDataString(state)}");
+        }
+
+        var first = await SignInAsync();
+        Assert.Equal("/", first.Headers.Location!.ToString());
+
+        // The address now exists, which is exactly the case the rule refuses for a stranger. A member
+        // must still get through, or every SSO user would be locked out after their first sign-in.
+        var second = await SignInAsync();
+        Assert.Equal("/", second.Headers.Location!.ToString());
+        Assert.Contains(second.Headers.GetValues("Set-Cookie"), c => c.StartsWith("condux_session="));
+        Assert.Equal(1, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, email));
+    }
+
+    [Fact]
+    public async Task The_advertised_redirect_uri_is_the_one_the_authorize_request_actually_carries()
+    {
+        // The settings tab shows this string and the admin registers it in their IdP, while the server
+        // sends its own in the authorize request and again in the token exchange. If the two ever differ
+        // the admin registered exactly what we told them to and their IdP still rejects it, so the only
+        // useful assertion is that both sides produce the same value.
+        await Migrations.ApplyAllAsync(pg.ConnectionString);
+        var app = CreateApp(idpEmail: "alice@meta.test");
+        await SetUpOrgWithSsoAsync(app, "meta.test");
+
+        var admin = app.CreateClient();
+        await ApiAuth.SignUpAsync(admin);
+        var metadata = await admin.GetFromJsonAsync<JsonElement>("/api/auth/sso/metadata");
+        var advertised = metadata.GetProperty("redirectUri").GetString();
+
+        var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var start = await sso.GetAsync("/api/auth/sso/start?email=alice@meta.test");
+        var sent = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "redirect_uri");
+
+        Assert.Equal(advertised, sent);
+        Assert.EndsWith("/api/auth/sso/callback", sent);
+    }
+
+    [Fact]
     public async Task Start_for_an_unconfigured_domain_bounces_to_login()
     {
         await Migrations.ApplyAllAsync(pg.ConnectionString);
@@ -97,6 +212,16 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         var start = await sso.GetAsync("/api/auth/sso/start?email=nobody@unknown.test");
         Assert.Equal(HttpStatusCode.Redirect, start.StatusCode);
         Assert.Equal("/login?error=sso_not_available", start.Headers.Location!.ToString());
+    }
+
+    // The org this client's user belongs to, asserting there is exactly one (ADR-0018). Reading it back
+    // through the API is what proves the org still exists AND still holds them: a direct row count would
+    // pass just as happily if they had been moved into somebody else's org.
+    private static async Task<long> OnlyOrgIdAsync(HttpClient client)
+    {
+        var orgs = await client.GetFromJsonAsync<JsonElement>("/api/orgs");
+        Assert.Equal(1, orgs.GetArrayLength());
+        return orgs[0].GetProperty("org").GetProperty("id").GetInt64();
     }
 
     // Not static: reaches pg.ConnectionString to set the tier out of band, since POST /api/orgs

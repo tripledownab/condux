@@ -6,6 +6,9 @@ using Condux.Notifications;
 //
 //   dotnet run --project backend/tools/Condux.EmailPreview [recipient@example.com]
 //
+// Set CONDUX_APP_BASE_URL=http://localhost:3000 to make the digest's issue links point at your local
+// dashboard instead of production.
+//
 // Needs a Mailpit (or any SMTP) reachable at MAILPIT_SMTP_HOST:MAILPIT_SMTP_PORT (default localhost:1025).
 // Bring one up either with the dev stack (`pnpm dev:stack`) or standalone:
 //   docker run --rm -p 8025:8025 -p 1025:1025 axllent/mailpit
@@ -20,7 +23,10 @@ using var sender = new SystemSmtpSender(options);
 
 // A realistic weekly digest, rendered through the real builders (ADR-0031) so the preview exercises the
 // actual subject/body/HTML, not a hand-written mock.
-const string weeklyUrl = "https://app.condux.ai";
+// The digest links each top issue, so this decides where those links land. Overridable because the
+// default sends you to production: set CONDUX_APP_BASE_URL=http://localhost:3000 to click through to the
+// dashboard you are actually running.
+var weeklyUrl = Environment.GetEnvironmentVariable("CONDUX_APP_BASE_URL") ?? "https://app.condux.ai";
 var weekly = new WeeklySummary(
     OrgId: 1, OrgName: "Acme",
     WeekStart: DateTimeOffset.UtcNow.AddDays(-7), WeekEnd: DateTimeOffset.UtcNow,
@@ -28,9 +34,9 @@ var weekly = new WeeklySummary(
     NewIssues: 12, Regressions: 3, Resolved: 8, OpenIssues: 41, UsersAffected: 1204,
     TopIssues:
     [
-        new TopIssue("TypeError: undefined is not a function", 4231),
-        new TopIssue("NullReferenceException in CheckoutService.Pay", 2890),
-        new TopIssue("Timeout calling the payments provider", 1502),
+        new TopIssue(Guid.Parse("11111111-1111-1111-1111-111111111111"), "TypeError: undefined is not a function", 4231),
+        new TopIssue(Guid.Parse("22222222-2222-2222-2222-222222222222"), "NullReferenceException in CheckoutService.Pay", 2890),
+        new TopIssue(Guid.Parse("33333333-3333-3333-3333-333333333333"), "Timeout calling the payments provider", 1502),
     ],
     Fixes: new WeeklyFixActivity(Proposed: 5, PrsOpened: 4, PrsMerged: 2, AutoResolved: 1));
 

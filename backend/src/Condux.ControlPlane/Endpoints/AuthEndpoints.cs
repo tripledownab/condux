@@ -97,9 +97,23 @@ internal static class AuthEndpoints
                     var user = await users.GetByIdAsync(userId, http.RequestAborted);
                     return TypedResults.Ok(new AuthUserResponse(
                         userId, OrgAuthorization.CurrentUserEmail(http.User),
-                        PlatformAdmin.IsPlatformAdmin(http.User), user?.OnboardedAt is not null, impersonation));
+                        PlatformAdmin.IsPlatformAdmin(http.User), user?.OnboardedAt is not null, impersonation,
+                        WeeklySummaryOptOut: user?.WeeklySummaryOptOut ?? false));
                 })
             .WithName("me").WithTags("Auth").RequireAuthorization();
+
+        // A member's own digest preference. On the user rather than the org, because the org endpoint
+        // decides whether the digest runs at all and on what schedule, while this decides only whether
+        // this one inbox receives it. Any signed-in user may set their own; there is no role to check.
+        app.MapPut("/api/auth/me/weekly-summary",
+                async Task<NoContent> (
+                    UpdateWeeklySummarySubscriptionRequest request, HttpContext http, UserRepository users) =>
+                {
+                    await users.SetWeeklySummaryOptOutAsync(
+                        OrgAuthorization.CurrentUserId(http.User), request.OptOut, http.RequestAborted);
+                    return TypedResults.NoContent();
+                })
+            .WithName("updateWeeklySummarySubscription").WithTags("Auth").RequireAuthorization();
     }
 
 }

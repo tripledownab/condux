@@ -80,7 +80,7 @@ public sealed class WeeklySummaryComposer(
         var summaries = await issues.SummariesByInternalIdsAsync(topIds, cancellationToken);
         return topIds
             .Where(summaries.ContainsKey)
-            .Select(id => new TopIssue(summaries[id].Title, thisWeekByIssue[id]))
+            .Select(id => new TopIssue(summaries[id].Id, summaries[id].Title, thisWeekByIssue[id]))
             .ToList();
     }
 }

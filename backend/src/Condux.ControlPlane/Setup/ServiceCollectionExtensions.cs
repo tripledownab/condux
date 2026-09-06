@@ -185,12 +185,18 @@ internal static class ServiceCollectionExtensions
 
         // Event store (ClickHouse) for the issue-detail view — a resilient typed HttpClient
         // (retry/timeout/circuit-breaker via IHttpClientFactory + the standard resilience handler).
-        services.AddClickHouseEventReader(
+        services.AddClickHouseReader<ClickHouseEventReader>(
             cfg.Require("CONDUX_CLICKHOUSE_URL"),
             cfg.Require("CONDUX_CLICKHOUSE_USER"),
             cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));
         // The exact per-issue histogram (issue_stats_1h rollup, #102), same resilient client shape.
-        services.AddClickHouseIssueStatsReader(
+        services.AddClickHouseReader<ClickHouseIssueStatsReader>(
+            cfg.Require("CONDUX_CLICKHOUSE_URL"),
+            cfg.Require("CONDUX_CLICKHOUSE_USER"),
+            cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));
+        // The runtime dependency inventory (ADR-0041), which tells the CVE findings surface whether a
+        // vulnerable package was actually seen running.
+        services.AddClickHouseReader<ClickHouseReleaseModuleReader>(
             cfg.Require("CONDUX_CLICKHOUSE_URL"),
             cfg.Require("CONDUX_CLICKHOUSE_USER"),
             cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));

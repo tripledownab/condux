@@ -10,7 +10,7 @@ Services (in-cluster):
 
 Ingress:
   - Dashboard + API: https://{{ .Values.ingress.appHost }}
-  - Ingest (SDK /store/ + OTLP /v1/logs): https://{{ .Values.ingress.ingestHost }}
+  - Ingest (SDK /store/ + OTLP /v1/logs): {{ .Values.config.ingestScheme }}://{{ include "condux.ingestHost" . }}
 {{- else }}
 
 Ingress is disabled — reach the services via port-forward or add your own Ingress/Gateway.

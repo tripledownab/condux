@@ -21,8 +21,11 @@ spec:
       {{- end }}
       containers:
         - name: web
-          # The dashboard bakes its API base URL at build (NEXT_PUBLIC_CONDUX_API_URL); build the web
-          # image with your domain or serve it same-origin behind the ingress.
+          # The dashboard bakes two URLs at build time, so neither can be set here: its API base
+          # (NEXT_PUBLIC_CONDUX_API_URL) and the ingest URL it rebuilds a key's DSN from
+          # (NEXT_PUBLIC_CONDUX_INGEST_URL, which must match config.ingestHost or the DSN the UI
+          # displays points somewhere the server never minted). Build the web image with your domains,
+          # or serve the API same-origin behind the ingress.
           image: {{ include "condux.image" (dict "root" . "name" .Values.image.web) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:

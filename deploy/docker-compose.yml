@@ -251,6 +251,11 @@ services:
       # any eager schema use) races the one-shot postgres-init and fails on a not-yet-applied column.
       postgres-init: { condition: service_completed_successfully }
       clickhouse: { condition: service_started }
+      # Wait for the ClickHouse schema too, exactly as these services already wait for
+      # postgres-init: a started server is not an applied schema. Without this a deploy that
+      # adds a ClickHouse migration races it, and the loser writes to a table that does not
+      # exist yet.
+      clickhouse-init: { condition: service_completed_successfully }
       # Note: no minio dependency — the S3 client connects lazily on first upload, and minio is a dev-only
       # (profile-gated) service, so a hard dependency would make the prod overlay an invalid compose project.
 
@@ -283,6 +288,12 @@ services:
   consumer:
     build: { context: .., dockerfile: backend/Dockerfile, target: consumer }
     init: true
+    # Give the drain loop time to write what it has buffered before SIGKILL. It flushes ClickHouse on
+    # shutdown, bounded at 5s, and Kafka offsets are auto-committed regardless, so rows killed in the
+    # buffer are lost rather than replayed. This must be stated rather than inherited: the daemon default
+    # is not portable (measured at 1s on a local Docker Desktop, where the flush would rarely finish),
+    # and the process cannot read its own grace period to adapt.
+    stop_grace_period: 20s
     environment:
       CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
       # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
@@ -318,6 +329,11 @@ services:
       postgres-init: { condition: service_completed_successfully }
       redpanda: { condition: service_healthy }
       clickhouse: { condition: service_started }
+      # Wait for the ClickHouse schema too, exactly as these services already wait for
+      # postgres-init: a started server is not an applied schema. Without this a deploy that
+      # adds a ClickHouse migration races it, and the loser writes to a table that does not
+      # exist yet.
+      clickhouse-init: { condition: service_completed_successfully }
 
   # The Conductor (AI fix engine): drains the fix-request topic and runs each job through the fake
   # provider (no real LLM/GitHub yet). Idle until the RequestFix endpoint publishes jobs.
@@ -367,6 +383,11 @@ services:
       postgres-init: { condition: service_completed_successfully }
       redpanda: { condition: service_healthy }
       clickhouse: { condition: service_started }
+      # Wait for the ClickHouse schema too, exactly as these services already wait for
+      # postgres-init: a started server is not an applied schema. Without this a deploy that
+      # adds a ClickHouse migration races it, and the loser writes to a table that does not
+      # exist yet.
+      clickhouse-init: { condition: service_completed_successfully }
 
   # One-shot: apply the ClickHouse schema once the server is up.
   clickhouse-init:

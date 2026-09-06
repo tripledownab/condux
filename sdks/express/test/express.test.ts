@@ -74,3 +74,76 @@ test("a request Express cannot describe adds no request field", async () => {
   // Absence, not an empty object: an event with nothing to say about the request keeps its plain shape.
   assert.equal("request" in last(), false);
 });
+
+// --- Caller-caused errors (ADR-0044) -----------------------------------------------------------
+//
+// These assert an ABSENCE, so each one first proves the recorder would have seen a report, by sending a
+// plain error through the same handler and finding it. Without that, a broken recorder passes them all.
+
+/** What body-parser actually attaches, measured against a real Express app rather than guessed. */
+function bodyParserError(name: string, status: number, type: string) {
+  const error = new Error(`${type} failed`);
+  error.name = name;
+  return Object.assign(error, { status, statusCode: status, expose: true, type });
+}
+
+test("a malformed JSON body is passed on but not filed as an application defect", async () => {
+  const { fetch, last } = recordingFetch();
+  init({ dsn: DSN, fetch });
+
+  // Control: the recorder is working and this handler does report.
+  conduxErrorHandler()(new Error("a real fault"), {}, {}, () => {});
+  await flush();
+  assert.equal(last().exception.values[0].value, "a real fault");
+
+  let forwarded: unknown;
+  conduxErrorHandler()(bodyParserError("SyntaxError", 400, "entity.parse.failed"), {}, {}, (err) => {
+    forwarded = err;
+  });
+  await flush();
+
+  // Still the control event: nothing new reached the relay.
+  assert.equal(last().exception.values[0].value, "a real fault");
+  // And the app's own error handling still runs, so its 400 response is unchanged.
+  assert.equal((forwarded as { status: number }).status, 400);
+});
+
+test("a body over the parser's limit is not filed either", async () => {
+  const { fetch, last } = recordingFetch();
+  init({ dsn: DSN, fetch });
+
+  conduxErrorHandler()(new Error("a real fault"), {}, {}, () => {});
+  await flush();
+
+  conduxErrorHandler()(bodyParserError("PayloadTooLargeError", 413, "entity.too.large"), {}, {}, () => {});
+  await flush();
+
+  assert.equal(last().exception.values[0].value, "a real fault");
+});
+
+test("a 5xx carrying a status is still the application's defect", async () => {
+  const { fetch, last } = recordingFetch();
+  init({ dsn: DSN, fetch });
+
+  // The rule is a 4xx RANGE, not "has a status". A 503 from the app is the app's problem, and widening
+  // this to any status would silently stop reporting them.
+  conduxErrorHandler()(bodyParserError("ServiceUnavailableError", 503, "upstream.down"), {}, {}, () => {});
+  await flush();
+
+  assert.equal(last().exception.values[0].type, "ServiceUnavailableError");
+  assert.equal(last().exception.values[0].mechanism.handled, false);
+});
+
+test("statusCode alone is enough, since not every thrower sets both", async () => {
+  const { fetch, last } = recordingFetch();
+  init({ dsn: DSN, fetch });
+
+  conduxErrorHandler()(new Error("a real fault"), {}, {}, () => {});
+  await flush();
+
+  const error = Object.assign(new Error("unsupported media type"), { statusCode: 415 });
+  conduxErrorHandler()(error, {}, {}, () => {});
+  await flush();
+
+  assert.equal(last().exception.values[0].value, "a real fault");
+});

@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Text;
-using System.Text.Json;
 
 namespace Condux.Storage.ClickHouse;
 
@@ -21,28 +19,8 @@ public sealed record IssueStatsRow(
 /// </summary>
 public sealed class ClickHouseIssueStatsWriter(HttpClient http)
 {
-    public async Task InsertAsync(IReadOnlyList<IssueStatsRow> rows, CancellationToken cancellationToken = default)
-    {
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        var body = new StringBuilder();
-        foreach (var row in rows)
-        {
-            body.Append(JsonSerializer.Serialize(row)).Append('\n');
-        }
-
-        var url = $"/?query={Uri.EscapeDataString("INSERT INTO condux.issue_stats_1h FORMAT JSONEachRow")}";
-        using var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(body.ToString(), Encoding.UTF8),
-        };
-
-        using var resp = await http.SendAsync(req, cancellationToken);
-        resp.EnsureSuccessStatusCode();
-    }
+    public Task InsertAsync(IReadOnlyList<IssueStatsRow> rows, CancellationToken cancellationToken = default) =>
+        ClickHouseInsert.RowsAsync(http, "condux.issue_stats_1h", rows, cancellationToken);
 
     /// <summary>One counting row for an event seen at <paramref name="seenAt"/> (UTC hour bucket).</summary>
     public static IssueStatsRow ToRow(string projectId, ulong issueId, DateTimeOffset seenAt)

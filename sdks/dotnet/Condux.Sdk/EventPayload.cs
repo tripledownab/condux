@@ -21,6 +21,14 @@ internal sealed record EventPayload
 
     public string? ServerName { get; init; }
 
+    /// <summary>
+    /// The runtime dependency inventory (ADR-0041). Null on the events that do not carry it, and the
+    /// serializer omits nulls, so an event without one keeps its exact previous wire shape. The
+    /// snake_case policy this record is serialized with turns the name into "modules", which is the
+    /// key the relay reads.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Modules { get; init; }
+
     public string? Message { get; init; }
 
     public ExceptionEnvelope? Exception { get; init; }

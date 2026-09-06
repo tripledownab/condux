@@ -42,6 +42,9 @@ type event struct {
 	Contexts    map[string]map[string]any `json:"contexts,omitempty"`
 	Breadcrumbs *breadcrumbs              `json:"breadcrumbs,omitempty"`
 	Request     *Request                  `json:"request,omitempty"`
+	// Modules is the runtime dependency inventory (ADR-0041): the module versions built into this
+	// binary. omitempty, so an event that carries none keeps its exact previous wire shape.
+	Modules map[string]string `json:"modules,omitempty"`
 }
 
 // Request is the request an event happened during. The JSON names are the Sentry store shape the relay

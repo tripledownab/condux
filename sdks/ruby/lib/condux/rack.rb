@@ -11,8 +11,15 @@ module Condux
     #   require "condux/rack"
     #   use Condux::Rack::CaptureExceptions
     #
-    #   # Rails (config/application.rb)
-    #   config.middleware.use "Condux::Rack::CaptureExceptions"
+    #   # Rails (config/application.rb), the require at the top of the file
+    #   require "condux/rack"
+    #   config.middleware.use Condux::Rack::CaptureExceptions
+    #
+    # PASS THE CLASS, NOT ITS NAME AS A STRING. Rails builds each entry with `klass.new(app)`, so a
+    # String argument aborts boot with `undefined method 'new' for an instance of String`. Rails
+    # deprecated string middleware in 5.0 and removed the constantize in 5.1, so there is no supported
+    # version where the string form works. The require is needed too: Bundler loads `condux`, which
+    # does not define `Condux::Rack`, and without it boot fails on an uninitialized constant.
     #
     # ON RAILS, USE `config.middleware.use` AND NOTHING ELSE.
     #
@@ -36,10 +43,33 @@ module Condux
         # left to process state.
         Condux.request_scope do
           @app.call(env)
-        rescue StandardError => e # report anything the app raises, then re-raise
-          Condux.capture_exception(e, handled: false, request: self.class.request_fields(env))
+        rescue StandardError => e # report what the app got wrong, then re-raise whatever it was
+          unless self.class.caller_caused?(e)
+            Condux.capture_exception(e, handled: false, request: self.class.request_fields(env))
+          end
           raise
         end
+      end
+
+      # True when the framework classifies this exception as the CALLER's mistake, not the app's.
+      #
+      # Rails keeps that classification in ActionDispatch::ExceptionWrapper.rescue_responses, a public
+      # registry of exception class name to status. Asking it means there is no list of our own to keep
+      # extending, and `config.action_dispatch.rescue_responses` merges into the same registry, so an
+      # app's own classifications are honoured with no API from us.
+      #
+      # The registry defaults to :internal_server_error, so anything Rails does not recognise still
+      # reports: the rule fails toward reporting rather than toward silence. Measured against Rails
+      # 8.1.3.1, it answers 500 for an unknown class, an empty string and nil, and raises for none of
+      # them, which is why there is no defensive rescue here to go stale.
+      #
+      # Bare Rack has no equivalent registry, so with ActionDispatch absent nothing is filtered and the
+      # behaviour is exactly as before. See ADR-0044.
+      def self.caller_caused?(error)
+        return false unless defined?(ActionDispatch::ExceptionWrapper)
+
+        status = ActionDispatch::ExceptionWrapper.status_code_for_exception(error.class.name)
+        status.is_a?(Integer) && status >= 400 && status < 500
       end
 
       # The request, in the Sentry store shape the relay parses.

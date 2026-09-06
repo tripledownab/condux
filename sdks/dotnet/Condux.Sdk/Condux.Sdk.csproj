@@ -17,6 +17,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- So the inventory's deps-file parser can be tested directly. Collect() cannot run under a test
+         host, where the entry assembly is the host rather than the application. -->
+    <InternalsVisibleTo Include="Condux.Sdk.Tests" />
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
