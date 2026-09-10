@@ -62,7 +62,6 @@ public sealed class IssueEventsApiTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Events_paginate_newest_first_with_hasMore_and_the_detail_stays_slim()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, publicId) = await SeedAsync(5);
         var basePath = $"/api/projects/{projectId}/issues/{publicId}/events";
 
@@ -83,7 +82,6 @@ public sealed class IssueEventsApiTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Events_rejects_a_bad_page()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, publicId) = await SeedAsync(1);
         var resp = await client.GetAsync($"/api/projects/{projectId}/issues/{publicId}/events?limit=0");
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);

@@ -12,7 +12,7 @@ namespace Condux.ControlPlane.Endpoints;
 /// its plan, and open the Stripe billing portal for anything deeper (invoices, refunds, hard cancel).
 /// Every action drives the Stripe API only; the existing <see cref="BillingEndpoints"/> webhook remains
 /// the single writer of <c>orgs.tier</c>, so this never touches the tier directly (ADR-0026 preserved).
-/// All routes 404 when Stripe is not configured, mirroring the tenant billing surface.
+/// All routes 404 when Stripe is not configured, following the tenant billing surface.
 /// </summary>
 internal static class AdminBillingEndpoints
 {

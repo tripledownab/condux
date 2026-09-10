@@ -1,17 +1,19 @@
 using System.Text.Json;
 using Condux.ControlPlane.Auth;
-using Condux.ControlPlane.SourceMaps;
 using Condux.Core.Auth;
-using Condux.Storage.ClickHouse;
 using Condux.Storage.Postgres;
 
 namespace Condux.ControlPlane.Mcp;
 
 /// <summary>
 /// The MCP server (ADR-0029): one JSON-RPC 2.0 endpoint an AI agent connects to, authed by a per-project
-/// MCP token (<c>Authorization: Bearer</c>). Read-only — it exposes the <see cref="McpTools"/> over the
-/// token's project and nothing else. Streamable-HTTP shaped: a POST of one request returns one JSON
-/// response (no SSE/streaming in v1); a notification (no id) is acknowledged with 202.
+/// MCP token (<c>Authorization: Bearer</c>). It exposes the <see cref="McpToolCatalog"/> over the token's
+/// project and nothing else. Streamable-HTTP shaped: a POST of one request returns one JSON response (no
+/// SSE/streaming in v1); a notification (no id) is acknowledged with 202.
+///
+/// The token resolves to a project AND a capability (ADR-0046), which is what decides whether the caller
+/// sees the triage tools at all. A token minted before that change reads as <c>read</c>, so it behaves
+/// exactly as it did.
 /// </summary>
 internal static class McpEndpoints
 {
@@ -22,18 +24,18 @@ internal static class McpEndpoints
     public static void MapMcpEndpoints(this IEndpointRouteBuilder app) =>
         app.MapPost("/api/mcp", HandleAsync).WithName("mcp").ExcludeFromDescription();
 
-    private static async Task HandleAsync(
-        HttpContext http, McpTokenRepository tokens, IssueRepository issues, ClickHouseEventReader events,
-        EventSymbolication symbolication)
+    private static async Task HandleAsync(HttpContext http, McpTokenRepository tokens, McpTools tools)
     {
         // Auth is the tenant boundary: a live per-project MCP token presented as a bearer resolves to the
         // one project every tool then reads. No/invalid token → 401, before any method runs.
         if (BearerToken.From(http) is not { } raw ||
-            await tokens.ResolveProjectAsync(McpTokens.HashToken(raw)) is not { } projectId)
+            await tokens.ResolveIdentityAsync(McpTokens.HashToken(raw), http.RequestAborted) is not { } token)
         {
             http.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
         }
+        var context = new McpCallContext(
+            token.ScopeId, token.TokenId, (McpCapability)token.Capability);
 
         using var doc = await TryParseAsync(http);
         if (doc is null)
@@ -73,10 +75,10 @@ internal static class McpEndpoints
                 await WriteResult(http, id, new { });
                 break;
             case "tools/list":
-                await WriteResult(http, id, new { tools = McpTools.Definitions });
+                await WriteResult(http, id, new { tools = McpToolCatalog.DefinitionsFor(context.Capability) });
                 break;
             case "tools/call":
-                await CallToolAsync(http, id.Value, root, projectId, issues, events, symbolication);
+                await CallToolAsync(http, id.Value, root, context, tools);
                 break;
             default:
                 await WriteError(http, id, -32601, "Method not found");
@@ -85,8 +87,7 @@ internal static class McpEndpoints
     }
 
     private static async Task CallToolAsync(
-        HttpContext http, JsonElement id, JsonElement root, long projectId,
-        IssueRepository issues, ClickHouseEventReader events, EventSymbolication symbolication)
+        HttpContext http, JsonElement id, JsonElement root, McpCallContext context, McpTools tools)
     {
         var prms = root.TryGetProperty("params", out var p) ? p : default;
         var name = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("name", out var n)
@@ -100,8 +101,7 @@ internal static class McpEndpoints
         var args = prms.TryGetProperty("arguments", out var a) ? a : default;
         try
         {
-            var data = await McpTools.CallAsync(
-                name, args, projectId, issues, events, symbolication, http.RequestAborted);
+            var data = await tools.CallAsync(name, args, context, http.RequestAborted);
             await WriteResult(http, id, new
             {
                 content = new[] { Text(JsonSerializer.Serialize(data, JsonOpts)) },

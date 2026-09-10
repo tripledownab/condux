@@ -32,8 +32,6 @@ public sealed class McpSymbolicationApiTest(PostgresFixture pg, ClickHouseFixtur
     [Fact]
     public async Task EventTools_deminify_the_stored_frame()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         const string objectKey = "sourcemaps/by-debug-id/abc123";
         var store = new MapStore(objectKey, Encoding.UTF8.GetBytes(Map));
         var app = ControlPlaneApp.Create(pg.ConnectionString, ch, configure: b =>

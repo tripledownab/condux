@@ -1,7 +1,8 @@
 namespace Condux.Core.Auth;
 
 /// <summary>
-/// The read-only credential an MCP client presents to reach one project's issues (ADR-0029).
+/// The credential an MCP client presents to reach one project's issues (ADR-0029). What it may do
+/// beyond reading is the capability stored beside it (ADR-0046), not a property of the token itself.
 ///
 /// Minting, hashing and shape-checking are <see cref="ScopedToken"/>'s; this type only names the prefix.
 /// </summary>

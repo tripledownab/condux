@@ -41,7 +41,6 @@ public sealed class RelayPostgresAuthTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task ApiMintedDsn_AuthenticatesAtRelay_WrongKeyRejected()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var api = ControlPlane();
         await ApiAuth.SignUpAsync(api); // authenticate; the caller owns the org it creates
 

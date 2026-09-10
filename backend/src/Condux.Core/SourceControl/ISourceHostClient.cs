@@ -13,7 +13,7 @@ public sealed record SuspectCommit(string Sha, string Subject, string? Author, s
 /// The git operations a Conductor fix run needs, over one hosted source provider — GitHub today, GitLab
 /// and others later (#145). Every method takes a per-call installation/access token that the implementation
 /// never stores. Adding a provider is a new implementation of this interface; nothing above it (the fix
-/// gateway, the endpoints) hard-codes a provider. Mirrors the BYO-key <c>IModelClient</c> seam.
+/// gateway, the endpoints) hard-codes a provider. Built like the BYO-key <c>IModelClient</c> seam.
 /// </summary>
 public interface ISourceHostClient
 {

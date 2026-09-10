@@ -9,7 +9,7 @@ namespace Condux.Core.Billing;
 /// body: the <c>Stripe-Signature</c> header carries a timestamp <c>t</c> and one or more <c>v1</c> HMAC-
 /// SHA256 hex signatures over <c>"{t}.{payload}"</c>. This checks the signature (constant-time) and that
 /// the timestamp is within a tolerance so a captured request can't be replayed later. Pure and
-/// dependency-free — no Stripe SDK — so the whole check is unit-tested in CI (mirrors how the GitHub
+/// dependency-free (no Stripe SDK), so the whole check is unit-tested in CI, as the GitHub
 /// webhook HMAC is hand-rolled in Condux.GitHub).
 /// </summary>
 public static class StripeSignature

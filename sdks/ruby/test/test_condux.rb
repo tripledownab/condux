@@ -5,7 +5,7 @@ require "json"
 require_relative "../lib/condux"
 
 # Proves the emitted JSON is the Sentry store wire shape (field by field) and the transport is resilient,
-# with an injected transport + sleep so there is no real network or waiting. Mirrors the JS/Python suites.
+# with an injected transport + sleep so there is no real network or waiting. Built like the JS/Python suites.
 class ConduxTest < Minitest::Test
   DSN = "https://testkey@ingest.test/proj-uuid"
 

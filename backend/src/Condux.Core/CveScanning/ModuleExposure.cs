@@ -79,7 +79,9 @@ public static class ModuleExposures
     /// case insensitively because a scanner reports a registry's spelling and an SDK reports the
     /// runtime's.</para>
     ///
-    /// <para><b>The package half is enforced twice and both must agree.</b> The reader also filters
+    /// <para><b>The package half is enforced twice and both must agree</b> (pinned by
+    /// ModuleExposureTests here and ReleaseModuleFlowTest at the reader, each asserting the same
+    /// case-insensitive answer). The reader also filters
     /// server-side on <c>lower(package)</c>, because fetching a project's entire inventory to match it
     /// here would be far worse. That filter is the coarse one and this is the exact one, so loosening
     /// the rule here alone changes nothing: the extra rows never arrive. Change both or neither.</para>

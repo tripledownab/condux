@@ -45,7 +45,7 @@ builder.Services.AddSingleton(new RunnerOptions(
         builder.Configuration.GetValue("CONDUX_RUNNER_POLL_SECONDS", defaultValue: 5)),
     ErrorBackoff: TimeSpan.FromSeconds(15)));
 
-// Provider selection mirrors the hosted Conductor, minus every backend that needs our infrastructure:
+// Provider selection follows the hosted Conductor, minus every backend that needs our infrastructure:
 //   fake      — the deterministic FakeFixProvider. Calls no model and opens no PR, so a customer can
 //               verify the lease path end to end before handing over any credential.
 //   anthropic — the real thing, against the customer's own key and their own source-host token.

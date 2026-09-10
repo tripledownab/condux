@@ -83,7 +83,9 @@ public class AnthropicMessagesClientTests
     public async Task An_unparseable_error_body_still_surfaces_raw()
     {
         // The fallback for a proxy's HTML error page or a half-written body: show what came back rather
-        // than replacing the real problem with a JSON parse complaint.
+        // than replacing the real problem with a JSON parse complaint. This is safe to keep because the
+        // failure text lands in an audit row operators read and customers do not: FixAuditEntry does not
+        // carry that column. If that ever changes, this test is the one that should stop being true.
         var handler = new StubHandler(HttpStatusCode.BadGateway, "<html>upstream timeout</html>");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(

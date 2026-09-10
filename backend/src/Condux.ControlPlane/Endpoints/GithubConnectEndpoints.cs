@@ -14,14 +14,17 @@ namespace Condux.ControlPlane.Endpoints;
 /// user authorization instead always returns to us, and the user's own token tells us which installations
 /// they can reach — so a fresh install and a re-link are the same flow.
 ///
-/// Opt-in on top of the App config (<see cref="GitHubAppConfig.UserOAuthEnabled"/>): without the client
-/// secret and callback URL, connect falls back to the plain install URL.
+/// An installation is linked here, or in <see cref="GithubSelectionEndpoints"/> when the user had to
+/// choose between several, and nowhere else (ADR-0045). Both sit downstream of the one read that says
+/// which installations this person can reach. The Setup URL redirects back into this flow rather than
+/// writing, because the id in its query is not evidence that the caller may act for that installation and
+/// the user's token is. So the client secret and callback URL are required config rather than optional
+/// extras: see <see cref="GitHubAppConfig"/>.
 /// </summary>
 internal static class GithubConnectEndpoints
 {
-    // The connect state is valid 15 minutes: long enough to install, short enough to limit replay. The
-    // selection token outlives it slightly because the user has to read a list and choose.
-    private static readonly TimeSpan StateLifetime = TimeSpan.FromMinutes(15);
+    // The selection token outlives the connect state (GithubConnectFlow) slightly, because the user has to
+    // read a list and choose.
     private static readonly TimeSpan SelectionLifetime = TimeSpan.FromMinutes(30);
 
     public static void MapGithubConnectEndpoints(this IEndpointRouteBuilder app)
@@ -30,18 +33,18 @@ internal static class GithubConnectEndpoints
         // return the URL to send the browser to. Started from inside a project so it lands back there. Admin+.
         app.MapPost("/api/orgs/{orgId:long}/github/connect",
                 Results<Ok<GithubConnectResponse>, NotFound> (
-                    long orgId, GithubConnectRequest req, GitHubAppConfig config, GitHubUserOAuth oauth) =>
+                    long orgId, GithubConnectRequest req, GitHubAppConfig config, GitHubUserOAuth oauth,
+                    HttpContext http) =>
                 {
                     if (!config.Enabled)
                     {
                         return TypedResults.NotFound();
                     }
 
-                    var state = MintState(orgId, SafeReturnPath(req.ReturnPath), config);
+                    var state = GithubConnectFlow.Start(
+                        http, orgId, SafeReturnPath(req.ReturnPath), config, installed: false);
                     return TypedResults.Ok(new GithubConnectResponse(
-                        config.UserOAuthEnabled
-                            ? oauth.AuthorizeUrl(config.Options!.ClientId, config.OAuthRedirectUri!, state)
-                            : InstallUrl(config, state)));
+                        oauth.AuthorizeUrl(config.Options!.ClientId, config.OAuthRedirectUri!, state)));
                 })
             .WithName("githubConnect").WithTags("GitHub")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
@@ -53,14 +56,12 @@ internal static class GithubConnectEndpoints
                     GitHubAppConfig config, GitHubUserOAuth oauth,
                     GithubInstallationRepository installations, IConfiguration cfg, HttpContext http) =>
                 {
-                    if (!config.UserOAuthEnabled)
+                    if (!config.Enabled)
                     {
                         return TypedResults.NotFound();
                     }
 
-                    if (GithubConnectState.Validate(
-                            http.Request.Query["state"], DateTimeOffset.UtcNow, config.Options!.WebhookSecret)
-                        is not { } state)
+                    if (GithubConnectFlow.Verify(http, config) is not { } state)
                     {
                         // No verified state means no org to act for, so there is nowhere safe to return to.
                         return TypedResults.Redirect(DashboardUrl(cfg, "/", "failed"));
@@ -70,7 +71,7 @@ internal static class GithubConnectEndpoints
                     var userToken = string.IsNullOrEmpty(code)
                         ? null
                         : await oauth.ExchangeCodeAsync(
-                            config.Options.ClientId, config.ClientSecret!, config.OAuthRedirectUri!,
+                            config.Options!.ClientId, config.ClientSecret!, config.OAuthRedirectUri!,
                             code, http.RequestAborted);
                     if (userToken is null)
                     {
@@ -88,31 +89,32 @@ internal static class GithubConnectEndpoints
                         return TypedResults.Redirect(DashboardUrl(cfg, state.ReturnPath, "failed"));
                     }
 
-                    // Authorized but never installed: send them on to install it. GitHub's Setup URL finishes
-                    // the link, and the state we already minted is still valid for that leg.
+                    // Nothing reachable, which means one of two things the API cannot tell apart. Coming
+                    // from connect it means the app is not installed yet, so send them to install it (a
+                    // fresh state, because this one's cookie is now spent). Coming back from the Setup URL
+                    // it means GitHub is holding the install for an organization owner to approve, and
+                    // sending them to install it again would loop forever.
                     if (reachable.Count == 0)
                     {
-                        return TypedResults.Redirect(InstallUrl(
-                            config, MintState(state.OrgId, state.ReturnPath, config)));
+                        return TypedResults.Redirect(state.Installed
+                            ? DashboardUrl(cfg, state.ReturnPath, "pending")
+                            : InstallUrl(config, GithubConnectFlow.Start(
+                                http, state.OrgId, state.ReturnPath, config, installed: false)));
                     }
 
                     if (reachable.Count == 1)
                     {
                         var only = reachable[0];
-                        if (await LinkedElsewhereAsync(installations, only.InstallationId, state.OrgId, http))
-                        {
-                            return TypedResults.Redirect(DashboardUrl(cfg, state.ReturnPath, "taken"));
-                        }
-
-                        await installations.LinkAsync(
+                        var linked = await installations.LinkAsync(
                             only.InstallationId, state.OrgId, only.AccountLogin, http.RequestAborted);
-                        return TypedResults.Redirect(DashboardUrl(cfg, state.ReturnPath, "connected"));
+                        return TypedResults.Redirect(
+                            DashboardUrl(cfg, state.ReturnPath, linked ? "connected" : "taken"));
                     }
 
                     var selection = GithubSelectionToken.Create(
                         state.OrgId,
                         [.. reachable.Select(i => new GithubSelectionCandidate(i.InstallationId, i.AccountLogin))],
-                        DateTimeOffset.UtcNow.Add(SelectionLifetime), config.Options.WebhookSecret);
+                        DateTimeOffset.UtcNow.Add(SelectionLifetime), config.Options!.WebhookSecret);
                     return TypedResults.Redirect(
                         $"{DashboardUrl(cfg, state.ReturnPath, "select")}"
                         + $"&selection={Uri.EscapeDataString(selection)}");
@@ -145,76 +147,7 @@ internal static class GithubConnectEndpoints
             .WithName("disconnectGithub").WithTags("GitHub")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
 
-        // The accounts behind a selection token, so the dashboard can render the choice. Reading it here
-        // rather than in the browser keeps the signature the only thing that decides what the token says.
-        app.MapGet("/api/orgs/{orgId:long}/github/selection",
-                Results<Ok<GithubSelectionResponse>, BadRequest<ErrorResponse>, NotFound> (
-                    long orgId, string token, GitHubAppConfig config) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var selection = GithubSelectionToken.Validate(
-                        token, DateTimeOffset.UtcNow, config.Options!.WebhookSecret);
-                    return selection is null || selection.OrgId != orgId
-                        ? TypedResults.BadRequest(new ErrorResponse("invalid_selection"))
-                        : TypedResults.Ok(new GithubSelectionResponse(
-                            [.. selection.Candidates.Select(c =>
-                                new GithubSelectionOption(c.InstallationId, c.AccountLogin))]));
-                })
-            .WithName("githubSelection").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
-
-        // Link the installation the user picked. Only ids inside the signed token are accepted, so the
-        // choice is bounded by what GitHub told us that user can reach. Admin+.
-        app.MapPost("/api/orgs/{orgId:long}/github/select",
-                async Task<Results<NoContent, BadRequest<ErrorResponse>, Conflict<ErrorResponse>, NotFound>> (
-                    long orgId, GithubSelectRequest req, GitHubAppConfig config,
-                    GithubInstallationRepository installations, HttpContext http) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var selection = GithubSelectionToken.Validate(
-                        req.Selection, DateTimeOffset.UtcNow, config.Options!.WebhookSecret);
-                    var chosen = selection?.OrgId == orgId
-                        ? selection.Candidates.FirstOrDefault(c => c.InstallationId == req.InstallationId)
-                        : null;
-                    if (chosen is null)
-                    {
-                        return TypedResults.BadRequest(new ErrorResponse("invalid_selection"));
-                    }
-
-                    if (await LinkedElsewhereAsync(installations, chosen.InstallationId, orgId, http))
-                    {
-                        return TypedResults.Conflict(new ErrorResponse("installation_linked_elsewhere"));
-                    }
-
-                    await installations.LinkAsync(
-                        chosen.InstallationId, orgId, chosen.AccountLogin, http.RequestAborted);
-                    return TypedResults.NoContent();
-                })
-            .WithName("githubSelect").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
     }
-
-    /// <summary>
-    /// Whether this installation already belongs to a different org. Reaching an installation on GitHub only
-    /// takes read access, so without this check a collaborator who admins their own Condux org could move
-    /// another tenant's installation — and with it the repo access the Conductor mints tokens for.
-    /// </summary>
-    private static async Task<bool> LinkedElsewhereAsync(
-        GithubInstallationRepository installations, long installationId, long orgId, HttpContext http) =>
-        await installations.GetAsync(installationId, http.RequestAborted) is { } existing
-        && existing.OrgId != orgId;
-
-    private static string MintState(long orgId, string returnPath, GitHubAppConfig config) =>
-        GithubConnectState.Create(
-            orgId, returnPath, DateTimeOffset.UtcNow.Add(StateLifetime), config.Options!.WebhookSecret);
 
     private static string InstallUrl(GitHubAppConfig config, string state) =>
         $"https://github.com/apps/{config.AppSlug}/installations/new?state={Uri.EscapeDataString(state)}";

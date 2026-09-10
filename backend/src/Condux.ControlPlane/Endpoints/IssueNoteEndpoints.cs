@@ -1,4 +1,5 @@
 using Condux.ControlPlane.Auth;
+using Condux.ControlPlane.Issues;
 using Condux.Core.Auth;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -13,8 +14,6 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class IssueNoteEndpoints
 {
-    private const int MaxNoteLength = 5_000;
-
     public static void MapIssueNoteEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/projects/{projectId:long}/issues/{issueId:guid}/notes",
@@ -31,20 +30,16 @@ internal static class IssueNoteEndpoints
                     long projectId, Guid issueId, CreateNoteRequest request, HttpContext http,
                     IssueRepository issues, IssueNoteRepository notes) =>
                 {
-                    var body = request.Body?.Trim() ?? string.Empty;
-                    if (body.Length == 0)
+                    if (!IssueNoteText.TryNormalize(request.Body, out var body, out var error))
                     {
-                        return TypedResults.BadRequest(new ErrorResponse("note_body_required"));
-                    }
-                    if (body.Length > MaxNoteLength)
-                    {
-                        return TypedResults.BadRequest(new ErrorResponse("note_too_long"));
+                        return TypedResults.BadRequest(new ErrorResponse(error));
                     }
                     if (await issues.GetByPublicIdAsync(projectId, issueId) is not { } found)
                     {
                         return TypedResults.NotFound();
                     }
-                    var note = await notes.AddAsync(found.InternalId, OrgAuthorization.CurrentUserId(http.User), body);
+                    var author = NoteAuthor.User(OrgAuthorization.CurrentUserId(http.User));
+                    var note = await notes.AddAsync(found.InternalId, author, body);
                     return TypedResults.Ok(ToResponse(note));
                 })
             .WithName("createIssueNote").WithTags("Issues")
@@ -52,6 +47,7 @@ internal static class IssueNoteEndpoints
 
         // Delete: the author can always remove their own note; anyone else needs admin+ (moderation). A
         // missing issue or note is 404; a member deleting someone else's note is 403 (distinct, not masked).
+        // A note written over MCP has no user author, so nobody matches and it takes admin+ to remove.
         app.MapDelete("/api/projects/{projectId:long}/issues/{issueId:guid}/notes/{noteId:guid}",
                 async Task<Results<NoContent, NotFound, ForbidHttpResult>> (
                     long projectId, Guid issueId, Guid noteId, HttpContext http,
@@ -86,5 +82,5 @@ internal static class IssueNoteEndpoints
     }
 
     private static NoteResponse ToResponse(IssueNote n) =>
-        new(n.Id, n.Body, n.AuthorUserId, n.AuthorEmail, n.CreatedAt);
+        new(n.Id, n.Body, n.AuthorUserId, n.AuthorEmail, n.AuthorTokenName, n.CreatedAt);
 }

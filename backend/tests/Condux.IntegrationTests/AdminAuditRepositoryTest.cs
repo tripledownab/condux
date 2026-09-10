@@ -18,7 +18,6 @@ public sealed class AdminAuditRepositoryTest(PostgresFixture pg) : IClassFixture
     [Fact]
     public async Task Lists_every_org_when_no_org_filter_is_given()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var audit = new AdminAuditRepository(pg.ConnectionString);
         await audit.WriteAsync(1, "boss@condux.test", "org.update", targetOrgId: 7, targetUserId: null, "{}");
         await audit.WriteAsync(1, "boss@condux.test", "org.update", targetOrgId: 9, targetUserId: null, "{}");
@@ -34,7 +33,6 @@ public sealed class AdminAuditRepositoryTest(PostgresFixture pg) : IClassFixture
     [Fact]
     public async Task Filters_to_one_org_when_given_one()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var audit = new AdminAuditRepository(pg.ConnectionString);
         await audit.WriteAsync(1, "boss@condux.test", "billing.cancel", targetOrgId: 11, targetUserId: null, "{}");
         await audit.WriteAsync(1, "boss@condux.test", "billing.cancel", targetOrgId: 12, targetUserId: null, "{}");

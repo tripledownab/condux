@@ -13,7 +13,9 @@ namespace Condux.Storage.RateLimiting;
 /// </summary>
 public sealed class ValkeyRateLimiter : IRateLimiter
 {
-    // Atomic refill-then-consume. Mirrors Condux.Core TokenBucket.Step.
+    // Atomic refill-then-consume. A second implementation of Condux.Core TokenBucket.Step, in
+    // another language, so the two are driven over the same sequence and compared decision by
+    // decision (pinned by ValkeyRateLimiterTest).
     //   KEYS[1] = bucket key
     //   ARGV    = ratePerSecond, burst, requested
     //   returns = { allowed(0|1), remaining, retryAfterSeconds }

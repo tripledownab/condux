@@ -8,6 +8,7 @@ sleep are injectable, which is how backoff is tested with no real waiting.
 
 from __future__ import annotations
 
+import math
 import time
 import urllib.error
 import urllib.request
@@ -86,13 +87,16 @@ def _is_retriable(status: int) -> bool:
     return status == 429 or status >= 500
 
 
-# Honor Retry-After (seconds) on a 429; otherwise capped exponential backoff.
+# Honor Retry-After (seconds) on a 429, else exponential backoff. Both paths are capped at
+# MAX_BACKOFF_MS, at ONE return so a later branch cannot route past it: the SDK holds the caller's
+# thread while it waits, so bounding that wait is its own obligation and not the relay's to set.
 def _backoff_ms(attempt: int, status: Optional[int], headers: Mapping[str, str]) -> float:
+    requested = None
     if status == 429:
-        retry_after = _parse_retry_after_ms(_get_header(headers, "retry-after"))
-        if retry_after is not None:
-            return retry_after
-    return min(BASE_BACKOFF_MS * (2**attempt), MAX_BACKOFF_MS)
+        requested = _parse_retry_after_ms(_get_header(headers, "retry-after"))
+    if requested is None:
+        requested = BASE_BACKOFF_MS * (2**attempt)
+    return min(requested, MAX_BACKOFF_MS)
 
 
 def _parse_retry_after_ms(value: Optional[str]) -> Optional[float]:
@@ -101,6 +105,10 @@ def _parse_retry_after_ms(value: Optional[str]) -> Optional[float]:
     try:
         seconds = float(value)
     except ValueError:
+        return None
+    # float() accepts "Infinity" and "nan", and neither has a sensible answer downstream. Not finite
+    # is not an instruction, so it falls back to the schedule.
+    if not math.isfinite(seconds):
         return None
     return max(0.0, seconds) * 1000.0
 

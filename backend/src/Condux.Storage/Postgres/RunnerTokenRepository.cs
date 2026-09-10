@@ -13,7 +13,7 @@ public sealed class RunnerTokenRepository(string connectionString)
 
     public Task<ScopedTokenRow> CreateAsync(
         long orgId, string tokenHash, string label, CancellationToken ct = default) =>
-        tokens.CreateAsync(orgId, tokenHash, label, ct);
+        tokens.CreateAsync(orgId, tokenHash, label, ct: ct);
 
     public Task<IReadOnlyList<ScopedTokenRow>> ListByOrgAsync(long orgId, CancellationToken ct = default) =>
         tokens.ListAsync(orgId, ct);

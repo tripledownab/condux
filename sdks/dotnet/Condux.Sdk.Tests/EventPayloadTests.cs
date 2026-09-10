@@ -6,7 +6,7 @@ using Xunit;
 namespace Condux.Sdk.Tests;
 
 // Proves the emitted JSON is the Sentry store wire shape the relay parses (field by field), so a Condux
-// .NET SDK event normalizes exactly like an official Sentry SDK. Mirrors the JS event.test.ts.
+// .NET SDK event normalizes exactly like an official Sentry SDK. Built like the JS event.test.ts.
 public class EventPayloadTests
 {
     private const string Dsn = "https://testkey@ingest.example.test/proj-uuid";

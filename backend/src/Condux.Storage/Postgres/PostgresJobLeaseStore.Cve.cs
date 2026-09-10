@@ -8,28 +8,23 @@ namespace Condux.Storage.Postgres;
 /// <summary>
 /// The CVE-bump side of the lease (ADR-0033 follow-up): the same claim/heartbeat/report contract over
 /// cve_fix_runs, so a self-hosting org's dependency bumps run on its own compute like its issue fixes do.
-/// Kept in the same class as the issue-fix SQL deliberately — one claim serves both kinds, and the
-/// conditions that make a row claimable must not exist twice.
+/// Kept in the same class as the issue-fix SQL deliberately: one claim serves both kinds, and the
+/// conditions that make a row claimable are one shared string both statements append, not two copies
+/// that happen to sit in the same class.
 /// </summary>
 public sealed partial class PostgresJobLeaseStore
 {
-    // The cve_fix_runs mirror of ClaimSql: same conditions, same lock, project resolved through the
-    // linked repo instead of the issue. The GHSA id rides back as the job's display ref, since a bump
-    // has no issue number to name its branch after.
+    // Only the FROM differs from the issue-fix claim: a bump reaches its project through the linked repo
+    // rather than through an issue. The conditions and the lock are the shared
+    // <see cref="ClaimableTail"/>, so they cannot drift from the statement beside them. The GHSA id
+    // rides back as the job's display ref, since a bump has no issue number to name its branch after.
     private const string CveClaimSql = """
         WITH claimable AS (
-            SELECT c.id, c.ghsa_id, r.project_id, r.repo_full_name
-            FROM cve_fix_runs c
-            JOIN repo_links r ON r.id = c.repo_link_id
+            SELECT f.id, f.ghsa_id, r.project_id, r.repo_full_name
+            FROM cve_fix_runs f
+            JOIN repo_links r ON r.id = f.repo_link_id
             JOIN projects p ON p.id = r.project_id
-            WHERE p.org_id = @org
-              AND c.job_context IS NOT NULL
-              AND c.status IN (1, 2)
-              AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= @now)
-            ORDER BY c.created_at
-            FOR UPDATE OF c SKIP LOCKED
-            LIMIT 1
-        )
+        """ + ClaimableTail + """
         UPDATE cve_fix_runs SET
             status = 2,
             leased_by = @runner,

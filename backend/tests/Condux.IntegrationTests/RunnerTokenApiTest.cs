@@ -43,7 +43,6 @@ public sealed class RunnerTokenApiTest(PostgresFixture pg) : IClassFixture<Postg
     [Fact]
     public async Task Mint_LeaseOverBearer_List_Revoke_RoundTrips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
 
         // Minted once, and the raw value is returned exactly once.
@@ -82,7 +81,6 @@ public sealed class RunnerTokenApiTest(PostgresFixture pg) : IClassFixture<Postg
     {
         // All three token kinds ride one repository, so the boundary worth proving is that a kind is
         // scoped to its own table: an MCP token must not lease fix work however similar the shapes are.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
         var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
             new { slug = "backend", name = "Backend", platform = "python" });

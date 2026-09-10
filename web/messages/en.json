@@ -290,6 +290,33 @@
         "tooManyAttempts": "Too many attempts. Sign in again to start over.",
         "wrongPassword": "That password is not correct."
       }
+    },
+    "confirmPassword": "Confirm password",
+    "passwordMismatch": "The two passwords do not match.",
+    "forgotLink": "Forgot your password?",
+    "forgot": {
+      "title": "Reset your password",
+      "description": "Enter your email address and we will send you a link to set a new password.",
+      "email": "Email",
+      "submit": "Send reset link",
+      "sending": "Sending",
+      "sent": "If that address has a Condux account, a reset link is on its way. The link works once and expires in an hour.",
+      "failed": "Could not send the link. Try again.",
+      "backToLogin": "Back to sign in"
+    },
+    "reset": {
+      "title": "Set a new password",
+      "password": "New password",
+      "confirm": "Confirm new password",
+      "mismatch": "The two passwords do not match.",
+      "submit": "Set password",
+      "saving": "Saving",
+      "done": "Your password has been changed and every device has been signed out. Sign in with the new one.",
+      "signIn": "Go to sign in",
+      "noToken": "This link is missing its token, so there is nothing to reset.",
+      "invalidToken": "This link has already been used or has expired, so it cannot set a password. Your account is unchanged.",
+      "askAgain": "Ask for a new link",
+      "oneUse": "Reset links work once. If you have already set a new password with this link, ask for a new one rather than filling this in."
     }
   },
   "org": {
@@ -440,6 +467,7 @@
       "selectExpired": "That choice has expired. Start the GitHub connection again.",
       "selectFailed": "Could not connect that account. Try again.",
       "selectTaken": "That GitHub installation is already connected to another Condux organization. Disconnect it there first, or install the Condux app on a different GitHub account.",
+      "pending": "The Condux app was installed but a GitHub organization owner still has to approve it. Once they do, connect again to finish.",
       "connectedUnnamed": "GitHub connected. The Conductor can open draft pull requests on your repositories.",
       "connectedForUnnamed": "GitHub connected. Now choose a repository for {project} below.",
       "healthHealthyUnnamed": "Connection verified. Condux can reach GitHub.",
@@ -586,14 +614,14 @@
     },
     "mcpTokens": {
       "title": "MCP tokens",
-      "description": "Give an AI agent (Claude, Cursor, ...) a read-only token to explore this project's issues over the Model Context Protocol. Point the agent's MCP client at the endpoint below with this token as an Authorization: Bearer header.",
+      "description": "Give an AI agent (Claude, Cursor, ...) a scoped token to explore this project's issues over the Model Context Protocol. Read-only by default; a triage token can also resolve or ignore an issue and leave notes. Point the agent's MCP client at the endpoint below with this token as an Authorization: Bearer header.",
       "nameLabel": "Token name",
       "namePlaceholder": "e.g. Claude Desktop",
       "create": "Create token",
       "creating": "Creating",
       "mintedTitle": "New token \"{name}\" created. Copy it now, it is shown only once.",
       "mintedLabel": "MCP token",
-      "mintedHint": "Only its hash is kept, so it cannot be shown again. It is read-only and scoped to this project.",
+      "mintedHint": "Only its hash is kept, so it cannot be shown again. It is scoped to this project, and what it may do is fixed now: to change that, revoke it and mint another.",
       "copy": "Copy",
       "copied": "Copied",
       "dismiss": "Done",
@@ -605,7 +633,13 @@
       "revoke": "Revoke",
       "lastUsed": "Last used {date}",
       "neverUsed": "Never used",
-      "connectHint": "Add this to your MCP client config:"
+      "connectHint": "Add this to your MCP client config:",
+      "capabilityLabel": "What this token may do",
+      "capability": {
+        "read": "Read only",
+        "triage": "Read and triage"
+      },
+      "connectCapability": "This token is {capability}. It cannot be changed later."
     },
     "repos": {
       "title": "Repositories",
@@ -638,7 +672,8 @@
       "suggestNone": "No mappings suggested. Connect GitHub and send a few errors first.",
       "suggestMatches": "{count, plural, one {# frame} other {# frames}}",
       "repoSelect": "Select a repository",
-      "branchSelect": "Default branch"
+      "branchSelect": "Default branch",
+      "inactive": "Inactive"
     },
     "cve": {
       "title": "{count, plural, one {# vulnerability} other {# vulnerabilities}}",
@@ -742,6 +777,7 @@
       "loadModels": "Load available models",
       "loadingModels": "Loading models",
       "modelsError": "Could not load models. Check the API key.",
+      "modelsNeedKey": "Enter the API key for this provider to list its models.",
       "providerLabel": "Provider",
       "providers": {
         "anthropic": "Anthropic",
@@ -772,6 +808,19 @@
       "neverUsed": "Never used",
       "connectHint": "Start a runner with this token. The fake provider proves the connection without a model key; switch to a real provider once it leases work.",
       "connectProviderHint": "See the self-hosting docs for the real provider and its model and git credentials."
+    },
+    "password": {
+      "title": "Password",
+      "description": "Changing your password signs out every other device. This one stays signed in.",
+      "current": "Current password",
+      "next": "New password",
+      "confirm": "Confirm new password",
+      "mismatch": "The two passwords do not match.",
+      "submit": "Change password",
+      "saving": "Changing",
+      "changed": "Password changed. Other devices have been signed out.",
+      "wrongPassword": "That current password is not right. If you sign in with Google or your organization's identity provider, your password is managed there.",
+      "failed": "Could not change the password. Try again."
     }
   },
   "issues": {
@@ -887,7 +936,9 @@
         "capReached": "This month's fair-use AI compute limit is reached ({spent} of {cap}). It resets on the 1st."
       },
       "costCapExceeded": "This organization has reached its fair-use AI compute limit for the month. It resets on the 1st.",
-      "seePlans": "See plans"
+      "seePlans": "See plans",
+      "githubDisconnected": "GitHub is not connected for this organization, so the Conductor cannot reach the repository.",
+      "reconnectGithub": "Reconnect GitHub"
     },
     "event": {
       "unhandled": "Unhandled",
@@ -932,7 +983,8 @@
       "add": "Add note",
       "delete": "Delete",
       "error": "Could not add the note.",
-      "unknownAuthor": "unknown"
+      "unknownAuthor": "unknown",
+      "agentAuthor": "{name} (agent)"
     },
     "shortcuts": {
       "title": "Keyboard shortcuts",

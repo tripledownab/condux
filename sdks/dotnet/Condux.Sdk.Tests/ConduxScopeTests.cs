@@ -10,7 +10,7 @@ using Xunit;
 namespace Condux.Sdk.Tests;
 
 // Proves ambient enrichment reaches the relay in the Sentry wire shape, and that an event captured without
-// it is byte-for-byte the event this SDK always sent. Mirrors the Go scope_test.go and the JS scope.test.ts.
+// it is byte-for-byte the event this SDK always sent. Built like the Go scope_test.go and the JS scope.test.ts.
 public class ConduxScopeTests : IDisposable
 {
     private readonly ScriptedTransport transport = new(ScriptedTransport.Status(HttpStatusCode.OK));

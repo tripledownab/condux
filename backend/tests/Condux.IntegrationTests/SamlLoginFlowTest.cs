@@ -35,24 +35,23 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     private const string AppBase = "https://localhost";
 
     private WebApplicationFactory<Program> CreateApp() =>
-        ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
-        {
-            b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
-            b.UseSetting("CONDUX_APP_BASE_URL", AppBase);
-        });
+        ControlPlaneApp.Create(pg.ConnectionString, appBaseUrl: AppBase)
+            .WithWebHostBuilder(b => b.UseSetting("CONDUX_SECRET_KEY", SecretKey));
 
-    // The SAML state cookies are Secure, so the flow client must talk https for the jar to return them.
+    // What this adds over the host's default client is seeing each redirect rather than following it.
+    // It carries the base address over explicitly because CreateClient(options) replaces the factory's
+    // options wholesale rather than merging them, and would otherwise fall back to http, where the jar
+    // returns none of the Secure SAML state cookies.
     private static HttpClient SsoClient(WebApplicationFactory<Program> app) =>
         app.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false,
-            BaseAddress = new Uri(AppBase),
+            BaseAddress = app.ClientOptions.BaseAddress,
         });
 
     [Fact]
     public async Task Saml_sign_in_provisions_a_new_user_into_the_org_and_issues_a_session()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var idpCertificate = SsoFlow.MakeCertificate();
         var orgId = await SetUpOrgWithSamlAsync(app, "acme.test", idpCertificate);
@@ -82,7 +81,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
         // answers this browser's in-flight request, the signature is real. The refusal can only come
         // from the shared tail (ADR-0042), which is the point. SAML reaches that tail through its own
         // endpoint, so a rule proven only on the OIDC side is proven on one of the two ways in.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         const string victimEmail = "victim@eta.test";
         var app = CreateApp();
 
@@ -112,7 +110,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task A_response_signed_by_a_different_certificate_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var orgId = await SetUpOrgWithSamlAsync(app, "beta.test", SsoFlow.MakeCertificate());
 
@@ -131,7 +128,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task A_tampered_response_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var idpCertificate = SsoFlow.MakeCertificate();
         var orgId = await SetUpOrgWithSamlAsync(app, "gamma.test", idpCertificate);
@@ -154,7 +150,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task A_response_with_its_signature_stripped_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var idpCertificate = SsoFlow.MakeCertificate();
         var orgId = await SetUpOrgWithSamlAsync(app, "zeta.test", idpCertificate);
@@ -178,7 +173,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task An_unsolicited_response_with_no_in_flight_request_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var idpCertificate = SsoFlow.MakeCertificate();
         var orgId = await SetUpOrgWithSamlAsync(app, "delta.test", idpCertificate);
@@ -194,7 +188,6 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task A_response_answering_a_different_request_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var idpCertificate = SsoFlow.MakeCertificate();
         var orgId = await SetUpOrgWithSamlAsync(app, "epsilon.test", idpCertificate);

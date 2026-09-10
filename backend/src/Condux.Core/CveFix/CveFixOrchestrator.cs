@@ -6,7 +6,8 @@ namespace Condux.Core.CveFix;
 /// <summary>
 /// Drives one CVE-bump run: record a PENDING run, hand the scoped bump context to the shared
 /// <see cref="IFixProvider"/> (the same Conductor provider/gateway the issue path uses), and record the
-/// resulting draft PR (or the failure). The parallel of <see cref="FixOrchestrator"/> for the supply-chain
+/// resulting draft PR (or the failure). The CVE counterpart of <see cref="FixOrchestrator"/> for
+/// the supply-chain
 /// path — storage and the provider are injected, so this is pure orchestration. When a quota is supplied,
 /// a failed run refunds the monthly allowance the request reserved (a failed run opened no PR, so it stays
 /// free — matching the issue path and ADR-0017; a Free lifetime slot is not refunded here, by design).

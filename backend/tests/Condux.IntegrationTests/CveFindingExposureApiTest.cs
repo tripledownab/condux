@@ -120,7 +120,6 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Finding_whose_package_is_running_reports_the_observed_version()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, repoId) = await ProvisionAsync(Finding("lodash", "npm"));
         var seenAt = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
         await RecordModuleAsync(projectId, "npm", "lodash", "4.17.11", seenAt);
@@ -147,7 +146,6 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Finding_with_no_inventory_still_appears_and_reads_unknown()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, repoId) = await ProvisionAsync(Finding("left-pad", "npm"));
 
         var row = (await ReadFindingsAsync(client, projectId, repoId)).EnumerateArray().Single();
@@ -164,7 +162,6 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Dependabot_ecosystem_lines_up_with_the_recorded_osv_one()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, repoId) = await ProvisionAsync(Finding("requests", "pip"));
         await RecordModuleAsync(
             projectId, "PyPI", "requests", "2.19.0", new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero));
@@ -185,7 +182,6 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Another_projects_running_version_is_not_attributed_to_this_one()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, repoId) = await ProvisionAsync(Finding("lodash", "npm"));
         await RecordModuleAsync(
             projectId + 9999, "npm", "lodash", "0.0.1",

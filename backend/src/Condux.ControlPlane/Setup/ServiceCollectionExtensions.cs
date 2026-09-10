@@ -4,6 +4,7 @@ using Condux.Core.Auth;
 using Condux.Core.CveFix;
 using Condux.Core.CveScanning;
 using Condux.Core.FixEngine;
+using Condux.Core.Http;
 using Condux.Core.Secrets;
 using Condux.Core.SourceControl;
 using Condux.GitHub;
@@ -41,6 +42,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(new SessionRepository(postgres));
         services.AddSingleton(new OrgMemberRepository(postgres));
         services.AddSingleton(new OrgInviteRepository(postgres));
+        services.AddSingleton(new PasswordResetRepository(postgres));
         services.AddSingleton(new RepoLinkRepository(postgres));
         services.AddSingleton(new ReleaseRepository(postgres));
         services.AddSingleton(new ReleaseTokenRepository(postgres));
@@ -75,8 +77,12 @@ internal static class ServiceCollectionExtensions
         // Alert dispatch from the control-plane too: triage events (issue resolved/assigned) fire alert
         // rules here, not just the consumer's new-issue/regression path.
         services.AddSingleton<AlertDispatcher>();
+        // The one home for a triage change and its side effects, shared by the REST endpoints and the MCP
+        // triage tools (ADR-0046) so an agent's resolve fires the same rules as a human's.
+        services.AddSingleton<Issues.IssueTriage>();
         // Invite emails ride the same SMTP relay (best-effort; a no-op when SMTP is off, see InviteMailer).
         services.AddSingleton<Condux.ControlPlane.Invites.InviteMailer>();
+        services.AddSingleton<Condux.ControlPlane.Auth.PasswordResetMailer>();
 
         // GitHub App (the Conductor, #61). Opt-in: enabled only when CONDUX_GITHUB_* are set; a partial
         // config fails fast here. When unset the /api/github/* routes return 404. The token minter + repo
@@ -215,6 +221,14 @@ internal static class ServiceCollectionExtensions
             sp.GetService<SourceMaps.FrameSymbolicator>(),
             sp.GetRequiredService<ILogger<SourceMaps.EventSymbolication>>()));
 
+        // The MCP tool handlers and the per-token write budget behind them (ADR-0029, ADR-0046). The
+        // limiter holds the buckets, so it has to be the same instance across requests. The handlers must
+        // NOT: they take ClickHouseEventReader, which AddClickHouseReader registers as a typed HttpClient,
+        // and a singleton holding one pins its message handler for the process lifetime (the captive
+        // dependency AddClickHouseNamedClient exists to avoid). Scoped is what the endpoints already were.
+        services.AddSingleton<Mcp.McpWriteLimiter>();
+        services.AddScoped<Mcp.McpTools>();
+
         // Live nav-badge stream (ADR-0030): the in-process SSE fan-out hub + one background LISTEN
         // connection on the shared project-events channel (fed by the consumer's NOTIFY). Postgres-only,
         // no new infra; the badge also polls, so a listener blip is self-healing.
@@ -264,8 +278,8 @@ internal static class ServiceCollectionExtensions
     // allowed origins; credentialed requests (the session cookie) require explicit origins, never "*".
     public static IServiceCollection AddControlPlaneCors(this IServiceCollection services, IConfiguration cfg)
     {
-        var origins = (cfg["CONDUX_CORS_ORIGINS"] ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // The whole list, not the first entry: this is the only caller that wants every origin.
+        var origins = AppOrigins.Parse(cfg["CONDUX_CORS_ORIGINS"]);
 
         services.AddCors(options => options.AddPolicy(CorsPolicy, policy =>
         {

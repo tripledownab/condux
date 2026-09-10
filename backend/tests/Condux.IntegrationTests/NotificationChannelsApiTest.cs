@@ -28,7 +28,6 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
     [Fact]
     public async Task Add_List_Delete_RoundTrips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
 
         var add = await client.PostAsJsonAsync($"/api/orgs/{orgId}/notification-channels",
@@ -54,7 +53,6 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
     [Fact]
     public async Task Add_RejectsAnUnknownChannelOrEmptyTarget()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
 
         Assert.Equal(HttpStatusCode.BadRequest,
@@ -68,7 +66,6 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
     [Fact]
     public async Task TestSend_UnconfiguredEmailChannel_ReportsNotConfigured()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
 
         // Email (channel = 1) has no notifier in a host without CONDUX_SMTP_HOST, so the test send reports
@@ -87,7 +84,6 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
     [Fact]
     public async Task TestSend_MissingChannel_404s()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
 
         var test = await client.PostAsync(

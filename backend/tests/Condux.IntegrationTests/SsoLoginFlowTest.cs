@@ -54,7 +54,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Sign_in_provisions_a_new_user_into_the_org_and_issues_a_session()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(idpEmail: "alice@acme.test");
         var orgId = await SetUpOrgWithSsoAsync(app, "acme.test");
 
@@ -77,7 +76,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_returned_email_outside_the_org_domain_is_refused_and_provisions_nobody()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(idpEmail: "mallory@evil.test"); // IdP returns an email off the org's domain
         // A distinct domain — email_domain is globally unique and this class shares one fixture DB.
         var orgId = await SetUpOrgWithSsoAsync(app, "beta.test");
@@ -95,7 +93,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task An_existing_account_the_org_does_not_have_is_refused_and_keeps_its_own_org()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         const string victimEmail = "victim@claimed.test";
         var app = CreateApp(idpEmail: victimEmail);
 
@@ -135,7 +132,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         // Signup creates the account but no org (ADR-0018 moved that into onboarding), so every user
         // who stops before finishing sits with no membership at all. That has to read as "not a member
         // of this org", not as "unclaimed": it is the emptiest possible state, not the freest.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         const string strandedEmail = "stranded@orphan.test";
         var app = CreateApp(idpEmail: strandedEmail);
         await ApiAuth.SignUpAsync(app.CreateClient(), strandedEmail);
@@ -154,7 +150,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_member_provisioned_by_an_earlier_sign_in_can_sign_in_again()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         const string email = "bob@repeat.test";
         var app = CreateApp(idpEmail: email);
         var orgId = await SetUpOrgWithSsoAsync(app, "repeat.test");
@@ -185,7 +180,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         // sends its own in the authorize request and again in the token exchange. If the two ever differ
         // the admin registered exactly what we told them to and their IdP still rejects it, so the only
         // useful assertion is that both sides produce the same value.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(idpEmail: "alice@meta.test");
         await SetUpOrgWithSsoAsync(app, "meta.test");
 
@@ -205,7 +199,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Start_for_an_unconfigured_domain_bounces_to_login()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(idpEmail: "x@x.test");
         var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 

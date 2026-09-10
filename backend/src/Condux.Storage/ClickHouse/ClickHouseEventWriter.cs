@@ -39,7 +39,7 @@ public sealed class ClickHouseEventWriter(HttpClient http)
     /// plan-tier retention) drives the row's column-based TTL (migration 0002).</summary>
     public static EventRow ToRow(string projectId, ulong issueId, Event e, string fingerprint, int retentionDays)
     {
-        var ex = e.Exceptions.Count > 0 ? e.Exceptions[^1] : null;
+        var ex = EventExceptions.ResolvePrimary(e);
         var ms = e.TimestampUnixMs > 0 ? e.TimestampUnixMs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var ts = DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
             .ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);

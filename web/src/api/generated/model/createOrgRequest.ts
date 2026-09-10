@@ -6,6 +6,5 @@
  */
 
 export interface CreateOrgRequest {
-  slug: string;
   name: string;
 }

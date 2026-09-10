@@ -22,6 +22,11 @@ export type GithubConnectionState = {
   // don't know which account" stay distinguishable instead of collapsing into one empty value. manageUrl
   // is where GitHub lets the user change repository access or uninstall.
   installation: GithubInstallationResponse | undefined;
+  // The server runs the GitHub App but this org has no installation, so anything needing an installation
+  // token is inert: linked repos cannot be reached and a fix run cannot start. Distinct from both
+  // `connected` and `notConfigured`, because a self-host without the App is not in a broken state, it is
+  // in a smaller one. Derived here so the repo list and the fix trigger cannot disagree about it.
+  needsReconnect: boolean;
   // For the connect flow, which links an installation server-side and needs the panel to catch up.
   refetch: () => void;
 };
@@ -45,6 +50,8 @@ export function useGithubConnection(): GithubConnectionState {
     connected: installation !== undefined,
     canManage,
     installation,
+    needsReconnect:
+      orgReady && !installations.isPending && !notConfigured && installation === undefined,
     refetch: installations.refetch,
   };
 }

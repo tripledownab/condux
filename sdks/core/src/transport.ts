@@ -62,15 +62,13 @@ function isRetriable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-// Honor Retry-After (seconds) on a 429; otherwise capped exponential backoff.
+// Honor Retry-After (seconds) on a 429, else exponential backoff. Both paths are capped at
+// MAX_BACKOFF_MS, at ONE return so a later branch cannot route past it: the SDK holds the caller's
+// thread while it waits, so bounding that wait is its own obligation and not the relay's to set.
 function backoffMs(attempt: number, response: FetchResponse | undefined): number {
-  if (response?.status === 429) {
-    const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
-    if (retryAfter !== undefined) {
-      return retryAfter;
-    }
-  }
-  return Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
+  const requested =
+    response?.status === 429 ? parseRetryAfterMs(response.headers.get("retry-after")) : undefined;
+  return Math.min(requested ?? BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
 }
 
 function parseRetryAfterMs(value: string | null): number | undefined {

@@ -1,6 +1,6 @@
 """Transport/backoff tests for the Condux Python SDK — deterministic, no real waiting.
 
-Mirrors the JS SDK's transport suite: a scripted transport replays a sequence of
+Built like the JS SDK's transport suite: a scripted transport replays a sequence of
 (status, headers) tuples (or raises for a network error), and a recording sleep captures the
 requested backoff delays instead of sleeping.
 """

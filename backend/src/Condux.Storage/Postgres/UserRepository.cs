@@ -120,6 +120,34 @@ public sealed class UserRepository(string connectionString)
     }
 
     /// <summary>Marks the user as having finished onboarding (idempotent — keeps the first completion time).</summary>
+    // Setting a password and spending that user's outstanding reset links are one act, not two, so they
+    // are one statement. Split apart, a caller can do the first and forget the second, and one of the two
+    // callers did: someone who changed their password from Settings because they suspected trouble left
+    // any reset link an attacker had already triggered live for the rest of its hour, able to overwrite
+    // the password they had just chosen. Written as a CTE so neither half can happen without the other.
+    private const string SetPasswordSql = """
+        WITH spent AS (
+            UPDATE password_resets SET used_at = now()
+            WHERE user_id = @id AND used_at IS NULL
+        )
+        UPDATE users SET password_hash = @hash WHERE id = @id;
+        """;
+
+    /// <summary>
+    /// Replaces a user's password hash and spends every outstanding reset link they have. Used by both a
+    /// signed-in change and an emailed reset, so it says nothing about which: the caller has already
+    /// established that the user may do this.
+    /// </summary>
+    public async Task SetPasswordHashAsync(long id, string passwordHash, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(SetPasswordSql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("hash", passwordHash);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task MarkOnboardedAsync(long id, CancellationToken ct = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);

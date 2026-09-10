@@ -17,8 +17,6 @@ public sealed class CatalogProvisioningTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task ProvisionThenAuthenticate_And_RevokeInvalidates()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         var orgs = new OrgRepository(pg.ConnectionString);
         var projects = new ProjectRepository(pg.ConnectionString);
         var keys = new DsnKeyRepository(pg.ConnectionString);
@@ -53,8 +51,6 @@ public sealed class CatalogProvisioningTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task ProjectsAreListedPerOrg_WithMultipleKeys()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         var orgs = new OrgRepository(pg.ConnectionString);
         var projects = new ProjectRepository(pg.ConnectionString);
         var keys = new DsnKeyRepository(pg.ConnectionString);
@@ -83,8 +79,6 @@ public sealed class CatalogProvisioningTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task RenameKey_IsTenantScoped_AndReturnsUpdatedRow()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         var orgs = new OrgRepository(pg.ConnectionString);
         var projects = new ProjectRepository(pg.ConnectionString);
         var keys = new DsnKeyRepository(pg.ConnectionString);

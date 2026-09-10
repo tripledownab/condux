@@ -37,7 +37,6 @@ public sealed class CveFixApiTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task StartCveFix_WithoutGitHubConnected_Returns409()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, repoId) = await ProvisionRepoAsync();
 
         var resp = await client.PostAsJsonAsync(
@@ -56,7 +55,6 @@ public sealed class CveFixApiTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task ListCveFixes_ForUnknownRepo_Returns404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, _) = await ProvisionRepoAsync();
 
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{Guid.NewGuid()}/cve-fixes");
@@ -66,7 +64,6 @@ public sealed class CveFixApiTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task StartCveFix_ForUnknownRepo_Returns404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId, _) = await ProvisionRepoAsync();
 
         var resp = await client.PostAsJsonAsync(

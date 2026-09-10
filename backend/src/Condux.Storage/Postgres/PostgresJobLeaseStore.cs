@@ -22,7 +22,8 @@ public sealed record ReportedJob(long ProjectId, JobKind Kind);
 /// <summary>
 /// Where a customer-hosted runner takes work from and reports it back (ADR-0033 slice 4). Serves both
 /// run kinds — issue fixes (fix_suggestions) and CVE bumps (cve_fix_runs, in the Cve partial) — behind
-/// one claim, so a runner polls one queue and the claim rules cannot diverge per kind.
+/// one claim, so a runner polls one queue and both statements append the same claim conditions
+/// (<see cref="ClaimableTail"/>) rather than restating them per kind.
 ///
 /// Claiming is one guarded UPDATE with RETURNING, for the same reason the allowance reservation is: two
 /// runners polling at once would otherwise both read a job as free and both take it, and one fix would
@@ -42,12 +43,13 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
     //
     // FOR UPDATE SKIP LOCKED lets concurrent runners pass over a row another is claiming rather than
     // queue behind it, which is what keeps a busy fleet from serialising on one lock.
-    private const string ClaimSql = """
-        WITH claimable AS (
-            SELECT f.id, i.project_id
-            FROM fix_suggestions f
-            JOIN issues i ON i.id = f.issue_id
-            JOIN projects p ON p.id = i.project_id
+    //
+    // Everything from the org filter down is shared verbatim with the CVE claim, which is why both alias
+    // their run table `f`: one string appended to two queries, not two copies to compare by eye. The
+    // blank lines around it are what keep the joined text readable, since a raw literal drops the
+    // newline beside its delimiters. Postgres parses it either way, measured; a person does not.
+    private const string ClaimableTail = """
+
             WHERE p.org_id = @org
               AND f.job_context IS NOT NULL
               AND f.status IN (1, 2)
@@ -56,6 +58,16 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
             FOR UPDATE OF f SKIP LOCKED
             LIMIT 1
         )
+
+        """;
+
+    private const string ClaimSql = """
+        WITH claimable AS (
+            SELECT f.id, i.project_id
+            FROM fix_suggestions f
+            JOIN issues i ON i.id = f.issue_id
+            JOIN projects p ON p.id = i.project_id
+        """ + ClaimableTail + """
         UPDATE fix_suggestions SET
             status = 2,
             leased_by = @runner,

@@ -23,7 +23,6 @@ public sealed class ImpersonationTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task View_as_org_is_read_only_scoped_and_reversible()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(
             pg.ConnectionString, platformAdminEmails: adminEmail, impersonationSigningKey: SigningKey);
@@ -81,8 +80,6 @@ public sealed class ImpersonationTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Non_admins_cannot_start_and_the_capability_is_off_without_a_signing_key()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         // A tenant (non-admin) is hidden from the start route even with the feature enabled.
         var enabled = ControlPlaneApp.Create(
             pg.ConnectionString, platformAdminEmails: NewAdminEmail(), impersonationSigningKey: SigningKey);

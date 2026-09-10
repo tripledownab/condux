@@ -45,7 +45,6 @@ public sealed class ConductorPauseNotifierTest(PostgresFixture pg) : IClassFixtu
     [Fact]
     public async Task Notifies_TheOrgsChannels_OncePerReasonPerWindow()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var orgId = await SeedOrgWithWebhookAsync("https://hooks.test/w");
         var capturing = new CapturingNotifier();
         var notifier = new ConductorPauseNotifier(
@@ -76,7 +75,6 @@ public sealed class ConductorPauseNotifierTest(PostgresFixture pg) : IClassFixtu
     [Fact]
     public async Task Throttle_AllowsAgainOnlyAfterTheWindow()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var orgId = await SeedOrgWithWebhookAsync("https://hooks.test/w");
         var throttle = new PostgresPauseNotifyThrottle(pg.ConnectionString);
         var window = TimeSpan.FromHours(24);

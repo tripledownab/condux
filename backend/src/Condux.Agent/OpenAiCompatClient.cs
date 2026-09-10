@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Condux.Core.Http;
 
 namespace Condux.Agent;
 
@@ -23,6 +24,21 @@ public sealed class OpenAiCompatClient(HttpClient http) : IModelClient
     public async Task<ModelOutput> CreateAsync(
         string model, string system, string user, string apiKey, string baseUrl, CancellationToken ct = default)
     {
+        // The org supplies this and the conductor runs inside the deployment, so an unchecked value is a
+        // request we would make on the org's behalf from the inside. Checked HERE rather than where the
+        // config is read, because this is the only client that uses it: the Anthropic one builds its URL
+        // from its own configured host. It is checked at the store too, but a row written before that
+        // check existed was never validated, and those are the rows that would carry a bad value.
+        //
+        // IsAbsoluteHttp, not LlmUrls.IsValidBaseUrl: the latter permits an ABSENT value, because a
+        // provider with a fixed endpoint ignores it. Here the value is the endpoint, so absent is a
+        // failure like any other malformed one.
+        if (!HttpUrls.IsAbsoluteHttp(baseUrl))
+        {
+            throw new InvalidOperationException(
+                "The organization's model provider base URL is not an absolute http(s) URL.");
+        }
+
         var body = new Request(
             model, MaxOutputTokens, [new Message("system", system), new Message("user", user)]);
         using var req = new HttpRequestMessage(

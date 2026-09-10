@@ -7,7 +7,7 @@ namespace Condux.Storage.ObjectStore;
 /// <summary>
 /// DI registration for the object store (ADR-0028). Always registers the <see cref="ObjectStoreConfig"/>
 /// so endpoints can 404 when the feature is off; registers the <see cref="IObjectStore"/> S3 client only
-/// when configured, mirroring the GitHub/Stripe opt-in wiring.
+/// when configured, following the GitHub/Stripe opt-in wiring.
 /// </summary>
 public static class ObjectStoreRegistration
 {

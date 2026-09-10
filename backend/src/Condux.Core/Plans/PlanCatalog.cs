@@ -50,7 +50,8 @@ public static class PlanCatalog
     /// Retention (days) applied when a tier's own value isn't available: the ingest fallback when an
     /// event carries no retention header (an older message), and the backfill for ClickHouse rows that
     /// predate per-tier retention. Matches the prior flat TTL. The single source for this default — the
-    /// ClickHouse column default in migration 0002 mirrors it (SQL can't reference this constant).
+    /// ClickHouse column default in migration 0002 repeats it, because SQL cannot reference this
+    /// constant, and the two are held together by test (pinned by PlanCatalogExportTests).
     /// </summary>
     public const int DefaultRetentionDays = 90;
 

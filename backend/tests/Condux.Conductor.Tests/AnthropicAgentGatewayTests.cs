@@ -289,4 +289,45 @@ public class AnthropicAgentGatewayTests
         // One call, not a loop: the agentic path was never entered despite agentic being on.
         Assert.Single(anthropic.Requests, r => r.Key == "POST /v1/messages");
     }
+
+    /// <summary>
+    /// The single-shot path had no containment check of any kind: the plan parser validates only that a
+    /// path is non-empty, and the managed-agents gateway was the only one carrying the rule. A model
+    /// steered by prompt-injected error text could therefore aim an authenticated write outside the
+    /// repository's contents namespace, which breaks the claim that a run can only produce a draft PR.
+    ///
+    /// The assertion that matters is the second one. A failed run proves nothing on its own, since the
+    /// write could have been attempted and rejected by GitHub; what must hold is that no git call was
+    /// made at all.
+    /// </summary>
+    [Fact]
+    public async Task A_single_shot_plan_path_escaping_the_repository_is_refused_before_any_git()
+    {
+        var (gateway, github, anthropic) = Create(agentic: true, supportsTools: false);
+        var cartJs = Convert.ToBase64String(Encoding.UTF8.GetBytes("broken()\n"));
+        github.Routes["POST /app/installations/7/access_tokens"] =
+            (HttpStatusCode.Created,
+             $$"""{"token":"ghs_x","expires_at":"{{DateTimeOffset.UtcNow.AddHours(1):O}}"}""");
+        github.Routes[$"GET /repos/{Repo}/contents/src/cart.js?ref=main"] =
+            (HttpStatusCode.OK, $$"""{"content":"{{cartJs}}","sha":"blob-sha"}""");
+        anthropic.Routes["POST /v1/messages"] = (HttpStatusCode.OK, JsonSerializer.Serialize(new
+        {
+            content = new[]
+            {
+                new
+                {
+                    type = "text",
+                    text = """{"summary":"evil","files":[{"path":"../../other-repo/x","contents":"x"}]}""",
+                },
+            },
+            usage = new { input_tokens = 400, output_tokens = 30 },
+        }));
+
+        var run = await gateway.StartAsync(Spec);
+        var done = await PollToCompletionAsync(gateway, run.RunId);
+
+        Assert.Equal(AgentRunStatus.Failed, done.Status);
+        Assert.DoesNotContain(github.Requests, r => r.Key.Contains("/git/") || r.Key.Contains("/pulls"));
+        Assert.DoesNotContain(github.Requests, r => r.Key.StartsWith("PUT ", StringComparison.Ordinal));
+    }
 }

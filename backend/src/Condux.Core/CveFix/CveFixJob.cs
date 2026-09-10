@@ -33,7 +33,8 @@ public sealed record CveFixJob(
     public long InstallationId { get; init; }
 
     /// <summary>The org whose AI-fix allowance the run was reserved from, so a failed run can be
-    /// refunded — mirrors <see cref="FixEngine.FixJob.OrgId"/>. Zero skips the refund.</summary>
+    /// refunded, as <see cref="FixEngine.FixJob.OrgId"/> does on the issue path. Zero skips the
+    /// refund.</summary>
     public long OrgId { get; init; }
 }
 

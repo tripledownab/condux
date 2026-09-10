@@ -12,7 +12,7 @@ namespace Condux.Agent;
 /// new branch and opens a <b>draft</b> PR via the GitHub App installation token. Credential isolation is
 /// structural — the model only ever receives scrubbed text and returns text; the GitHub token stays inside
 /// this process and is never part of a model request. A run is an in-process task behind the start → poll
-/// seam, so the orchestration and dashboard UX are identical to the simulated backend.
+/// seam, so the orchestration and dashboard UX come from that seam rather than from this backend.
 /// </summary>
 public sealed class AnthropicAgentGateway(
     IEnumerable<IModelClient> models, ISourceHostTokens tokens, ISourceHostClient repo,

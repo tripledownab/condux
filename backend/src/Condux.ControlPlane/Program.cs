@@ -75,6 +75,11 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
     });
 }
 
+// Secure is decided here for EVERY cookie the app writes, before anything writes one, so no individual
+// writer decides it and a cookie added later inherits the answer. See Setup/CookieSecurity for why the
+// deployment's declared scheme is the input and this request's scheme is not.
+app.UseCookiePolicy(new CookiePolicyOptions { Secure = CookieSecurity.Policy(builder.Configuration) });
+
 // CORS runs before auth so credentialed preflight/requests from a split-origin dashboard are handled
 // (no-op when CONDUX_CORS_ORIGINS is unset, i.e. same-origin production).
 app.UseCors(ServiceCollectionExtensions.CorsPolicy);
@@ -127,7 +132,9 @@ app.MapAdminBillingEndpoints();
 app.MapAdminSpendEndpoints();
 app.MapImpersonationEndpoints();
 app.MapGithubEndpoints();
+app.MapGithubInstallationEndpoints();
 app.MapGithubConnectEndpoints();
+app.MapGithubSelectionEndpoints();
 
 // Dev-only dogfood lever (#75): GET /api/boom throws so the control-plane self-reports its own error to
 // CONDUX_SELF_DSN (parity with the dashboard's boom). Never mapped in production.

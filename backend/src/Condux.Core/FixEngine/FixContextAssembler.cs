@@ -2,6 +2,7 @@ using System.Text;
 using Condux.Core.Events;
 using Condux.Core.Repos;
 using Condux.Core.Scrub;
+using Condux.Core.SourceControl;
 
 namespace Condux.Core.FixEngine;
 
@@ -39,7 +40,7 @@ public static class FixContextAssembler
         var inAppFrames = frames.Where(f => f.InApp && !string.IsNullOrEmpty(f.Filename)).ToList();
 
         var scopedPaths = ResolveScopedPaths(inAppFrames, mappings);
-        var summary = Summarize(Primary(sampleEvent), sampleEvent.Message);
+        var summary = Summarize(EventExceptions.ResolvePrimary(sampleEvent), sampleEvent.Message);
         var culprit = Culprit(inAppFrames.Count > 0 ? inAppFrames[^1] : frames.LastOrDefault(), mappings);
         var breadcrumbs = RecentBreadcrumbs(sampleEvent.Breadcrumbs);
 
@@ -55,13 +56,17 @@ public static class FixContextAssembler
         return inApp.Count == 0 ? null : CodeMapper.Resolve(inApp[^1].Filename!, mappings) ?? inApp[^1].Filename!;
     }
 
-    // The primary exception (the last one — the crash, mirroring the ClickHouse writer) and its frames.
-    private static ExceptionValue? Primary(Event e) => e.Exceptions.Count > 0 ? e.Exceptions[^1] : null;
-
-    private static IReadOnlyList<Frame> PrimaryFrames(Event e) => Primary(e)?.Stacktrace?.Frames ?? [];
+    private static IReadOnlyList<Frame> PrimaryFrames(Event e) =>
+        EventExceptions.ResolvePrimary(e)?.Stacktrace?.Frames ?? [];
 
     // In-app frames resolved to repo paths (falling back to the raw frame path when no mapping matches),
     // deduped in order — the "scoped files" the agent should focus on, never the whole repo.
+    //
+    // A frame's filename is authored by whoever sent the event, and these paths are fetched from the
+    // customer's repository with a token that can read all of it, so a path that leaves the repo root is
+    // DROPPED here rather than passed on. Dropped and not thrown: one crafted frame must not deny the fix
+    // run to the legitimate frames beside it, and the source-host client refuses such a path anyway
+    // (RepoPaths.ToUrlPath), so this is the early half of the same rule rather than the only guard.
     private static IReadOnlyList<string> ResolveScopedPaths(
         IReadOnlyList<Frame> inAppFrames, IReadOnlyList<CodeMapping> mappings)
     {
@@ -70,7 +75,7 @@ public static class FixContextAssembler
         foreach (var frame in inAppFrames)
         {
             var path = CodeMapper.Resolve(frame.Filename!, mappings) ?? frame.Filename!;
-            if (seen.Add(path))
+            if (RepoPaths.IsRepoRelative(path) && seen.Add(path))
             {
                 paths.Add(path);
             }

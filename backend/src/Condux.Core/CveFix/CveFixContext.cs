@@ -35,7 +35,8 @@ public static class EcosystemManifests
 
 /// <summary>
 /// Assembles the scoped bump instruction for a CVE-fix run from the authoritative advisory fields.
-/// Pure and side-effect-free (the parallel of <see cref="FixContextAssembler"/> for the issue path):
+/// Pure and side-effect-free (the CVE counterpart of <see cref="FixContextAssembler"/>, which
+/// serves the issue path):
 /// the control-plane builds this from the GitHub-fetched advisory before enqueuing, and the Conductor
 /// feeds the prompt + scoped manifests to the same provider.
 /// </summary>

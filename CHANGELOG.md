@@ -7,6 +7,46 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.4.0
+
+**If you self-host and you have connected Condux to GitHub, this release needs two configuration values
+you may not have set.** Read the first section before upgrading. Everything else here is additive.
+
+### Connecting a GitHub installation now proves it is yours
+
+Condux links a GitHub App installation to an organisation so the fix engine can read your repositories
+and open draft pull requests on them. The step that wrote that link was a URL anyone could request, and
+it took the installation's id from the query string.
+
+An address bar is not evidence. Anyone with an ordinary account could name any installation id and
+attach it to their own organisation, taking it from the organisation that was using it, and from there
+the product would mint a repository token for it in the normal way. If you run Condux for more than one
+organisation, or let people sign themselves up, assume that was reachable.
+
+Linking now happens only after asking GitHub which installations the person in front of it can actually
+reach, whether Condux picks the single one it finds or you choose from several. The redirect back from
+GitHub writes nothing at all, and separately, an installation another organisation already holds can no
+longer be taken by any route: freeing one is still a disconnect.
+
+
+**What you need to do.** `CONDUX_GITHUB_CLIENT_SECRET` and `CONDUX_GITHUB_OAUTH_REDIRECT_URI` were
+optional and are now required whenever the GitHub App is configured. If either is missing the
+control-plane refuses to start and names them, rather than falling back to the behaviour above. Set the
+redirect URI to your API's `/api/github/oauth/callback`, matching a Callback URL on the app, and make
+sure the app has "Request user authorization (OAuth) during installation" checked.
+
+Helm users set `github.clientSecret` and `github.oauthRedirectUri`. A chart install with
+`github.enabled` will not render without the redirect URI. It cannot check the client secret when you
+bring your own Secret through `secret.existingSecret`, so add `CONDUX_GITHUB_CLIENT_SECRET` to it, as
+listed in `values.yaml` beside the other keys that Secret must carry.
+
+Managed cloud already had both, so nothing there changes.
+
+### Also in this release
+
+- Reading an OpenTelemetry exception stack trace is now bounded work. A deliberately malformed one could
+  previously cost an ingest thread far more than its size suggested.
+
 ## 0.3.0
 
 **If you use the JVM, .NET or Go SDK, this release regroups your existing issues.** Read the first

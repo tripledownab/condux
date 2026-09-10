@@ -26,7 +26,6 @@ public sealed class OrgTierEscalationTest(PostgresFixture pg) : IClassFixture<Po
     [InlineData(3)] // Enterprise: the one worth stealing
     public async Task Requested_tier_is_ignored_and_the_org_is_created_free(int requestedTier)
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
 
@@ -43,7 +42,6 @@ public sealed class OrgTierEscalationTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Omitting_the_tier_also_yields_free()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
 

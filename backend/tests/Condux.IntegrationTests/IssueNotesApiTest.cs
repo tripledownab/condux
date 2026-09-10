@@ -37,7 +37,6 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Adds_lists_and_deletes_a_note()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, projectId, issueId) = await ProvisionWithIssueAsync();
         var basePath = $"/api/projects/{projectId}/issues/{issueId}/notes";
 
@@ -61,7 +60,6 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Rejects_an_empty_note()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, projectId, issueId) = await ProvisionWithIssueAsync();
         var resp = await client.PostAsJsonAsync(
             $"/api/projects/{projectId}/issues/{issueId}/notes", new { body = "   " });
@@ -73,7 +71,6 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Hides_notes_from_non_members()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (_, _, projectId, issueId) = await ProvisionWithIssueAsync();
 
         var outsider = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
@@ -85,7 +82,6 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task A_member_cannot_delete_another_users_note()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (owner, orgId, projectId, issueId) = await ProvisionWithIssueAsync();
         var basePath = $"/api/projects/{projectId}/issues/{issueId}/notes";
 
@@ -105,5 +101,50 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
         Assert.Equal(HttpStatusCode.Forbidden, del.StatusCode);
         var list = await owner.GetFromJsonAsync<JsonElement>(basePath);
         Assert.Equal(1, list.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task An_MCP_note_has_no_user_author_so_only_an_admin_can_delete_it()
+    {
+        var (owner, orgId, projectId, issueId) = await ProvisionWithIssueAsync();
+        var basePath = $"/api/projects/{projectId}/issues/{issueId}/notes";
+
+        // An agent leaves the note over MCP (ADR-0046), so its author is a token, not a person.
+        var mint = await owner.PostAsJsonAsync(
+            $"/api/projects/{projectId}/mcp-tokens", new { name = "Claude", capability = "triage" });
+        var raw = (await mint.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        var agent = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
+        agent.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", raw);
+        (await agent.PostAsJsonAsync("/api/mcp", new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "tools/call",
+            @params = new
+            {
+                name = "add_issue_note",
+                arguments = new { issueId = issueId.ToString(), body = "agent note" },
+            },
+        })).EnsureSuccessStatusCode();
+
+        var created = (await owner.GetFromJsonAsync<JsonElement>(basePath))[0];
+        var noteId = created.GetProperty("id").GetString();
+        Assert.Equal("Claude", created.GetProperty("authorTokenName").GetString());
+
+        // Nobody is the author, so the author branch of the delete guard matches no one and a plain
+        // member is refused. This is the pre-existing rule meeting a null author, not a new rule.
+        var member = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
+        var memberUser = await ApiAuth.SignUpAsync(member, $"member-{Guid.NewGuid():N}@condux.test");
+        var invite = await owner.PostAsJsonAsync($"/api/orgs/{orgId}/invites",
+            new { email = memberUser.Email, role = "member" });
+        var token = (await invite.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
+        (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessStatusCode();
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.DeleteAsync($"{basePath}/{noteId}")).StatusCode);
+
+        // An admin can moderate it away, so an agent's note is never unremovable.
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"{basePath}/{noteId}")).StatusCode);
+        Assert.Equal(0, (await owner.GetFromJsonAsync<JsonElement>(basePath)).GetArrayLength());
     }
 }

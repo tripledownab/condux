@@ -14,8 +14,6 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class InviteEndpoints
 {
-    private static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
-
     public static void MapInviteEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/orgs/{orgId:long}/invites",
@@ -40,7 +38,7 @@ internal static class InviteEndpoints
                     var (raw, hash) = SessionTokens.Create();
                     var invite = await invites.CreateAsync(
                         orgId, Emails.Normalize(req.Email), role, hash, userId,
-                        DateTimeOffset.UtcNow.Add(Lifetime));
+                        DateTimeOffset.UtcNow.Add(InviteLifetime.Duration));
 
                     // Email the invitee an accept link. Best-effort: a delivery failure must not fail the
                     // request (the raw token is still returned for out-of-band sharing).

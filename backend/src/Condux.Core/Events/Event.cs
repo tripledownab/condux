@@ -1,6 +1,6 @@
 namespace Condux.Core.Events;
 
-/// <summary>Severity of an event, mirroring the common SDK levels.</summary>
+/// <summary>Severity of an event, named for the level values the SDKs send.</summary>
 public enum Level
 {
     Unspecified,

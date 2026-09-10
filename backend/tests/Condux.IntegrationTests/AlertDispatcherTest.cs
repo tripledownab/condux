@@ -49,7 +49,6 @@ public sealed class AlertDispatcherTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Dispatch_DeliversToMatchingRulesChannel()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
         var rule = await repo.CreateRuleAsync(
@@ -70,7 +69,6 @@ public sealed class AlertDispatcherTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Dispatch_SkipsWhenLevelNotInRuleSet()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
         var rule = await repo.CreateRuleAsync(
@@ -89,7 +87,6 @@ public sealed class AlertDispatcherTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Dispatch_DedupesDeliveryToTheSameDestinationAcrossRules()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
 

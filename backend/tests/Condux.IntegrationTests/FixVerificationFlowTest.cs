@@ -22,20 +22,15 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class FixVerificationFlowTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
 {
-    private const string WebhookSecret = "test-webhook-secret";
-    private static readonly string PrivateKeyPem = RSA.Create(2048).ExportRSAPrivateKeyPem();
+    private const string WebhookSecret = GithubAppSettings.WebhookSecret;
 
     private WebApplicationFactory<Program> CreateApp() =>
-        ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b => b
-            .UseSetting("CONDUX_GITHUB_CLIENT_ID", "Iv1.test")
-            .UseSetting("CONDUX_GITHUB_WEBHOOK_SECRET", WebhookSecret)
-            .UseSetting("CONDUX_GITHUB_APP_SLUG", "condux-test")
-            .UseSetting("CONDUX_GITHUB_PRIVATE_KEY", PrivateKeyPem));
+        ControlPlaneApp.Create(pg.ConnectionString)
+            .WithWebHostBuilder(GithubAppSettings.Apply);
 
     [Fact]
     public async Task Merged_pull_request_starts_the_watch_and_the_watcher_concludes_once()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);

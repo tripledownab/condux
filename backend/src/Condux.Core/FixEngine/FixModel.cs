@@ -32,7 +32,8 @@ public sealed record FixJob(long IssueId, string RepoFullName, string BaseBranch
     public long OrgId { get; init; }
 }
 
-/// <summary>A Conductor fix run and its outcome (mirrors the <c>condux.fix.v1</c> <c>FixSuggestion</c>).</summary>
+/// <summary>A Conductor fix run and its outcome (named for the <c>condux.fix.v1</c>
+/// <c>FixSuggestion</c> message).</summary>
 public sealed record FixSuggestion(
     Guid Id,
     long IssueId,

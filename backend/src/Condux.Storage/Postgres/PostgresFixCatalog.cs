@@ -20,8 +20,18 @@ public sealed record FixListItem(
     DateTimeOffset UpdatedAt,
     bool Viewed);
 
-/// <summary>One entry of a fix's append-only audit trail, for the detail timeline.</summary>
-public sealed record FixAuditEntry(string Actor, string Event, string Detail, DateTimeOffset CreatedAt);
+/// <summary>
+/// One entry of a fix's append-only audit trail, for the detail timeline: what happened, when, and who
+/// did it.
+///
+/// It deliberately does NOT carry the row's <c>detail</c> JSON. That column is an internal forensic
+/// record written from six places, and each of them decides its own contents: a provider's error text,
+/// an agent gateway's exception, a scanner's output, the message of a host that failed to resolve. This
+/// record is returned by a member-level endpoint, so carrying that column would make all six responsible
+/// for knowing they publish, and the seventh would not know. The column stays and operators read it from
+/// the database; the query simply does not select it.
+/// </summary>
+public sealed record FixAuditEntry(string Actor, string Event, DateTimeOffset CreatedAt);
 
 /// <summary>A fix run in full for the detail pane: every field, its issue context, viewed/archived
 /// flags and the audit timeline.</summary>
@@ -106,8 +116,10 @@ public sealed class PostgresFixCatalog(string connectionString)
         ORDER BY sum(f.input_tokens + f.output_tokens) DESC;
         """;
 
+    // No detail column, on purpose: see FixAuditEntry. Not selecting it is what makes it unpublishable,
+    // rather than each writer having to remember to keep it clean.
     private const string AuditSql = """
-        SELECT actor, event, detail::text, created_at
+        SELECT actor, event, created_at
         FROM fix_audit WHERE fix_id = @fix ORDER BY created_at;
         """;
 
@@ -196,8 +208,8 @@ public sealed class PostgresFixCatalog(string connectionString)
         while (await auditReader.ReadAsync(cancellationToken))
         {
             audit.Add(new FixAuditEntry(
-                auditReader.GetString(0), auditReader.GetString(1), auditReader.GetString(2),
-                auditReader.GetFieldValue<DateTimeOffset>(3)));
+                auditReader.GetString(0), auditReader.GetString(1),
+                auditReader.GetFieldValue<DateTimeOffset>(2)));
         }
         return detail with { Audit = audit };
     }

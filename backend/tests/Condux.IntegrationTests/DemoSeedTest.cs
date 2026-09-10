@@ -25,7 +25,6 @@ public sealed class DemoSeedTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Seeds_the_demo_account_and_data_the_weekly_summary_reads()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         using var http = Http();
         await new DemoSeeder(pg.ConnectionString, http).RunAsync();
 

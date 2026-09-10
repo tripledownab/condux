@@ -18,8 +18,6 @@ public sealed class ConductorTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task RunAsync_PersistsSucceededSuggestion()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         // Seed an issue so the fix_suggestions.issue_id FK is satisfied; use its internal bigint id.
         // The issue needs a real project (issues.project_id FK, #97).
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);

@@ -1,12 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
+using Condux.Core.Http;
 
 namespace Condux.ControlPlane.Auth;
 
 /// <summary>
-/// Shared CSRF-state and post-flow redirect helpers for the OIDC browser flows — Google sign-in (#71) and
-/// per-org enterprise SSO (#72). The state cookie is a double-submit CSRF defense (no server-side state
-/// table). The dashboard origin mirrors the GitHub connect redirect: the first CORS origin in split-origin
+/// Shared CSRF-state and post-flow redirect helpers for the browser flows that leave the site and come
+/// back: Google sign-in (#71), per-org enterprise SSO (#72), and GitHub connect through
+/// <see cref="GithubConnectFlow"/>. The state cookie is a double-submit CSRF defense (no server-side state
+/// table). The dashboard origin comes from <see cref="AppOrigins"/>: the first CORS origin in split-origin
 /// dev, empty (a same-host relative redirect) in same-origin production.
 /// </summary>
 internal static class OidcFlow
@@ -23,15 +25,20 @@ internal static class OidcFlow
 
     // SameSite=Lax still rides the top-level GET redirect back from the identity provider. A flow whose
     // return leg is a cross-site POST (the SAML ACS) needs crossSite: Lax cookies do not accompany those,
-    // and SameSite=None requires Secure even in dev (browsers accept Secure on http://localhost).
-    public static CookieOptions StateCookieOptions(HttpContext http, bool crossSite = false) => new()
-    {
-        HttpOnly = true,
-        Secure = crossSite || http.Request.IsHttps,
-        SameSite = crossSite ? SameSiteMode.None : SameSiteMode.Lax,
-        Expires = DateTimeOffset.UtcNow.Add(StateLifetime),
-        Path = "/",
-    };
+    // and SameSite=None requires Secure even in dev (browsers accept Secure on http://localhost), which
+    // is why that one case sets Secure here. Transport is not this function's decision: CookieSecurity
+    // sets Secure for every cookie the app writes, and it only ever adds the attribute. A flow whose own
+    // state outlives StateLifetime passes its lifetime, so the cookie never expires first and fails a
+    // return the state would still have accepted.
+    public static CookieOptions StateCookieOptions(
+        bool crossSite = false, TimeSpan? lifetime = null) => new()
+        {
+            HttpOnly = true,
+            Secure = crossSite,
+            SameSite = crossSite ? SameSiteMode.None : SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.Add(lifetime ?? StateLifetime),
+            Path = "/",
+        };
 
     /// <summary>Land on the dashboard root after a successful sign-in.</summary>
     public static string DashboardUrl(IConfiguration cfg) => $"{DashboardOrigin(cfg)}/";
@@ -46,10 +53,9 @@ internal static class OidcFlow
     /// <summary>Back to login with an error code the page surfaces as a banner.</summary>
     public static string LoginUrl(IConfiguration cfg, string error) => $"{DashboardOrigin(cfg)}/login?error={error}";
 
-    private static string DashboardOrigin(IConfiguration cfg)
-    {
-        var origins = (cfg["CONDUX_CORS_ORIGINS"] ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return origins.Length > 0 ? origins[0] : string.Empty;
-    }
+    // Deliberately NOT AppUrls.BaseUrl: this one must not fall back to CONDUX_APP_BASE_URL. Same-origin
+    // production sets no CORS origin, and an empty origin here is what makes the redirect same-host and
+    // relative, which is the behaviour that flow wants. Only the parse is shared.
+    private static string DashboardOrigin(IConfiguration cfg) =>
+        AppOrigins.Parse(cfg["CONDUX_CORS_ORIGINS"]).FirstOrDefault() ?? string.Empty;
 }

@@ -23,9 +23,8 @@ public static class Fingerprinter
         {
             components.AddRange(e.Fingerprint);
         }
-        else if (e.Exceptions.Count > 0)
+        else if (EventExceptions.ResolvePrimary(e) is { } ex)
         {
-            var ex = e.Exceptions[^1];
             components.Add("exception");
             if (!string.IsNullOrEmpty(ex.Type))
             {
@@ -99,9 +98,8 @@ public static class Fingerprinter
 
     private static string TitleOf(Event e)
     {
-        if (e.Exceptions.Count > 0)
+        if (EventExceptions.ResolvePrimary(e) is { } ex)
         {
-            var ex = e.Exceptions[^1];
             if (!string.IsNullOrEmpty(ex.Type))
             {
                 return string.IsNullOrEmpty(ex.Value) ? ex.Type : $"{ex.Type}: {ex.Value}";

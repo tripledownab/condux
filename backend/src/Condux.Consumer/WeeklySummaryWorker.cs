@@ -74,7 +74,7 @@ public sealed class WeeklySummaryWorker(
 
         var now = DateTimeOffset.UtcNow;
         // The composer resolves transient ClickHouse readers; a per-tick scope avoids a captive dependency in
-        // this singleton (mirrors VerificationWorker).
+        // this singleton (as VerificationWorker does).
         using var scope = scopes.CreateScope();
         var composer = scope.ServiceProvider.GetRequiredService<WeeklySummaryComposer>();
 

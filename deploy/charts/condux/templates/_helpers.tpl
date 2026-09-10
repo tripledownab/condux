@@ -71,12 +71,21 @@ localhost:9010, so an unset host mints DSNs that reach no relay while every pod 
   value: {{ include "condux.ingestHost" . | quote }}
 {{- end -}}
 
-{{/* CONDUX_APP_BASE_URL: the absolute dashboard URL that links in email point at. Both mailers need it,
-the control-plane for the invite accept link and the consumer for the weekly summary CTA, and they
-degrade differently without it (values.yaml says how). Emit only inside `{{- if .Values.config.appBaseUrl }}`. */}}
+{{/* CONDUX_APP_BASE_URL: the absolute dashboard URL that links in email point at, and the value the
+control-plane reads to decide whether its cookies carry Secure. Both mailers need it, the control-plane
+for the invite accept link and the consumer for the weekly summary CTA, and they degrade differently
+without it (values.yaml says how). It is REQUIRED once ingress.tls is set: TLS ends at the ingress, so
+the control-plane's own request is plain http and cannot infer the scheme, and an unset value ships
+every session cookie without Secure while every pod reports healthy. A failed render is the only way
+that gets noticed. Self-guarding, so call it unconditionally. */}}
 {{- define "condux.appBaseUrlEnv" -}}
+{{- if and .Values.ingress.tls (not .Values.config.appBaseUrl) -}}
+{{- fail "config.appBaseUrl is required when ingress.tls is set, e.g. https://app.example.com. The control-plane reads it to decide whether session cookies carry Secure; TLS ends at the ingress, so it cannot read that off the request." -}}
+{{- end -}}
+{{- with .Values.config.appBaseUrl }}
 - name: CONDUX_APP_BASE_URL
-  value: {{ .Values.config.appBaseUrl | quote }}
+  value: {{ . | quote }}
+{{- end }}
 {{- end -}}
 
 {{/* SMTP config (host/port/ssl/from/user) + password (Secret). Used by control-plane + consumer for

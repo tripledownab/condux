@@ -63,7 +63,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_WithLinkedRepo_PublishesJobAndAccepts()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-1");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
 
@@ -78,7 +77,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_TargetsTheChosenRepoAndBranch()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-target");
         // Link two repos; the request should target the one it names, on the branch it names — not the
         // first-linked default.
@@ -100,7 +98,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_WithARepoNotLinkedToTheProject_Returns409()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-badrepo");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
 
@@ -116,7 +113,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_FreeTier_SpendsItsMonthlyAllowanceThenExhausts()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         // Free (tier 0) runs the Conductor on the same monthly allowance the paid tiers use, just a
         // smaller one. It used to be a one-time lifetime grant, so this asserts the monthly counter is
         // what actually gets spent: the tier's own allowance drives the loop rather than a hardcoded 3.
@@ -146,7 +142,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_FreeTier_IsBoundByItsTierDefaultCostCap()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         // No org override anywhere in this test: the point is that the Free tier's OWN default ceiling
         // binds. A run count alone does not bound spend, so a small allowance still needs a dollar stop.
         Assert.NotNull(PlanCatalog.For(Tier.Free).FixComputeCapUsd);
@@ -182,7 +177,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_OverCostCap_Returns409()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-cap");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
 
@@ -217,7 +211,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     {
         // The whole point of slice 4c. If it still published, the hosted Conductor would run a fix the
         // customer chose to keep on their own machines, and their runner would sit idle waiting.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-runner");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
@@ -248,7 +241,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // The cap governs spend on OUR compute. A run executed on the customer's runner is billed to their
         // model account, so counting it would refuse them hosted runs over money we never paid — and it
         // would report their spend as our cost in the cross-org rollup.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-runner-spend");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
@@ -286,7 +278,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // fix_suggestions has no actor column, so the requested audit entry is the only place the
         // triggering user exists. The hosted orchestrator writes it; a run handed to a runner never
         // reaches that orchestrator, so without this the trail starts at "leased" and the user is lost.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-audit");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
@@ -315,7 +306,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     {
         // The mirror of the case above, and the reason job_context gates the claim: a hosted request must
         // stay invisible to a runner even in an org that has one.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-hosted");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
@@ -334,7 +324,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     {
         // Refused rather than ignored: silently staying hosted would leave a customer watching a runner
         // that is never given work, with nothing saying why.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-gate", tier: 0);
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
             .GetProperty("org").GetProperty("id").GetInt64();
@@ -353,7 +342,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // ADR-0017: no PR delivered means no allowance spent. The hosted orchestrator refunds in its
         // catch; a runner's failure arrives as a report instead, and the first real runner failure burned
         // its reservation because the report path had no refund.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-refund");
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
@@ -405,7 +393,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // The membership list is what the settings screen renders from. It once hand-picked its org
         // columns, so fix_execution defaulted to hosted no matter what the row said, and the radio
         // snapped back on every click while the server-side setting was in fact saved.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-roundtrip");
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
             .GetProperty("org").GetProperty("id").GetInt64();
@@ -425,7 +412,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // The dashboard shipped before this field existed and PATCHes only the AI-fix settings. If the
         // field were required, that request would bind 0 and quietly drag a self-hosting org's work back
         // onto our compute as a side effect of changing something unrelated.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, _, _) = await ProvisionWithIssueAsync("fp-fix-omit");
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
             .GetProperty("org").GetProperty("id").GetInt64();
@@ -443,7 +429,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_NoRepoLinked_Returns409()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-2");
 
         var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
@@ -461,7 +446,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task RequestFix_WhenPublishFails_Returns503AndRefundsTheReservation()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString)
             .WithWebHostBuilder(b => b.ConfigureTestServices(
                 s => s.AddSingleton<IFixRequestPublisher>(new ThrowingPublisher())))
@@ -496,7 +480,6 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task ListFixes_ReturnsSuggestionsForTheIssue()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-3");
 
         // Seed a suggestion for the issue's internal id, as the Conductor worker would. Re-upserting the

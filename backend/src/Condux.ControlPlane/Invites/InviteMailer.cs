@@ -45,7 +45,7 @@ public sealed class InviteMailer(
             [
                 $"{inviterEmail} invited you to join {orgName} on Condux as {role}.",
                 "Sign in or create your Condux account with this email address to join.",
-                $"This invitation expires in {InviteEmailText.ExpiresInDays} days. "
+                $"This invitation expires in {InviteLifetime.Days} days. "
                     + "If you were not expecting it, you can ignore this email.",
             ],
             Button: new EmailButton("Accept invitation", acceptLink));

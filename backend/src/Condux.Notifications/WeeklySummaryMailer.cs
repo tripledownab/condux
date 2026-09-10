@@ -1,3 +1,4 @@
+using Condux.Core.Http;
 using Condux.Core.WeeklySummaries;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -51,13 +52,8 @@ public sealed class WeeklySummaryMailer(
         return sent;
     }
 
-    // The absolute dashboard base URL for the CTA link; null in split-origin dev with nothing configured, in
-    // which case the email omits the button. Mirrors AppUrls.BaseUrl (ControlPlane) — the Consumer worker
-    // cannot reference that type, and the env keys are the single source of the value.
+    // The absolute dashboard base URL for the CTA link. Null is the answer this caller wants for an
+    // unconfigured deployment, because the email then omits the button rather than linking nowhere.
     private string? DashboardUrl() =>
-        config["CONDUX_APP_BASE_URL"] is { Length: > 0 } explicitUrl
-            ? explicitUrl
-            : config["CONDUX_CORS_ORIGINS"]
-                ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
+        AppOrigins.ResolveBaseUrl(config["CONDUX_APP_BASE_URL"], config["CONDUX_CORS_ORIGINS"]);
 }

@@ -31,9 +31,16 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const queryClient = useQueryClient();
   const emailId = useId();
   const passwordId = useId();
+  const confirmId = useId();
   const errorId = useId();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Signup only. A typed-once password that was mistyped locks the account permanently: there is no
+  // change-password for someone who cannot sign in, and the email cannot be reused because signup
+  // answers 409. Confirming is what stops the unrecoverable case from being created at all.
+  const [confirm, setConfirm] = useState("");
+  const confirming = mode === AuthMode.Signup;
+  const mismatch = confirming && confirm !== "" && confirm !== password;
   // Set when login reports the account has a second factor. The session cookie is already set at that
   // point, half-authenticated, so the challenge needs nothing else carried across.
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -63,6 +70,10 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Guarded here as well as by the input's own validity, because the form is noValidate.
+    if (confirming && confirm !== password) {
+      return;
+    }
     mutation.mutate(
       { data: { email, password } },
       {
@@ -151,13 +162,48 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           />
         </div>
 
+        {confirming ? (
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={confirmId} className="text-sm text-muted-foreground">
+              {translate("confirmPassword")}
+            </label>
+            <input
+              id={confirmId}
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+              aria-invalid={mismatch}
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+              className={FIELD_CLASS}
+            />
+            {mismatch ? (
+              <p role="alert" className="text-sm text-error">
+                {translate("passwordMismatch")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Only on login: someone signing up has no password to have forgotten. */}
+        {mode === AuthMode.Login ? (
+          <Link href={ROUTES.forgotPassword} className="text-sm underline underline-offset-4">
+            {translate("forgotLink")}
+          </Link>
+        ) : null}
+
         {errorMessage ? (
           <p id={errorId} role="alert" className="text-sm text-error">
             {errorMessage}
           </p>
         ) : null}
 
-        <button type="submit" disabled={mutation.isPending} className={PRIMARY_BUTTON_CLASS}>
+        <button
+          type="submit"
+          disabled={mutation.isPending || (confirming && confirm !== password)}
+          className={PRIMARY_BUTTON_CLASS}
+        >
           {mutation.isPending ? translate(`${mode}.pending`) : translate(`${mode}.submit`)}
         </button>
       </form>

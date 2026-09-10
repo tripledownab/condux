@@ -24,7 +24,6 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
     [Fact]
     public async Task Rollup_prices_only_known_models_and_the_drilldown_lists_every_run()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var cs = pg.ConnectionString;
 
         // Org A: a priced issue fix ($30), a BYO issue fix (tokens, no price), a priced CVE bump ($2.50),

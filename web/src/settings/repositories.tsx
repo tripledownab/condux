@@ -204,7 +204,13 @@ export function Repositories({
         ) : (
           <ul className="flex flex-col gap-3">
             {list.map((repo) => (
-              <RepoRow key={repo.id} projectId={projectId} repo={repo} canManage={canManage} />
+              <RepoRow
+                key={repo.id}
+                projectId={projectId}
+                repo={repo}
+                canManage={canManage}
+                inactive={github.needsReconnect}
+              />
             ))}
           </ul>
         )}
@@ -213,14 +219,19 @@ export function Repositories({
   );
 }
 
+// Disconnecting GitHub deliberately keeps repo links, because reconnecting restores them and unlinking
+// would take a project's code mappings with it. The link is inert until then, so say so: otherwise the
+// row looks normal and a fix run fails later with nothing on screen explaining why.
 function RepoRow({
   projectId,
   repo,
   canManage,
+  inactive,
 }: {
   projectId: number;
   repo: RepoLink;
   canManage: boolean;
+  inactive: boolean;
 }) {
   const translate = useTranslations("settings.repos");
   const queryClient = useQueryClient();
@@ -242,6 +253,11 @@ function RepoRow({
         <div>
           <span className="text-sm font-medium text-foreground">{repo.repoFullName}</span>
           <span className="ml-2 text-xs text-muted-foreground">{repo.defaultBranch}</span>
+          {inactive ? (
+            <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {translate("inactive")}
+            </span>
+          ) : null}
         </div>
         {canManage ? (
           confirming ? (

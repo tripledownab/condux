@@ -105,6 +105,58 @@ describe("ProviderSettings", () => {
     expect(screen.getByLabelText("Replace the API key")).toBeInTheDocument();
   });
 
+  // Listing models with no key uses the org's stored key, and the server sends that only to the
+  // destination stored beside it. So changing the provider without entering its key cannot be answered,
+  // and the button says so rather than returning the saved provider's models under the new provider's
+  // name, which would read as the picker being broken.
+  it("requires the key before listing models for a provider that was just changed", async () => {
+    const mutate = vi.fn();
+    useGetLlmConfigMock.mockReturnValue({
+      isPending: false,
+      data: {
+        status: 200,
+        data: {
+          provider: "anthropic",
+          model: "claude-opus-4-8",
+          baseUrl: "",
+          updatedAt: "2026-07-23T10:00:00Z",
+        },
+      },
+    });
+    useListLlmModelsMock.mockReturnValue({ mutate, isPending: false, isError: false });
+    renderWithIntl(<ProviderSettings />);
+
+    const load = screen.getByRole("button", { name: "Load available models" });
+    expect(load).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Provider" }));
+    fireEvent.click(await screen.findByRole("option", { name: "OpenAI-compatible" }));
+
+    expect(screen.getByRole("button", { name: "Load available models" })).toBeDisabled();
+    expect(
+      screen.getByText("Enter the API key for this provider to list its models."),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Replace the API key"), { target: { value: "sk-new" } });
+
+    expect(screen.getByRole("button", { name: "Load available models" })).toBeEnabled();
+  });
+
+  // Listing models applies the same plan gate the save does, so it can now answer 409. Mapping that in
+  // the save path only would tell a tier without the feature to go and check its API key.
+  it("blames the plan, not the key, when listing models hits the plan gate", () => {
+    useListLlmModelsMock.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new ConduxApiError("POST", "/api/orgs/3/llm-config/models", 409, undefined),
+    });
+    renderWithIntl(<ProviderSettings />);
+
+    expect(screen.getByText("AI provider keys require the Enterprise plan.")).toBeInTheDocument();
+    expect(screen.queryByText("Could not load models. Check the API key.")).not.toBeInTheDocument();
+  });
+
   it("submits the key to set the config", () => {
     const mutate = vi.fn();
     useSetLlmConfigMock.mockReturnValue({ ...idleSave, mutate });

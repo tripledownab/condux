@@ -5,7 +5,7 @@ namespace Condux.Sdk.Tests;
 
 // Proves delivery is resilient and never throws: retries 429 / 5xx / network errors with backoff, honors
 // Retry-After, and stops on a non-retriable status. Backoff is exercised with a recording sleep, no timers.
-// Mirrors the JS transport.test.ts.
+// Built like the JS transport.test.ts.
 public class TransportTests
 {
     private const string Dsn = "https://k@ingest.example.test/p";

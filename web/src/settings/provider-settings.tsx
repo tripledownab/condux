@@ -27,9 +27,13 @@ const DEFAULT_MODEL = "claude-opus-4-8";
 // vLLM, Ollama and LiteLLM behind one base URL.
 const PROVIDERS = ["anthropic", "openai-compat"] as const;
 
-// Map a save failure to a message key: the plan gate (409), the feature being off on this deployment
-// (404 — no secret store), a rejected key (400), a role gap (403), else generic.
-function saveErrorKey(error: unknown): string {
+// Map a request failure to a message key. The plan gate (409), the feature being off on this deployment
+// (404, no secret store) and a role gap (403) mean the same thing whichever call hit them, so the
+// caller supplies only what it alone can say: the fallback, and whether a 400 is a rejected key.
+//
+// Shared because both calls on this tab can now return 409: listing models applies the same plan gate
+// the save does, and mapping that in one place only would have told a Free org to check its API key.
+function requestErrorKey(error: unknown, fallback: string, keyRejected?: string): string {
   const status = (error as ConduxApiError | null)?.status;
   if (status === 409) {
     return "requiresUpgrade";
@@ -37,13 +41,13 @@ function saveErrorKey(error: unknown): string {
   if (status === 404) {
     return "notConfigured";
   }
-  if (status === 400) {
-    return "invalidKey";
+  if (status === 400 && keyRejected !== undefined) {
+    return keyRejected;
   }
   if (status === 403) {
     return "adminOnly";
   }
-  return "failed";
+  return fallback;
 }
 
 // The AI provider settings tab (#65, BYO-key): an org runs the Conductor on its own API key instead of
@@ -112,6 +116,14 @@ export function ProviderSettings() {
   const existing = config.data?.status === 200 ? config.data.data : null;
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getGetLlmConfigQueryKey(orgId) });
+
+  // Listing models with no key uses the org's stored one, and the server sends that only to the
+  // destination stored beside it. So a form that now names a different provider or base URL cannot be
+  // answered without the key for it.
+  const needsKeyForChangedDestination =
+    existing !== null &&
+    (provider !== existing.provider || baseUrl.trim() !== existing.baseUrl) &&
+    apiKey.trim().length === 0;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -232,26 +244,34 @@ export function ProviderSettings() {
           </Field>
 
           {/* Load the models the key can use into the picker above. Uses the entered key, or the stored
-              one when none is typed (so an existing config can be re-modeled). */}
+              one when none is typed (so an existing config can be re-modeled).
+
+              The stored key only ever goes to the destination stored beside it, so listing models for a
+              provider or base URL you have just changed needs the key for it. Without this the button
+              would answer with the SAVED provider's models while the form showed the new one, which
+              reads as the picker being wrong rather than as the key being missing. */}
           <div>
             <button
               type="button"
               onClick={loadModels}
-              disabled={listModels.isPending}
+              disabled={listModels.isPending || needsKeyForChangedDestination}
               className={SECONDARY_BUTTON_CLASS}
             >
               {listModels.isPending ? translate("loadingModels") : translate("loadModels")}
             </button>
+            {needsKeyForChangedDestination ? (
+              <p className="mt-2 text-sm text-muted-foreground">{translate("modelsNeedKey")}</p>
+            ) : null}
             {listModels.isError ? (
               <p role="alert" className="mt-2 text-sm text-error">
-                {translate("modelsError")}
+                {translate(requestErrorKey(listModels.error, "modelsError"))}
               </p>
             ) : null}
           </div>
 
           {save.isError ? (
             <p role="alert" className="text-sm text-error">
-              {translate(saveErrorKey(save.error))}
+              {translate(requestErrorKey(save.error, "failed", "invalidKey"))}
             </p>
           ) : null}
 

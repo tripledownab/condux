@@ -25,7 +25,6 @@ public sealed class DevAdminSeedTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Seeds_an_admin_that_can_log_in_and_reseeding_is_idempotent()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = $"seed-{Guid.NewGuid():N}@condux.test";
         const string password = "seeded-admin-password";
 
@@ -49,7 +48,6 @@ public sealed class DevAdminSeedTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Without_the_seed_env_no_account_is_created()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = $"noseed-{Guid.NewGuid():N}@condux.test";
 
         using var app = ControlPlaneApp.Create(pg.ConnectionString);

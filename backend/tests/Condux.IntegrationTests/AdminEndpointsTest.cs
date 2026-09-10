@@ -24,7 +24,6 @@ public sealed class AdminEndpointsTest(PostgresFixture pg) : IClassFixture<Postg
     [Fact]
     public async Task Platform_admin_sees_the_console_and_everyone_else_is_hidden_from_it()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
 
         // A platform admin (listed email) and an ordinary tenant user, each with their own session.

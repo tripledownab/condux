@@ -8,6 +8,7 @@
 export interface McpTokenResponse {
   id: string;
   name: string;
+  capability: string;
   createdAt: string;
   /** @nullable */
   lastUsedAt: string | null;

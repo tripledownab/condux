@@ -292,4 +292,109 @@ public class GitHubRepoClientTests
         Assert.Equal("condux/fix-1", body.RootElement.GetProperty("head").GetString());
         Assert.Equal("main", body.RootElement.GetProperty("base").GetString());
     }
+
+    // ---- What reaches the URL -------------------------------------------------------------------
+    //
+    // The paths this client is given come from a model's fix plan or from an ingested stack frame's
+    // filename, so they are strings someone else authored, and they used to be interpolated raw. .NET's
+    // Uri collapses dot segments before the request is sent, so a path could move the request off the
+    // /contents/ namespace entirely while carrying a token that can read and write the repository.
+    //
+    // These assert on the URI the handler SAW. Asserting on the return value would pass just as well
+    // against the vulnerable code, because a traversal request that reaches GitHub simply 404s and
+    // GetFileAsync answers null either way.
+
+    [Theory]
+    [InlineData("../../other-repo/secrets.txt")]
+    [InlineData("src/../../../etc/passwd")]
+    [InlineData("/etc/passwd")]
+    [InlineData("..")]
+    public async Task A_path_that_leaves_the_repo_root_is_refused_before_any_request_is_sent(string path)
+    {
+        var (client, handler) = Create([]);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.GetFileAsync(Token, Repo, path, "main"));
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.PutFileAsync(Token, Repo, path, "branch", "msg", "content", existingSha: null));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>
+    /// Encoding is a separate defence from containment and catches a different thing: these paths are
+    /// legal inside a repository, and left raw they would end the path and start a query or a fragment.
+    /// </summary>
+    [Theory]
+    [InlineData("src/my file.js", "/repos/acme/api/contents/src/my%20file.js?ref=main")]
+    [InlineData("src/a#b.js", "/repos/acme/api/contents/src/a%23b.js?ref=main")]
+    [InlineData("src/a?b.js", "/repos/acme/api/contents/src/a%3Fb.js?ref=main")]
+    public async Task An_awkward_but_legal_filename_is_encoded_rather_than_changing_the_request(
+        string path, string expectedPathAndQuery)
+    {
+        var (client, handler) = Create([]);
+
+        await client.GetFileAsync(Token, Repo, path, "main");
+
+        Assert.Equal(expectedPathAndQuery, handler.Requests[0].Request.RequestUri!.PathAndQuery);
+    }
+
+    /// <summary>
+    /// The other half of the same fix, and the one that would break the product if it were wrong: a repo
+    /// path's separators are structure, so a nested path must still address the file it names. Encoding
+    /// the whole string in one call would produce src%2Fapp%2FProgram.cs and resolve to nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_nested_path_keeps_its_separators()
+    {
+        var (client, handler) = Create([]);
+
+        await client.GetFileAsync(Token, Repo, "src/app/Program.cs", "main");
+
+        Assert.Equal(
+            "/repos/acme/api/contents/src/app/Program.cs?ref=main",
+            handler.Requests[0].Request.RequestUri!.PathAndQuery);
+    }
+
+    /// <summary>
+    /// The repository name and the branch traverse the URL just as a file path does, and neither is
+    /// validated where it is stored: `RepoEndpoints` writes `RepoFullName` and `DefaultBranch` with no
+    /// shape check, and the base branch of a fix run is chosen per request. Escaping alone does not stop
+    /// it, since `..` is unreserved and survives percent-encoding.
+    /// </summary>
+    [Theory]
+    [InlineData("acme/api/../../other", "main")]
+    [InlineData("acme/api", "../../other")]
+    public async Task A_repo_or_branch_that_traverses_the_url_is_refused_before_any_request(
+        string repoFullName, string branch)
+    {
+        var (client, handler) = Create([]);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.GetBranchHeadShaAsync(Token, repoFullName, branch));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>
+    /// A repository is owner/name and a branch may be feature/x, so both keep their separators.
+    /// </summary>
+    [Fact]
+    public async Task A_repo_and_a_branch_keep_their_separators_and_encode_the_rest()
+    {
+        var (client, handler) = Create(new()
+        {
+            ["GET /repos/acme/api/git/ref/heads/feature/new%20thing"] =
+                (HttpStatusCode.OK, """{"object":{"sha":"base-sha"}}"""),
+        });
+
+        // Stubbed at the escaped URL and asserted on the returned sha, so the request has to have landed
+        // exactly there. Letting the call throw on an unstubbed route would pass for any wrong URL.
+        var sha = await client.GetBranchHeadShaAsync(Token, "acme/api", "feature/new thing");
+
+        Assert.Equal("base-sha", sha);
+        Assert.Equal(
+            "/repos/acme/api/git/ref/heads/feature/new%20thing",
+            handler.Requests[0].Request.RequestUri!.PathAndQuery);
+    }
 }

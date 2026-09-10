@@ -100,17 +100,23 @@ final class EventTransport {
 
     /** Honor Retry-After (seconds) on a 429; otherwise capped exponential backoff. Returns seconds. */
     private static double backoffSeconds(int attempt, Integer status, Map<String, String> headers) {
+        double wantedMs = BASE_BACKOFF_MS * Math.pow(2, attempt);
         if (status != null && status == 429) {
             String retryAfter = header(headers, "retry-after");
             if (retryAfter != null && !retryAfter.strip().isEmpty()) {
                 try {
-                    return Math.max(0.0, Double.parseDouble(retryAfter.strip()));
+                    // parseDouble accepts "Infinity" and "NaN", and neither has a sensible answer
+                    // downstream. Not finite is not an instruction, so it falls back to the schedule.
+                    double seconds = Double.parseDouble(retryAfter.strip());
+                    if (Double.isFinite(seconds)) {
+                        wantedMs = Math.max(0.0, seconds) * 1000.0;
+                    }
                 } catch (NumberFormatException ignored) {
                     // fall through to exponential backoff
                 }
             }
         }
-        return Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt), MAX_BACKOFF_MS) / 1000.0;
+        return Math.min(wantedMs, MAX_BACKOFF_MS) / 1000.0;
     }
 
     private static String header(Map<String, String> headers, String name) {

@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using Condux.Agent.Sandbox;
 using Xunit;
 
@@ -18,6 +16,30 @@ public class SandboxTarTests
         Assert.Equal("export const items = [];", SandboxTar.FirstFileContents(tar));
     }
 
+    /// <summary>
+    /// An entry name is what Docker turns into a path when it expands the archive, so a traversing one
+    /// writes outside the workspace directory. Both callers pack through here: the workspace seeds the
+    /// checkout with it and stages every agent write with it, so guarding one caller would have left the
+    /// other open.
+    /// </summary>
+    [Theory]
+    [InlineData("../escape.ts")]
+    [InlineData("src/../../escape.ts")]
+    [InlineData("/etc/passwd")]
+    [InlineData(@"..\escape.ts")]
+    public void A_traversing_entry_name_is_refused_rather_than_packed(string path) =>
+        Assert.Throws<ArgumentException>(
+            () => SandboxTar.FromFiles(new Dictionary<string, string> { [path] = "x" }));
+
+    /// <summary>A leading "./" is normalized away rather than packed as a literal dot directory.</summary>
+    [Fact]
+    public void A_relative_prefix_is_normalized_off_the_entry_name()
+    {
+        var tar = SandboxTar.FromFiles(new Dictionary<string, string> { ["./src/cart.ts"] = "x" });
+
+        Assert.Equal("x", SandboxTar.FirstFileContents(tar));
+    }
+
     [Fact]
     public void Contents_survive_non_ascii_intact()
     {
@@ -34,47 +56,5 @@ public class SandboxTarTests
     public void An_archive_with_no_regular_file_reads_as_nothing()
     {
         Assert.Null(SandboxTar.FirstFileContents(SandboxTar.FromFiles(new Dictionary<string, string>())));
-    }
-
-    [Fact]
-    public async Task A_framed_exec_stream_is_read_back_in_order()
-    {
-        // Docker frames an untty'd exec stream as an 8 byte header then that many payload bytes, merging
-        // stdout and stderr in stream order. Reading it as plain text would splice the headers into the
-        // output the model sees.
-        var stream = new MemoryStream(Frame((1, "compiling\n"), (2, "warning: unused\n"), (1, "done\n")));
-
-        var output = await DockerEngineClient.ReadMultiplexedAsync(stream, CancellationToken.None);
-
-        Assert.Equal("compiling\nwarning: unused\ndone\n", output);
-    }
-
-    [Fact]
-    public async Task A_truncated_frame_ends_the_read_rather_than_hanging()
-    {
-        var complete = Frame((1, "partial output\n"));
-        // A daemon that dies mid-frame leaves a header promising bytes that never arrive.
-        var truncated = complete.Concat(new byte[] { 1, 0, 0, 0, 0, 0, 0, 40 }).ToArray();
-
-        var output = await DockerEngineClient.ReadMultiplexedAsync(
-            new MemoryStream(truncated), CancellationToken.None);
-
-        Assert.Equal("partial output\n", output);
-    }
-
-    private static byte[] Frame(params (byte Stream, string Text)[] chunks)
-    {
-        var buffer = new List<byte>();
-        foreach (var (streamId, text) in chunks)
-        {
-            var payload = Encoding.UTF8.GetBytes(text);
-            var header = new byte[8];
-            header[0] = streamId;
-            BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4), payload.Length);
-            buffer.AddRange(header);
-            buffer.AddRange(payload);
-        }
-
-        return [.. buffer];
     }
 }

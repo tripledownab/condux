@@ -50,7 +50,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Business_org_sets_reads_and_deletes_a_config_with_the_secret_stored_encrypted()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2); // Business has Sso
@@ -79,7 +78,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_tier_without_sso_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 0); // Free — no Sso
@@ -93,7 +91,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_domain_owned_by_another_org_is_refused()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp();
 
         var clientA = app.CreateClient();
@@ -115,7 +112,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task An_invalid_domain_is_rejected()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2);
@@ -127,7 +123,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_scheme_less_endpoint_is_rejected()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2);
@@ -147,7 +142,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_saml_config_round_trips_and_clears_the_oidc_half()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2);
@@ -176,7 +170,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task A_saml_config_with_an_unparseable_certificate_is_rejected()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp().CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client, tier: 2);
@@ -196,7 +189,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task The_routes_404_when_the_secret_store_is_not_configured()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         // The shared app factory sets CONDUX_SECRET_KEY unconditionally, so the key has to be cleared
         // explicitly to reach the not-configured path. Without this the request 404s anyway, because
         // the org simply has no config, and the assertion below would hold with the gate deleted.
@@ -213,11 +205,10 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Metadata_is_served_from_configuration_and_is_absent_when_the_feature_is_off()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-        var app = ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
+        var app = ControlPlaneApp.Create(pg.ConnectionString, appBaseUrl: "https://app.example.test/")
+            .WithWebHostBuilder(b =>
         {
             b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
-            b.UseSetting("CONDUX_APP_BASE_URL", "https://app.example.test/");
         });
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);

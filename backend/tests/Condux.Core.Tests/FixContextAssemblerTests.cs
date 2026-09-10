@@ -54,6 +54,44 @@ public class FixContextAssemblerTests
         Assert.Contains("Culprit: total (src/cart.js:5)", context.Prompt);
     }
 
+    /// <summary>
+    /// A frame's filename is authored by whoever sent the event. An unmapped one falls through as the raw
+    /// path, and these paths are then fetched from the customer's repository with a token that can read
+    /// all of it, so one that leaves the repo root must not become a scoped path.
+    ///
+    /// Dropped rather than thrown, and that is what the second assertion pins: a crafted frame sitting
+    /// beside real ones must not deny the fix run to the real ones. An exception here would let any event
+    /// sender disable the Conductor for an issue.
+    /// </summary>
+    [Fact]
+    public void Drops_a_frame_path_that_leaves_the_repo_root_and_keeps_the_rest()
+    {
+        var sample = SampleEvent();
+        var evil = new Frame { Filename = "../../../etc/passwd", Function = "evil", Lineno = 1, InApp = true };
+        var crafted = new Event
+        {
+            Message = sample.Message,
+            Breadcrumbs = sample.Breadcrumbs,
+            Exceptions =
+            [
+                new ExceptionValue
+                {
+                    Type = sample.Exceptions[0].Type,
+                    Value = sample.Exceptions[0].Value,
+                    Stacktrace = new Stacktrace
+                    {
+                        Frames = [evil, .. sample.Exceptions[0].Stacktrace!.Frames],
+                    },
+                },
+            ],
+        };
+
+        var context = FixContextAssembler.Assemble(crafted, Mappings);
+
+        Assert.DoesNotContain("../../../etc/passwd", context.ScopedPaths);
+        Assert.Equal(["src/checkout.js", "src/cart.js"], context.ScopedPaths);
+    }
+
     [Fact]
     public void Double_scrubs_secrets_from_the_prompt()
     {

@@ -82,14 +82,15 @@ final class EventTransport
      */
     private static function backoffSeconds(int $attempt, ?int $status, array $headers): float
     {
+        $wantedMs = self::BASE_BACKOFF_MS * (2 ** $attempt);
         if ($status === 429) {
             $retryAfter = self::header($headers, 'retry-after');
             if ($retryAfter !== null && trim($retryAfter) !== '' && is_numeric(trim($retryAfter))) {
-                return max(0.0, (float) trim($retryAfter));
+                $wantedMs = max(0.0, (float) trim($retryAfter)) * 1000.0;
             }
         }
 
-        return min(self::BASE_BACKOFF_MS * (2 ** $attempt), self::MAX_BACKOFF_MS) / 1000.0;
+        return min($wantedMs, self::MAX_BACKOFF_MS) / 1000.0;
     }
 
     /** @param array<string,string> $headers */

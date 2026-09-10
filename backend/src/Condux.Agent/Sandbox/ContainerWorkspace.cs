@@ -1,4 +1,5 @@
 using Condux.Core.FixEngine;
+using Condux.Core.SourceControl;
 
 namespace Condux.Agent.Sandbox;
 
@@ -75,19 +76,25 @@ public sealed class ContainerWorkspace : IAgentWorkspace, IAsyncDisposable
     /// </summary>
     public async Task<string?> ReadFileAsync(string path, CancellationToken cancellationToken = default)
     {
-        var archive = await docker.GetArchiveAsync(containerId, Absolute(path), cancellationToken);
+        var archive = await docker.GetArchiveAsync(
+            containerId, Absolute(RepoPaths.Normalize(path)), cancellationToken);
         return archive is null ? null : SandboxTar.FirstFileContents(archive);
     }
 
     public async Task WriteFileAsync(
         string path, string contents, CancellationToken cancellationToken = default)
     {
+        // The model chooses this path, so it is checked here exactly as the in-memory workspace checks it.
+        // This was the only workspace that staged a path unvalidated, and the staged key is what the host
+        // later commits, so an unchecked one would have travelled all the way to the git tail.
+        var normalized = RepoPaths.Normalize(path);
         await docker.PutArchiveAsync(
-            containerId, WorkDir, SandboxTar.FromFiles(new Dictionary<string, string> { [path] = contents }),
+            containerId, WorkDir,
+            SandboxTar.FromFiles(new Dictionary<string, string> { [normalized] = contents }),
             cancellationToken);
 
-        changed[path] = contents;
-        known.Add(path);
+        changed[normalized] = contents;
+        known.Add(normalized);
     }
 
     /// <summary>

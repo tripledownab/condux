@@ -1,6 +1,7 @@
 using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
 using Condux.Core.FixEngine;
+using Condux.Core.Orgs;
 using Condux.Core.Plans;
 using Condux.Core.Quotas;
 using Condux.Storage.Postgres;
@@ -24,16 +25,25 @@ internal static class ProvisioningEndpoints
         // A user belongs to exactly one org (ADR-0018): creating another while a member is refused.
         // This is how a user gets their first one. Signup deliberately creates none, so a brand-new
         // account belongs to nothing until it comes through here or accepts an invite.
-        app.MapPost("/api/orgs", async Task<Results<Created<Org>, Conflict<ErrorResponse>>> (
+        //
+        // The name is checked here because a non-nullable string on the request record is a compile-time
+        // claim only: a body omitting it deserializes to null, reached Npgsql and answered 500. The slug
+        // is derived from the name rather than accepted, so a caller cannot supply one at all.
+        app.MapPost("/api/orgs", async Task<Results<Created<Org>, BadRequest<ErrorResponse>, Conflict<ErrorResponse>>> (
                 CreateOrgRequest req, HttpContext http,
                 OrgRepository orgs, OrgMemberRepository members) =>
             {
+                if (!OrgNames.IsValid(req.Name))
+                {
+                    return TypedResults.BadRequest(new ErrorResponse("invalid_name"));
+                }
                 var userId = OrgAuthorization.CurrentUserId(http.User);
                 if ((await members.ListOrgsForUserAsync(userId)).Count > 0)
                 {
                     return TypedResults.Conflict(new ErrorResponse("single_org_limit"));
                 }
-                var org = await orgs.CreateAsync(req.Slug, req.Name, (int)Tier.Free);
+                var name = req.Name.Trim();
+                var org = await orgs.CreateAsync(OrgNames.ToSlug(name), name, (int)Tier.Free);
                 await members.AddAsync(org.Id, userId, OrgRole.Owner);
                 return TypedResults.Created($"/api/orgs/{org.Id}", org);
             })
@@ -143,7 +153,7 @@ internal static class ProvisioningEndpoints
         Org org, IAiFixQuota quota, DateTimeOffset now, CancellationToken ct)
     {
         var limits = PlanCatalog.For((Tier)org.Tier);
-        // Lifetime first, mirroring the reservation order in RequestFix: a tier that defines a grant
+        // Lifetime first: a tier that defines a grant
         // spends it instead of the monthly counter. Dormant today (ADR-0035).
         if (limits.AiFixesLifetime > 0)
         {

@@ -33,7 +33,6 @@ public sealed class IssueSubsetApiTest(PostgresFixture pg) : IClassFixture<Postg
     [Fact]
     public async Task Filters_paginates_and_counts_server_side()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repo = new IssueRepository(pg.ConnectionString);
         var now = DateTimeOffset.UtcNow;

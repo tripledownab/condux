@@ -32,7 +32,6 @@ public sealed class OrgRbacTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Signup_creates_no_org_and_creating_one_makes_you_its_owner()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client);
 
@@ -49,7 +48,6 @@ public sealed class OrgRbacTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Non_member_cannot_see_or_mutate_another_orgs_resources()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -68,7 +66,6 @@ public sealed class OrgRbacTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Member_can_read_but_not_mutate_until_promoted_to_admin()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -100,7 +97,6 @@ public sealed class OrgRbacTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Owner_sees_members_and_cannot_strand_the_org_without_an_owner()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         var ownerUser = await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);

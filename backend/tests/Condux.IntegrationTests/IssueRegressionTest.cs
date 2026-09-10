@@ -18,7 +18,6 @@ public sealed class IssueRegressionTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Upsert_NewIssue_IsNotReopened_AndCarriesPublicId()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var repo = new IssueRepository(pg.ConnectionString);
 
@@ -33,7 +32,6 @@ public sealed class IssueRegressionTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Upsert_OnResolvedIssue_ReopensIt_AndReportsRegression()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var repo = new IssueRepository(pg.ConnectionString);
         var grouping = new Grouping("fp-reg", "TypeError: boom", "run");

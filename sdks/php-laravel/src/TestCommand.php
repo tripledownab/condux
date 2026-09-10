@@ -10,7 +10,7 @@ use Illuminate\Console\Command;
 
 /**
  * `php artisan condux:test` — send a test event to the relay to verify the DSN and connectivity, and
- * report the outcome. Mirrors Sentry's `sentry:test`.
+ * report the outcome. Modelled on Sentry's `sentry:test`.
  */
 final class TestCommand extends Command
 {

@@ -9,7 +9,7 @@ namespace Condux;
 
 require __DIR__ . '/harness.php';
 
-foreach (['event', 'scope', 'capture_context', 'modules', 'test_event'] as $suite) {
+foreach (['event', 'scope', 'capture_context', 'modules', 'test_event', 'backoff_conformance'] as $suite) {
     require __DIR__ . "/{$suite}_test.php";
 }
 

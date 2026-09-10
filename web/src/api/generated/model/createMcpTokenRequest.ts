@@ -7,4 +7,6 @@
 
 export interface CreateMcpTokenRequest {
   name: string;
+  /** @nullable */
+  capability: string | null;
 }

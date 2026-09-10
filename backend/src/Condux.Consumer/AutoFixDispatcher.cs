@@ -16,7 +16,7 @@ namespace Condux.Consumer;
 /// assembly + quota reservation + routing the manual RequestFix does, minus the human click — including
 /// handing the work to the org's own runner when that is where it runs its fixes (ADR-0033 slice 4c). The
 /// run still ends in a human-reviewed <b>draft</b> PR (auto means auto-<i>request</i>, never auto-merge).
-/// Best-effort: any failure is logged and swallowed, never disrupting ingest. Mirrors AlertDispatcher.
+/// Best-effort: any failure is logged and swallowed, never disrupting ingest. Built like AlertDispatcher.
 /// </summary>
 public sealed class AutoFixDispatcher(
     ProjectRepository projects, OrgRepository orgs, RepoLinkRepository repos, ReleaseRepository releases,

@@ -39,7 +39,7 @@ internal static class OAuthEndpoints
                     }
 
                     var state = OidcFlow.RandomToken();
-                    http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions(http));
+                    http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions());
 
                     var url = "https://accounts.google.com/o/oauth2/v2/auth"
                         + "?response_type=code"

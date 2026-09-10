@@ -55,10 +55,14 @@ public sealed class ManagedAgentsGateway(
         // refused by the source host itself, which is what makes draft-PR-only structural here.
         var readOnlyToken = await tokens.GetReadOnlyAsync(spec.InstallationId, spec.RepoFullName, ct);
 
+        // The repo name and the branch go into a URL the vendor clones, and neither is validated where it
+        // is stored, so both go through the same rule the source-host client applies rather than being
+        // interpolated. Without it a name carrying a `..` segment would resolve to a different repository.
+        var cloneUrl = $"https://github.com/{RepoPaths.EscapeSegments(spec.RepoFullName)}";
         var session = await client.CreateSessionAsync(new WireSessionCreate(
             agentId, envId, $"condux fix {spec.IssueId}",
             [new WireRepositoryResource(
-                $"https://github.com/{spec.RepoFullName}", readOnlyToken,
+                cloneUrl, readOnlyToken,
                 new WireCheckout("branch", spec.BaseBranch), MountPath)],
             [new WireUserMessage([new WireTextContent(BuildUserMessage(spec))])],
             new WireBudget(new WireMoney(
@@ -133,18 +137,11 @@ public sealed class ManagedAgentsGateway(
             .LastOrDefault(t => !string.IsNullOrWhiteSpace(t))
             ?? throw new InvalidOperationException("The agent session produced no final message.");
 
+        // The plan comes from an agent that browsed a whole repository, so its paths are untrusted input
+        // to the git tail. The check that keeps them inside the repo is DraftPrPublisher's, below, which
+        // the single-shot gateway shares: this gateway used to hold its own copy and was therefore the
+        // only one of the two that had it.
         var plan = FixPlanParser.Parse(finalText);
-        foreach (var change in plan.Files)
-        {
-            // The plan now comes from an agent that browsed a whole repository, so the paths are
-            // untrusted input to the git tail — keep them inside the repo.
-            if (Path.IsPathRooted(change.Path)
-                || change.Path.Split('/', '\\').Contains(".."))
-            {
-                throw new InvalidOperationException($"The fix plan named a path outside the repository: '{change.Path}'.");
-            }
-        }
-
         var token = await tokens.GetAsync(spec.InstallationId, ct);
         var (branch, prUrl, summary) = await DraftPrPublisher.PublishAsync(
             repo, token, spec, runId,

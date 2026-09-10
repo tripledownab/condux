@@ -12,5 +12,7 @@ export interface NoteResponse {
   authorUserId: number | null;
   /** @nullable */
   authorEmail: string | null;
+  /** @nullable */
+  authorTokenName: string | null;
   createdAt: string;
 }

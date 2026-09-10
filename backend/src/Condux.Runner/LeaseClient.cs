@@ -5,7 +5,8 @@ using Condux.Core.FixEngine;
 namespace Condux.Runner;
 
 /// <summary>
-/// One job as the control plane hands it over. Mirrors the lease response rather than sharing a type with
+/// One job as the control plane hands it over. Shaped after the lease response rather than sharing
+/// a type with
 /// it: a runner is deployed by the customer and lags our deploys, so the two shapes have to be free to
 /// differ. Anything added on the server must stay optional here, and a field this runner does not know
 /// about is ignored rather than fatal.

@@ -9,7 +9,7 @@ public enum ConductorPauseReason
 }
 
 /// <summary>Renders the org-facing subject + body for a Conductor-pause notice. Pure and side-effect
-/// free (the parallel of <c>AlertText</c> for the alert path), so it is unit-testable and the same text
+/// free (the org-notice counterpart of <c>AlertText</c>), so it is unit-testable and the same text
 /// goes to every channel. House style: no em-dashes.</summary>
 public static class ConductorPauseText
 {

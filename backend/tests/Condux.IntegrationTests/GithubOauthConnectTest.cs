@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Condux.GitHub;
@@ -23,10 +22,10 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
 {
-    private const string WebhookSecret = "test-webhook-secret";
-    private const string Slug = "condux-test";
-    private const string RedirectUri = "https://app.condux.test/api/github/oauth/callback";
-    private static readonly string PrivateKeyPem = RSA.Create(2048).ExportRSAPrivateKeyPem();
+    private const string WebhookSecret = GithubAppSettings.WebhookSecret;
+    private const string Slug = GithubAppSettings.Slug;
+    private const string RedirectUri = GithubAppSettings.RedirectUri;
+    private const string StateCookie = "condux_github_state";
 
     // A stub GitHub: the token endpoint always hands back a user token, and /user/installations returns
     // whatever the test set up. Routed by path so one handler serves both legs.
@@ -45,15 +44,10 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     }
 
     private WebApplicationFactory<Program> CreateApp(string installationsJson) =>
-        ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
+        ControlPlaneApp.Create(pg.ConnectionString, appBaseUrl: "https://app.condux.test")
+            .WithWebHostBuilder(b =>
         {
-            b.UseSetting("CONDUX_GITHUB_CLIENT_ID", "Iv1.test");
-            b.UseSetting("CONDUX_GITHUB_WEBHOOK_SECRET", WebhookSecret);
-            b.UseSetting("CONDUX_GITHUB_APP_SLUG", Slug);
-            b.UseSetting("CONDUX_GITHUB_PRIVATE_KEY", PrivateKeyPem);
-            b.UseSetting("CONDUX_GITHUB_CLIENT_SECRET", "client-secret");
-            b.UseSetting("CONDUX_GITHUB_OAUTH_REDIRECT_URI", RedirectUri);
-            b.UseSetting("CONDUX_APP_BASE_URL", "https://app.condux.test");
+            GithubAppSettings.Apply(b);
             b.ConfigureTestServices(s => s
                 .AddHttpClient("GitHubUserOAuth")
                 .ConfigurePrimaryHttpMessageHandler(() => new StubGithub(installationsJson)));
@@ -62,7 +56,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Connect_sends_the_browser_to_authorize_not_install_when_user_oauth_is_configured()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateApp(NoInstallations).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client);
@@ -75,6 +68,13 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         // Authorize, not installations/new: this leg comes back to us even when the app is already installed.
         Assert.StartsWith("https://github.com/login/oauth/authorize?", url);
         Assert.Contains($"redirect_uri={Uri.EscapeDataString(RedirectUri)}", url);
+
+        // The browser's half of the double submit: the state it will hand back is remembered in a cookie,
+        // so the return leg can tell this browser from one that was merely sent the link.
+        var state = Uri.UnescapeDataString(url.Split("state=")[1]);
+        Assert.Contains(
+            resp.Headers.GetValues("Set-Cookie"),
+            c => c.StartsWith($"{StateCookie}={state};", StringComparison.Ordinal));
     }
 
     // The bug this exists for: GitHub still holds the installation, our row is gone, and the user has no
@@ -82,7 +82,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Callback_relinks_the_single_installation_the_user_can_reach()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((41, "acme")));
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -102,7 +101,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Callback_sends_a_user_who_authorized_but_never_installed_on_to_install()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(NoInstallations);
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -113,15 +111,21 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         Assert.Equal(HttpStatusCode.Redirect, redirect.StatusCode);
         var location = redirect.Headers.Location!.ToString();
         Assert.Contains($"github.com/apps/{Slug}/installations/new", location);
-        // The onward state still carries the org, so the Setup URL can finish the link.
+        // The onward state still carries the org, so the Setup URL can carry the flow on.
         var state = Uri.UnescapeDataString(location.Split("state=")[1]);
         Assert.Equal(orgId, GithubConnectState.Validate(state, DateTimeOffset.UtcNow, WebhookSecret)!.OrgId);
+
+        // The browser's half has to come with it. This leg consumes the cookie it arrived with and then
+        // sets a new one, so the response carries both a deletion and the replacement; the last wins, and
+        // if it did not, every install started from here would fail at the Setup URL instead.
+        var cookies = redirect.Headers.GetValues("Set-Cookie")
+            .Where(c => c.StartsWith($"{StateCookie}=", StringComparison.Ordinal)).ToList();
+        Assert.Equal($"{StateCookie}={state}", cookies[^1].Split(';')[0]);
     }
 
     [Fact]
     public async Task Callback_hands_back_a_signed_choice_when_several_installations_are_reachable()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((51, "acme"), (52, "acme-labs")));
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -154,7 +158,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Select_refuses_an_installation_that_was_not_in_the_signed_choice()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((61, "acme"), (62, "acme-labs")));
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -177,7 +180,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Callback_leaves_an_installation_that_belongs_to_another_org_alone()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((71, "acme")));
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -198,7 +200,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Disconnect_frees_the_installation_for_another_org_to_claim()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((81, "acme")));
         var repo = new GithubInstallationRepository(pg.ConnectionString);
 
@@ -228,7 +229,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Disconnect_is_reversible_and_404s_when_there_is_nothing_linked()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = CreateApp(Installations((82, "acme")));
         var client = app.CreateClient();
         await ApiAuth.SignUpAsync(client);
@@ -249,7 +249,6 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Callback_returns_the_user_to_the_app_when_the_state_is_missing_or_forged()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var browser = CreateApp(NoInstallations)
             .CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
@@ -258,14 +257,149 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         Assert.Equal("https://app.condux.test/?github=failed", forged.Headers.Location!.ToString());
     }
 
+    /// <summary>
+    /// Coming back from the Setup URL with nothing reachable means GitHub is holding the install for an
+    /// organization owner to approve. Sending the user to install it again would loop forever, which is
+    /// the whole reason the state carries a flag saying an install just happened.
+    /// </summary>
+    [Fact]
+    public async Task Callback_reports_a_pending_install_rather_than_looping_back_to_install()
+    {
+        var app = CreateApp(NoInstallations);
+        var client = app.CreateClient();
+        await ApiAuth.SignUpAsync(client);
+        var orgId = await CreateOrgAsync(client);
+
+        var landed = await CallbackAsync(app, orgId, "/projects/proj-uuid", installed: true);
+
+        Assert.Equal(
+            "https://app.condux.test/projects/proj-uuid?github=pending",
+            landed.Headers.Location!.ToString());
+        Assert.Empty(await new GithubInstallationRepository(pg.ConnectionString).GetByOrgAsync(orgId));
+    }
+
+    /// <summary>
+    /// The whole first-install path in one go, driving each leg with what the previous one actually
+    /// emitted rather than with a hand-built state. The legs are tested apart elsewhere, and passing apart
+    /// is not the same as joining up: the Setup URL both consumes its cookie and sets a new one on the same
+    /// response, so if the replacement did not win, every install would fail at the last step with the
+    /// callback answering "failed" and no other test noticing.
+    /// </summary>
+    [Fact]
+    public async Task Connect_through_install_and_setup_links_the_installation()
+    {
+        var app = CreateApp(NoInstallations);
+        var client = app.CreateClient();
+        await ApiAuth.SignUpAsync(client);
+        var orgId = await CreateOrgAsync(client);
+
+        // 1. Connect hands back an authorize URL and remembers its state.
+        var connect = await client.PostAsJsonAsync(
+            $"/api/orgs/{orgId}/github/connect", new { returnPath = "/projects/proj-uuid" });
+        var authorizeUrl = (await connect.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("installUrl").GetString()!;
+        var connectState = Uri.UnescapeDataString(authorizeUrl.Split("state=")[1]);
+
+        // 2. GitHub returns with no installations reachable, so the user is sent to install the app. The
+        //    state to carry into the Setup URL is the one this response set, not the one we started with.
+        var toInstall = await CallbackAsync(app, connectState, connectState);
+        var installUrl = toInstall.Headers.Location!.ToString();
+        Assert.Contains($"github.com/apps/{Slug}/installations/new", installUrl);
+        var installState = Uri.UnescapeDataString(installUrl.Split("state=")[1]);
+        Assert.Equal(installState, CookieFrom(toInstall));
+
+        // 3. GitHub sends the browser to the Setup URL after the install. It writes nothing and hands the
+        //    flow back to authorization, again with a state its own response remembers.
+        // A unique installation id: the class shares one database, and linking refuses an installation
+        // another org already holds, so reusing another test's id makes this fail only when the whole
+        // class runs.
+        var toAuthorize = await SetupAsync(app, 45, installState, CookieFrom(toInstall));
+        var setupState = Uri.UnescapeDataString(toAuthorize.Headers.Location!.ToString().Split("state=")[1]);
+        Assert.Equal(setupState, CookieFrom(toAuthorize));
+        Assert.Empty(await new GithubInstallationRepository(pg.ConnectionString).GetByOrgAsync(orgId));
+
+        // 4. This time GitHub reports the installation as reachable, so it is linked, and the browser lands
+        //    back where the connect started.
+        var linked = await CreateApp(Installations((45, "acme")))
+            .CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false })
+            .SendAsync(CallbackRequest(setupState, CookieFrom(toAuthorize)));
+
+        Assert.Equal(
+            "https://app.condux.test/projects/proj-uuid?github=connected",
+            linked.Headers.Location!.ToString());
+        Assert.Contains(
+            await new GithubInstallationRepository(pg.ConnectionString).GetByOrgAsync(orgId),
+            i => i.InstallationId == 45 && i.AccountLogin == "acme");
+    }
+
+    /// <summary>The connect-state cookie a leg set, which is the half the next leg has to send back.</summary>
+    private static string CookieFrom(HttpResponseMessage response) =>
+        response.Headers.GetValues("Set-Cookie")
+            .Last(c => c.StartsWith($"{StateCookie}=", StringComparison.Ordinal))
+            .Split(';')[0][(StateCookie.Length + 1)..];
+
+    private static async Task<HttpResponseMessage> SetupAsync(
+        WebApplicationFactory<Program> app, long installationId, string state, string cookieState)
+    {
+        var browser = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/github/setup?installation_id={installationId}&state={Uri.EscapeDataString(state)}");
+        request.Headers.Add("Cookie", $"{StateCookie}={cookieState}");
+        return await browser.SendAsync(request);
+    }
+
+    // A signed state is not authorization on its own: any org admin can mint one for their own org. Without
+    // the cookie, sending that state to a victim would let the victim's own GitHub authorization finish the
+    // attacker's connect, handing over the installation the victim can reach.
+    [Fact]
+    public async Task Callback_refuses_a_valid_state_the_browser_never_started_with()
+    {
+        var app = CreateApp(Installations((91, "victim-co")));
+        var attacker = app.CreateClient();
+        await ApiAuth.SignUpAsync(attacker);
+        var attackerOrgId = await CreateOrgAsync(attacker);
+        var repo = new GithubInstallationRepository(pg.ConnectionString);
+
+        var state = GithubConnectState.Create(
+            attackerOrgId, "/", false, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
+
+        var noCookie = await CallbackAsync(app, state, cookieState: null);
+        Assert.Equal("https://app.condux.test/?github=failed", noCookie.Headers.Location!.ToString());
+        Assert.Empty(await repo.GetByOrgAsync(attackerOrgId));
+
+        // A cookie from some other flow is no better than none.
+        var mismatched = await CallbackAsync(app, state, "a-different-state");
+        Assert.Equal("https://app.condux.test/?github=failed", mismatched.Headers.Location!.ToString());
+        Assert.Empty(await repo.GetByOrgAsync(attackerOrgId));
+    }
+
+    // A browser coming back from GitHub carries two halves: the state in the query, and the cookie the
+    // connect leg set. Both are needed, so the helper sends both.
     private static async Task<HttpResponseMessage> CallbackAsync(
-        WebApplicationFactory<Program> app, long orgId, string returnPath)
+        WebApplicationFactory<Program> app, long orgId, string returnPath, bool installed = false)
     {
         var state = GithubConnectState.Create(
-            orgId, returnPath, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
+            orgId, returnPath, installed, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
+        return await CallbackAsync(app, state, state);
+    }
+
+    private static async Task<HttpResponseMessage> CallbackAsync(
+        WebApplicationFactory<Program> app, string state, string? cookieState)
+    {
         var browser = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        return await browser.GetAsync(
-            $"/api/github/oauth/callback?code=the-code&state={Uri.EscapeDataString(state)}");
+        return await browser.SendAsync(CallbackRequest(state, cookieState));
+    }
+
+    private static HttpRequestMessage CallbackRequest(string state, string? cookieState)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Get, $"/api/github/oauth/callback?code=the-code&state={Uri.EscapeDataString(state)}");
+        if (cookieState is not null)
+        {
+            request.Headers.Add("Cookie", $"{StateCookie}={cookieState}");
+        }
+        return request;
     }
 
     private const string NoInstallations = """{"total_count":0,"installations":[]}""";

@@ -44,7 +44,16 @@ export function IssueNotes({
   const remove = useDeleteIssueNote({ mutation: { onSuccess: invalidate } });
 
   const list: NoteResponse[] = notes.data?.data ?? [];
-  const canDelete = (note: NoteResponse) => canModerate || note.authorUserId === currentUserId;
+  // The currentUserId guard is load-bearing: a note written over MCP has a null author, so without it a
+  // signed-out or still-loading viewer would match null to null, see a Delete button, and get a 403.
+  const canDelete = (note: NoteResponse) =>
+    canModerate || (currentUserId !== null && note.authorUserId === currentUserId);
+  // An agent's note names the MCP token that wrote it, marked so it does not read as a colleague.
+  const authorOf = (note: NoteResponse) =>
+    note.authorEmail ??
+    (note.authorTokenName === null
+      ? translate("unknownAuthor")
+      : translate("agentAuthor", { name: note.authorTokenName }));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -64,8 +73,7 @@ export function IssueNotes({
             <p className="whitespace-pre-wrap break-words text-foreground">{note.body}</p>
             <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span className="min-w-0 truncate">
-                {note.authorEmail ?? translate("unknownAuthor")} ·{" "}
-                {formatRelativeTime(note.createdAt)}
+                {authorOf(note)} · {formatRelativeTime(note.createdAt)}
               </span>
               {canDelete(note) ? (
                 <button

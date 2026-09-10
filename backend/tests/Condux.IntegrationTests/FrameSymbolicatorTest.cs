@@ -24,7 +24,6 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Symbolicates_a_minified_frame_via_debug_id()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
 
@@ -48,7 +47,6 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Leaves_a_frame_untouched_when_no_map_matches()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var symbolicator = new FrameSymbolicator(
             new SourceMapArtifactRepository(pg.ConnectionString), new MapStore("none", []));
@@ -62,7 +60,6 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Symbolicates_via_release_and_filename_basename_when_no_debug_id()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
 

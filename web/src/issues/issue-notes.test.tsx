@@ -24,9 +24,15 @@ function note(over: Record<string, unknown> = {}) {
     body: "a note",
     authorUserId: 7,
     authorEmail: "me@condux.test",
+    authorTokenName: null,
     createdAt: "2026-07-30T00:00:00Z",
     ...over,
   };
+}
+
+// A note left by an agent over MCP: no user, the MCP token's name instead (ADR-0046).
+function agentNote(over: Record<string, unknown> = {}) {
+  return note({ authorUserId: null, authorEmail: null, authorTokenName: "Claude", ...over });
 }
 
 function renderPanel(props: Partial<Parameters<typeof IssueNotes>[0]> = {}) {
@@ -74,5 +80,26 @@ describe("IssueNotes", () => {
     });
     renderPanel({ currentUserId: 999, canModerate: true });
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(2);
+  });
+
+  it("names the MCP token that wrote an agent's note, marked as an agent", () => {
+    useListIssueNotesMock.mockReturnValue({ data: { data: [agentNote()] }, isPending: false });
+    renderPanel();
+    expect(screen.getByText(/Claude \(agent\)/)).toBeInTheDocument();
+  });
+
+  it("never offers Delete on an agent's note to a non-moderator, whoever is signed in", () => {
+    useListIssueNotesMock.mockReturnValue({ data: { data: [agentNote()] }, isPending: false });
+
+    // An agent note has a null author, so a viewer whose own id is also null must not match it. The
+    // backend refuses that delete, and offering the button would only produce a 403.
+    renderPanel({ currentUserId: null, canModerate: false });
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("lets a moderator delete an agent's note", () => {
+    useListIssueNotesMock.mockReturnValue({ data: { data: [agentNote()] }, isPending: false });
+    renderPanel({ currentUserId: 7, canModerate: true });
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
   });
 });

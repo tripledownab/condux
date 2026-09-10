@@ -48,7 +48,7 @@ internal static class MfaEndpoints
                         return TypedResults.NotFound(new ErrorResponse("secret_key_not_configured"));
                     }
 
-                    if (await Reauthenticate(http, users, req.Password) is not { } user)
+                    if (await Sessions.ReauthenticateAsync(http, users, req.Password) is not { } user)
                     {
                         return TypedResults.Unauthorized();
                     }
@@ -64,7 +64,7 @@ internal static class MfaEndpoints
                     MfaConfirmation req, HttpContext http, MultiFactor mfa,
                     UserRepository users, SessionRepository sessions) =>
                 {
-                    if (await Reauthenticate(http, users, req.Password) is not { } user)
+                    if (await Sessions.ReauthenticateAsync(http, users, req.Password) is not { } user)
                     {
                         return TypedResults.Unauthorized();
                     }
@@ -75,7 +75,7 @@ internal static class MfaEndpoints
                     }
 
                     // Sessions opened before a second factor existed must not outlive it.
-                    await RevokeOtherSessions(http, sessions, user.Id);
+                    await Sessions.RevokeOtherSessionsAsync(http, sessions, user.Id);
                     return TypedResults.Ok(new RecoveryCodesResponse(codes));
                 })
             .WithName("confirmMfa").WithTags("Auth").RequireAuthorization();
@@ -84,7 +84,7 @@ internal static class MfaEndpoints
                 async Task<Results<Ok<RecoveryCodesResponse>, UnauthorizedHttpResult, BadRequest<ErrorResponse>>> (
                     PasswordConfirmation req, HttpContext http, MultiFactor mfa, UserRepository users) =>
                 {
-                    if (await Reauthenticate(http, users, req.Password) is not { } user)
+                    if (await Sessions.ReauthenticateAsync(http, users, req.Password) is not { } user)
                     {
                         return TypedResults.Unauthorized();
                     }
@@ -100,13 +100,13 @@ internal static class MfaEndpoints
                     PasswordConfirmation req, HttpContext http, MultiFactor mfa,
                     UserRepository users, SessionRepository sessions) =>
                 {
-                    if (await Reauthenticate(http, users, req.Password) is not { } user)
+                    if (await Sessions.ReauthenticateAsync(http, users, req.Password) is not { } user)
                     {
                         return TypedResults.Unauthorized();
                     }
 
                     await mfa.DisableAsync(user.Id, http.RequestAborted);
-                    await RevokeOtherSessions(http, sessions, user.Id);
+                    await Sessions.RevokeOtherSessionsAsync(http, sessions, user.Id);
                     return TypedResults.NoContent();
                 })
             .WithName("disableMfa").WithTags("Auth").RequireAuthorization();
@@ -154,22 +154,5 @@ internal static class MfaEndpoints
                     }
                 })
             .WithName("verifyMfa").WithTags("Auth");
-    }
-
-    /// <summary>The caller, only if they can produce their password again. Null otherwise.</summary>
-    private static async Task<User?> Reauthenticate(HttpContext http, UserRepository users, string? password)
-    {
-        var user = await users.GetByIdAsync(OrgAuthorization.CurrentUserId(http.User), http.RequestAborted);
-        return user?.PasswordHash is not null && PasswordHasher.Verify(password ?? string.Empty, user.PasswordHash)
-            ? user
-            : null;
-    }
-
-    private static async Task RevokeOtherSessions(HttpContext http, SessionRepository sessions, long userId)
-    {
-        var keep = http.Request.Cookies[SessionAuth.Cookie] is { Length: > 0 } raw
-            ? SessionTokens.HashToken(raw)
-            : string.Empty;
-        await sessions.RevokeAllExceptAsync(userId, keep, http.RequestAborted);
     }
 }

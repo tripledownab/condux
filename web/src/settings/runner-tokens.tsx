@@ -53,7 +53,7 @@ export function RunnerTokens({ orgId, canManage }: { orgId: number; canManage: b
       }
       onRevoke={(tokenId) => revokeToken.mutate({ orgId, tokenId }, { onSuccess: invalidate })}
       onDismissMinted={() => setMinted(null)}
-      renderConnect={(rawToken) => <RunnerConnect rawToken={rawToken} />}
+      renderConnect={(minted) => <RunnerConnect rawToken={minted.token} />}
     />
   );
 }

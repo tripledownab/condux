@@ -45,7 +45,6 @@ public sealed class IssueDetailApiTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Detail_ReturnsIssueWithRecentEvents()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var project = projectId.ToString();
         var grouping = new Grouping("fp-detail", "ValueError: boom", "run");
@@ -92,7 +91,6 @@ public sealed class IssueDetailApiTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Detail_UnknownIssue_Returns404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var resp = await client.GetAsync($"/api/projects/{projectId}/issues/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);

@@ -10,7 +10,7 @@ namespace Condux.Core.Auth;
 /// and the target org, so it grants scope only when replayed with that same admin's login: a leaked
 /// cookie is useless on its own, and it can never widen to a different admin or a different org without
 /// re-minting (which is gated by the signing key). HMAC-SHA256 over the payload, verified in constant
-/// time; a malformed, tampered, expired, or wrong-admin token yields null. Mirrors
+/// time; a malformed, tampered, expired, or wrong-admin token yields null. Built like
 /// <c>Condux.GitHub.GithubConnectState</c>, domain-separated ("impersonate:") so the two can never collide.
 /// </summary>
 public static class ImpersonationToken

@@ -28,9 +28,15 @@ public sealed record EmailContent(
     string? Badge = null,
     string? BadgeColorHex = null);
 
-/// <summary>The email palette + fonts. A hex mirror of the LIGHT tokens in <c>packages/brand/theme.css</c>:
-/// email clients cannot consume the CSS custom properties / oklch values, so this is the single server-side
-/// source. The brand is monochrome-neutral (a near-black primary) plus the event-level severity colors.</summary>
+/// <summary>The email palette + fonts, the single server-side source. Email clients cannot consume CSS
+/// custom properties, so these are hex values chosen by hand to sit where the LIGHT tokens in
+/// <c>packages/brand/theme.css</c> sit. The brand is monochrome-neutral (a near-black primary) plus the
+/// event-level severity colors.
+///
+/// The two must agree, or a Condux email stops looking like Condux. <b>unenforced parity:</b> those
+/// tokens are oklch and these are sRGB hex, so comparing them means converting between colour spaces,
+/// which is a third implementation to get wrong. A brand palette change needs these picked again
+/// deliberately; nothing will notice on its own.</summary>
 internal static class EmailTheme
 {
     public const string PageBg = "#f4f4f5";

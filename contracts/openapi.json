@@ -861,6 +861,16 @@
               }
             }
           },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
             "content": {
@@ -2001,6 +2011,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -2888,6 +2908,16 @@
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -4003,6 +4033,95 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/auth/password": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "changePassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/password/forgot": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "forgotPassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          }
+        }
+      }
+    },
+    "/api/auth/password/reset": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "resetPassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -6405,6 +6524,21 @@
           }
         }
       },
+      "ChangePasswordRequest": {
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ],
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string"
+          }
+        }
+      },
       "CheckoutRequest": {
         "required": [
           "tier"
@@ -6539,12 +6673,17 @@
       },
       "CreateMcpTokenRequest": {
         "required": [
-          "name"
+          "name",
+          "capability"
         ],
         "type": "object",
         "properties": {
           "name": {
             "type": "string"
+          },
+          "capability": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
@@ -6561,14 +6700,10 @@
       },
       "CreateOrgRequest": {
         "required": [
-          "slug",
           "name"
         ],
         "type": "object",
         "properties": {
-          "slug": {
-            "type": "string"
-          },
           "name": {
             "type": "string"
           }
@@ -6886,7 +7021,6 @@
         "required": [
           "actor",
           "event",
-          "detail",
           "createdAt"
         ],
         "type": "object",
@@ -6895,9 +7029,6 @@
             "type": "string"
           },
           "event": {
-            "type": "string"
-          },
-          "detail": {
             "type": "string"
           },
           "createdAt": {
@@ -7219,6 +7350,17 @@
           "outputTokens": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ForgotPasswordRequest": {
+        "required": [
+          "email"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
           }
         }
       },
@@ -7744,6 +7886,7 @@
         "required": [
           "id",
           "name",
+          "capability",
           "createdAt",
           "lastUsedAt",
           "revoked"
@@ -7755,6 +7898,9 @@
             "format": "uuid"
           },
           "name": {
+            "type": "string"
+          },
+          "capability": {
             "type": "string"
           },
           "createdAt": {
@@ -7840,6 +7986,7 @@
           "id",
           "name",
           "token",
+          "capability",
           "createdAt"
         ],
         "type": "object",
@@ -7852,6 +7999,9 @@
             "type": "string"
           },
           "token": {
+            "type": "string"
+          },
+          "capability": {
             "type": "string"
           },
           "createdAt": {
@@ -7945,6 +8095,7 @@
           "body",
           "authorUserId",
           "authorEmail",
+          "authorTokenName",
           "createdAt"
         ],
         "type": "object",
@@ -7962,6 +8113,10 @@
             "nullable": true
           },
           "authorEmail": {
+            "type": "string",
+            "nullable": true
+          },
+          "authorTokenName": {
             "type": "string",
             "nullable": true
           },
@@ -8386,6 +8541,21 @@
           "baseBranch": {
             "type": "string",
             "nullable": true
+          }
+        }
+      },
+      "ResetPasswordRequest": {
+        "required": [
+          "token",
+          "newPassword"
+        ],
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string"
           }
         }
       },

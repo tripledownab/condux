@@ -40,12 +40,33 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    /// <summary>
+    /// The repository segment of an API path. A repo is <c>owner/name</c>, so the separator is structure
+    /// and only the halves are encoded. Every method here goes through this rather than interpolating,
+    /// because the two that did escape and the seven that did not sat in the same file and the next
+    /// method copied whichever neighbour it happened to be written beside.
+    /// </summary>
+    private static string ToRepoSegment(string repoFullName) => RepoPaths.EscapeSegments(repoFullName);
+
+    /// <summary>
+    /// A file path inside the repository, checked for containment and then encoded (see
+    /// <see cref="RepoPaths.ToUrlPath"/>). Both halves are needed and neither substitutes for the other:
+    /// a dot segment is unreserved so encoding leaves it intact, and encoding is what stops a legal
+    /// filename containing <c>?</c> or <c>#</c> from changing the request.
+    ///
+    /// This throws rather than returning an error, and that is correct here: the paths reaching this
+    /// client come from a model's output or an ingested stack frame, so one that leaves the repo root is
+    /// an attempt at something, and a run that fails loudly is the outcome we want.
+    /// </summary>
+    private static string ToFilePath(string path) => RepoPaths.ToUrlPath(path);
+
     /// <summary>Read a file at a ref. Null when the path does not exist there.</summary>
     public async Task<RepoFile?> GetFileAsync(
         string token, string repoFullName, string path, string gitRef, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Get, $"/repos/{repoFullName}/contents/{path}?ref={Uri.EscapeDataString(gitRef)}",
+            token, HttpMethod.Get,
+            $"/repos/{ToRepoSegment(repoFullName)}/contents/{ToFilePath(path)}?ref={Uri.EscapeDataString(gitRef)}",
             body: null, ct);
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
@@ -64,7 +85,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         string token, string repoFullName, string branch, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Get, $"/repos/{repoFullName}/git/ref/heads/{branch}", body: null, ct);
+            token, HttpMethod.Get, $"/repos/{ToRepoSegment(repoFullName)}/git/ref/heads/{RepoPaths.EscapeSegments(branch)}", body: null, ct);
         resp.EnsureSuccessStatusCode();
         var reference = await resp.Content.ReadFromJsonAsync<RefResponse>(ct)
             ?? throw new InvalidOperationException($"GitHub returned an empty ref response for {branch}.");
@@ -76,7 +97,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         string token, string repoFullName, string branch, string fromSha, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Post, $"/repos/{repoFullName}/git/refs",
+            token, HttpMethod.Post, $"/repos/{ToRepoSegment(repoFullName)}/git/refs",
             new { @ref = $"refs/heads/{branch}", sha = fromSha }, ct);
         resp.EnsureSuccessStatusCode();
     }
@@ -88,7 +109,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         string? existingSha, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Put, $"/repos/{repoFullName}/contents/{path}",
+            token, HttpMethod.Put, $"/repos/{ToRepoSegment(repoFullName)}/contents/{ToFilePath(path)}",
             new
             {
                 message,
@@ -104,7 +125,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         string token, string repoFullName, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Get, $"/repos/{repoFullName}/branches?per_page=100", body: null, ct);
+            token, HttpMethod.Get, $"/repos/{ToRepoSegment(repoFullName)}/branches?per_page=100", body: null, ct);
         resp.EnsureSuccessStatusCode();
         var branches = await resp.Content.ReadFromJsonAsync<List<BranchResponse>>(ct) ?? [];
         return [.. branches.Select(b => b.Name)];
@@ -129,7 +150,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         string token, string repoFullName, CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Get, $"/repos/{repoFullName}/dependabot/alerts?state=open&per_page=100",
+            token, HttpMethod.Get, $"/repos/{ToRepoSegment(repoFullName)}/dependabot/alerts?state=open&per_page=100",
             body: null, ct);
         resp.EnsureSuccessStatusCode();
         var alerts = await resp.Content.ReadFromJsonAsync<List<AlertResponse>>(ct) ?? [];
@@ -158,7 +179,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
     {
         using var resp = await SendAsync(
             token, HttpMethod.Get,
-            $"/repos/{repoFullName}/git/trees/{Uri.EscapeDataString(gitRef)}?recursive=1", body: null, ct);
+            $"/repos/{ToRepoSegment(repoFullName)}/git/trees/{Uri.EscapeDataString(gitRef)}?recursive=1", body: null, ct);
         resp.EnsureSuccessStatusCode();
         var tree = await resp.Content.ReadFromJsonAsync<TreeResponse>(ct)
             ?? throw new InvalidOperationException($"GitHub returned an empty tree response for {repoFullName}.");
@@ -174,7 +195,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
     {
         using var resp = await SendAsync(
             token, HttpMethod.Get,
-            $"/repos/{repoFullName}/commits?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(sha)}&per_page=1",
+            $"/repos/{ToRepoSegment(repoFullName)}/commits?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(sha)}&per_page=1",
             body: null, ct);
         resp.EnsureSuccessStatusCode();
         var commits = await resp.Content.ReadFromJsonAsync<List<CommitResponse>>(ct) ?? [];
@@ -195,7 +216,7 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         CancellationToken ct = default)
     {
         using var resp = await SendAsync(
-            token, HttpMethod.Post, $"/repos/{repoFullName}/pulls",
+            token, HttpMethod.Post, $"/repos/{ToRepoSegment(repoFullName)}/pulls",
             new { title, body, head = headBranch, @base = baseBranch, draft = true }, ct);
         resp.EnsureSuccessStatusCode();
         var pr = await resp.Content.ReadFromJsonAsync<PullResponse>(ct)

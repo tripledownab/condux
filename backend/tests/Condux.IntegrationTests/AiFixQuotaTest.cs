@@ -18,7 +18,6 @@ public sealed class AiFixQuotaTest(PostgresFixture pg) : IClassFixture<PostgresF
     [Fact]
     public async Task Consumes_refunds_and_rolls_the_period_over()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var org = await new OrgRepository(pg.ConnectionString)
             .CreateAsync("quota-" + Guid.NewGuid().ToString("N"), "Quota Org", tier: 1);
         var quota = new PostgresAiFixQuota(pg.ConnectionString);
@@ -41,7 +40,6 @@ public sealed class AiFixQuotaTest(PostgresFixture pg) : IClassFixture<PostgresF
     [Fact]
     public async Task Uncapped_still_tracks_usage()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var org = await new OrgRepository(pg.ConnectionString)
             .CreateAsync("quota-" + Guid.NewGuid().ToString("N"), "Ent Org", tier: 3);
         var quota = new PostgresAiFixQuota(pg.ConnectionString);

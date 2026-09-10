@@ -23,10 +23,65 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
 
     private static string UniqueEmail() => $"u-{Guid.NewGuid():N}@condux.test";
 
+    /// <summary>
+    /// Changing a password has to do three things, and the third is the one that is easy to omit: prove
+    /// the caller knows the current password, replace it, and stop every OTHER session. A session opened
+    /// with the old password outliving the change is the whole reason someone rotates one.
+    /// </summary>
+    [Fact]
+    public async Task Change_password_reauthenticates_swaps_the_credential_and_ends_other_sessions()
+    {
+        var email = UniqueEmail();
+        var app = ControlPlaneApp.Create(pg.ConnectionString);
+
+        // Two browsers signed in as the same user: the one changing the password, and another that must
+        // not survive it.
+        var changing = app.CreateClient();
+        await changing.PostAsJsonAsync("/api/auth/signup", new { email, password = "old-password-123" });
+        var other = app.CreateClient();
+        await other.PostAsJsonAsync("/api/auth/login", new { email, password = "old-password-123" });
+        Assert.Equal(HttpStatusCode.OK, (await other.GetAsync("/api/auth/me")).StatusCode);
+
+        // The wrong current password changes nothing, and says only "no".
+        var wrong = await changing.PostAsJsonAsync("/api/auth/password",
+            new { currentPassword = "not-the-password", newPassword = "new-password-456" });
+        Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
+
+        // Too short is refused before the hasher sees it.
+        var tooShort = await changing.PostAsJsonAsync("/api/auth/password",
+            new { currentPassword = "old-password-123", newPassword = "short" });
+        Assert.Equal(HttpStatusCode.BadRequest, tooShort.StatusCode);
+
+        var changed = await changing.PostAsJsonAsync("/api/auth/password",
+            new { currentPassword = "old-password-123", newPassword = "new-password-456" });
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+
+        // The caller keeps their own session; the other browser is signed out.
+        Assert.Equal(HttpStatusCode.OK, (await changing.GetAsync("/api/auth/me")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await other.GetAsync("/api/auth/me")).StatusCode);
+
+        // The credential really swapped, in both directions.
+        var fresh = app.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await fresh.PostAsJsonAsync("/api/auth/login", new { email, password = "old-password-123" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await fresh.PostAsJsonAsync("/api/auth/login", new { email, password = "new-password-456" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task Change_password_requires_a_session()
+    {
+        var anonymous = CreateClient();
+
+        var resp = await anonymous.PostAsJsonAsync("/api/auth/password",
+            new { currentPassword = "whatever-123", newPassword = "new-password-456" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
     [Fact]
     public async Task Signup_sets_a_session_and_me_returns_the_user()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         var email = UniqueEmail();
 
@@ -47,14 +102,12 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Me_without_a_cookie_is_unauthorized()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         Assert.Equal(HttpStatusCode.Unauthorized, (await CreateClient().GetAsync("/api/auth/me")).StatusCode);
     }
 
     [Fact]
     public async Task Login_succeeds_with_correct_password_and_fails_with_wrong_one()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = UniqueEmail();
         const string password = "hunter2-hunter2";
 
@@ -77,7 +130,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Duplicate_signup_is_a_conflict()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = UniqueEmail();
 
         var first = await CreateClient().PostAsJsonAsync("/api/auth/signup",
@@ -94,7 +146,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [InlineData("valid@condux.test", "short")]
     public async Task Signup_rejects_invalid_credentials(string email, string password)
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var resp = await CreateClient().PostAsJsonAsync("/api/auth/signup", new { email, password });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
@@ -102,8 +153,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Providers_reports_google_disabled_when_unconfigured()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         // The test host sets no CONDUX_GOOGLE_*, so the login page must be told Google is off.
         var resp = await CreateClient().GetAsync("/api/auth/providers");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
@@ -114,7 +163,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Federated_user_cannot_log_in_with_a_password()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = UniqueEmail();
 
         // A "sign in with Google" account has no local password (null hash), so the password login path
@@ -129,7 +177,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Active_session_resolves_a_federated_user_without_a_password()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var email = UniqueEmail();
         var users = new UserRepository(pg.ConnectionString);
         var sessions = new SessionRepository(pg.ConnectionString);
@@ -150,7 +197,6 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
     [Fact]
     public async Task Logout_revokes_the_session()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         var email = UniqueEmail();
 

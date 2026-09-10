@@ -29,7 +29,6 @@ public sealed class BillingApiTest(PostgresFixture pg) : IClassFixture<PostgresF
     [Fact]
     public async Task Checkout_and_portal_404_when_stripe_is_off_but_status_still_reads()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = ControlPlaneApp.Create(pg.ConnectionString);
         var (client, orgId) = await OwnerWithOrgAsync(app);
 
@@ -45,7 +44,6 @@ public sealed class BillingApiTest(PostgresFixture pg) : IClassFixture<PostgresF
     [Fact]
     public async Task Portal_and_checkout_guards_reject_before_calling_stripe()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(StripeOn);
         var (client, orgId) = await OwnerWithOrgAsync(app);
 

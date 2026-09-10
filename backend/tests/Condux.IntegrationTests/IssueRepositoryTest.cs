@@ -14,7 +14,6 @@ public class IssueRepositoryTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task Upsert_GroupsByFingerprint_IncrementsCount()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var repo = new IssueRepository(pg.ConnectionString);
         var grouping = new Grouping("fp-1", "ValueError: boom", "run");
@@ -31,7 +30,6 @@ public class IssueRepositoryTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task List_ReturnsProjectIssues()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var repo = new IssueRepository(pg.ConnectionString);
         await repo.UpsertAsync(projectId, new Grouping("fp-L", "Err: x", "run"), Level.Error, DateTimeOffset.UtcNow);
@@ -49,7 +47,6 @@ public class IssueRepositoryTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task Upsert_RecordsTheFirstReleaseSeen_AndKeepsIt()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var repo = new IssueRepository(pg.ConnectionString);
         var grouping = new Grouping("fp-rel", "Err: rel", "run");

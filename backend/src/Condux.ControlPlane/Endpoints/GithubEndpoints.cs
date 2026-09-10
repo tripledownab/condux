@@ -1,11 +1,8 @@
 using System.Globalization;
-using System.Net;
 using System.Text.Json;
 using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Setup;
-using Condux.Core.Auth;
 using Condux.Core.FixEngine;
-using Condux.Core.SourceControl;
 using Condux.GitHub;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -13,24 +10,15 @@ using Microsoft.AspNetCore.Http.HttpResults;
 namespace Condux.ControlPlane.Endpoints;
 
 /// <summary>
-/// GitHub App install flow (#61): the webhook receiver (HMAC-verified, handles the installation
-/// lifecycle), the Setup URL redirect (validates our connect state and ties the installation to an org),
-/// and the reads the dashboard needs — what is linked, whether it still works, and a repo's branches.
-/// Starting a connect lives in <see cref="GithubConnectEndpoints"/>. All behind the opt-in
+/// The two routes GitHub itself drives, which is why neither has a session behind it (#61): the webhook
+/// receiver, authenticated by its HMAC signature and handling the installation lifecycle plus merged
+/// pull requests, and the Setup URL redirect, authorized by our own signed connect state. What an org
+/// reads back through its installation lives in <see cref="GithubInstallationEndpoints"/>, and starting
+/// or ending a connection in <see cref="GithubConnectEndpoints"/>. All behind the opt-in
 /// <see cref="GitHubAppConfig"/>; when the app isn't configured they return 404.
 /// </summary>
 internal static class GithubEndpoints
 {
-    /// <summary>The connection states the health check reports. Strings on the wire, matching the other
-    /// status DTOs, but named once here so the API and the dashboard cannot drift apart.</summary>
-    internal static class GithubHealth
-    {
-        public const string NotConnected = "not_connected";
-        public const string Healthy = "healthy";
-        public const string Revoked = "revoked";
-        public const string Unreachable = "unreachable";
-    }
-
     public static void MapGithubEndpoints(this IEndpointRouteBuilder app)
     {
         // Webhook: GitHub → us (server to server). No cookie auth; the HMAC signature is the authenticator.
@@ -64,165 +52,36 @@ internal static class GithubEndpoints
                 })
             .WithName("githubWebhook").WithTags("GitHub");
 
-        // Setup URL: GitHub → the user's browser → us. The signed state authorizes tying the install to an org.
+        // Setup URL: GitHub → the user's browser → us, once the app has been installed. This leg
+        // deliberately writes nothing. GitHub puts an installation_id in the query, but anyone can put one
+        // there and nothing here can check the caller is entitled to it, while the signed state proves
+        // only which org minted it and any org admin can mint one for their own org. So instead of
+        // trusting the id, hand the browser back to user authorization: its callback asks GitHub which
+        // installations THIS person can reach and links only those. For a user who authorized at the
+        // start of this same flow that hop is a silent redirect.
         app.MapGet("/api/github/setup",
-                async Task<Results<RedirectHttpResult, BadRequest<ErrorResponse>, NotFound>> (
-                    GitHubAppConfig config, GithubInstallationRepository installations,
-                    IConfiguration cfg, HttpContext http) =>
+                Results<RedirectHttpResult, BadRequest<ErrorResponse>, NotFound> (
+                    GitHubAppConfig config, GitHubUserOAuth oauth, HttpContext http) =>
                 {
                     if (!config.Enabled)
                     {
                         return TypedResults.NotFound();
                     }
 
-                    if (!long.TryParse(http.Request.Query["installation_id"], NumberStyles.None,
-                            CultureInfo.InvariantCulture, out var installationId)
-                        || GithubConnectState.Validate(
-                            http.Request.Query["state"], DateTimeOffset.UtcNow, config.Options!.WebhookSecret)
-                            is not { } state)
+                    if (GithubConnectFlow.Verify(http, config) is not { } state)
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_setup"));
                     }
 
-                    await installations.LinkAsync(installationId, state.OrgId, ct: http.RequestAborted);
-                    return TypedResults.Redirect(
-                        GithubConnectEndpoints.DashboardUrl(cfg, state.ReturnPath, "connected"));
+                    // Marked installed, so the callback reads an empty list of reachable installations as
+                    // an organization owner still having to approve this one, rather than sending the
+                    // user back to install it again.
+                    return TypedResults.Redirect(oauth.AuthorizeUrl(
+                        config.Options!.ClientId, config.OAuthRedirectUri!,
+                        GithubConnectFlow.Start(http, state.OrgId, state.ReturnPath, config, installed: true)));
                 })
             .WithName("githubSetup").WithTags("GitHub");
-
-        // Installations: authenticated read of the org's linked GitHub App installs, so the settings tab
-        // can show a real connected state instead of only the transient post-redirect banner. Member+.
-        app.MapGet("/api/orgs/{orgId:long}/github",
-                async Task<Results<Ok<IReadOnlyList<GithubInstallationResponse>>, NotFound>> (
-                    long orgId, GitHubAppConfig config, GithubInstallationRepository installations,
-                    HttpContext http) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var linked = await installations.GetByOrgAsync(orgId, http.RequestAborted);
-                    return TypedResults.Ok<IReadOnlyList<GithubInstallationResponse>>(
-                        [.. linked.Select(i => new GithubInstallationResponse(
-                            i.InstallationId, i.AccountLogin, i.CreatedAt, ManageUrl(config)))]);
-                })
-            .WithName("listGithubInstallations").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
-        // Health: actually ask GitHub whether the org's installation still works, rather than trusting our
-        // stored row. Minting an installation token is the check, because that is the exact credential every
-        // fix run needs, so a pass here means the Conductor can really reach the repo. Member+.
-        app.MapGet("/api/orgs/{orgId:long}/github/health",
-                async Task<Results<Ok<GithubHealthResponse>, NotFound>> (
-                    long orgId, GitHubAppConfig config,
-                    GithubInstallationRepository installations, HttpContext http) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var linked = await installations.GetByOrgAsync(orgId, http.RequestAborted);
-                    if (linked.Count == 0)
-                    {
-                        // Nothing recorded here. GitHub may still hold an installation whose link we lost,
-                        // and reconnecting relinks it, so this is a reconnect prompt rather than an error.
-                        return TypedResults.Ok(new GithubHealthResponse(
-                            GithubHealth.NotConnected, null, null, null));
-                    }
-
-                    var installation = linked[0];
-                    var tokens = http.RequestServices.GetRequiredService<ISourceHostTokens>();
-                    try
-                    {
-                        await tokens.GetAsync(installation.InstallationId, http.RequestAborted);
-                        return TypedResults.Ok(new GithubHealthResponse(
-                            GithubHealth.Healthy, installation.InstallationId, installation.AccountLogin, null));
-                    }
-                    catch (HttpRequestException failure)
-                    {
-                        // A rejected installation (uninstalled or suspended on GitHub) is the org's problem to
-                        // fix by reconnecting; anything else is GitHub being unreachable and is worth
-                        // retrying. Collapsing the two would send someone to reinstall over a transient 502.
-                        var revoked = failure.StatusCode
-                            is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
-                        return TypedResults.Ok(new GithubHealthResponse(
-                            revoked ? GithubHealth.Revoked : GithubHealth.Unreachable,
-                            installation.InstallationId, installation.AccountLogin, failure.Message));
-                    }
-                })
-            .WithName("githubHealth").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
-        // Repositories: proxy what the org's installation can reach, so linking a repo is a pick rather
-        // than free text. Typing it invites a repo that does not exist, or one outside the installation,
-        // which links fine and only fails much later when a fix run cannot mint a token for it. The token
-        // stays server-side. Member+.
-        app.MapGet("/api/orgs/{orgId:long}/github/repositories",
-                async Task<Results<Ok<GithubRepositoriesResponse>, NotFound>> (
-                    long orgId, GitHubAppConfig config,
-                    GithubInstallationRepository installations, HttpContext http) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var linked = await installations.GetByOrgAsync(orgId, http.RequestAborted);
-                    if (linked.Count == 0)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    // Resolved lazily: these services are only registered when the app is configured.
-                    var tokens = http.RequestServices.GetRequiredService<ISourceHostTokens>();
-                    var repoClient = http.RequestServices.GetRequiredService<ISourceHostClient>();
-                    var token = await tokens.GetAsync(linked[0].InstallationId, http.RequestAborted);
-                    var repositories = await repoClient.ListInstallationRepositoriesAsync(
-                        token, http.RequestAborted);
-                    return TypedResults.Ok(new GithubRepositoriesResponse(repositories));
-                })
-            .WithName("listGithubRepositories").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
-        // Branches: proxy the repo's branch list from GitHub with the org's installation token, so the
-        // settings tab can offer a real base-branch picker. The token stays server-side. Member+.
-        app.MapGet("/api/orgs/{orgId:long}/github/branches",
-                async Task<Results<Ok<GithubBranchesResponse>, NotFound>> (
-                    long orgId, string repo, GitHubAppConfig config,
-                    GithubInstallationRepository installations, HttpContext http) =>
-                {
-                    if (!config.Enabled)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    var linked = await installations.GetByOrgAsync(orgId, http.RequestAborted);
-                    if (linked.Count == 0)
-                    {
-                        return TypedResults.NotFound();
-                    }
-
-                    // Resolved lazily: these services are only registered when the app is configured.
-                    var tokens = http.RequestServices.GetRequiredService<ISourceHostTokens>();
-                    var repoClient = http.RequestServices.GetRequiredService<ISourceHostClient>();
-                    var token = await tokens.GetAsync(linked[0].InstallationId, http.RequestAborted);
-                    var branches = await repoClient.ListBranchesAsync(token, repo, http.RequestAborted);
-                    return TypedResults.Ok(new GithubBranchesResponse(branches));
-                })
-            .WithName("listGithubBranches").WithTags("GitHub")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
     }
-
-    /// <summary>
-    /// Where a user manages this app on GitHub. For an account that already has it installed GitHub serves
-    /// the installation's configure page here (repository access, and Uninstall), rather than a new install,
-    /// which is the same behaviour that makes this URL useless for re-connecting.
-    /// </summary>
-    private static string ManageUrl(GitHubAppConfig config) =>
-        $"https://github.com/apps/{config.AppSlug}/installations/new";
 
     private static async Task<byte[]> ReadBodyAsync(HttpContext http)
     {

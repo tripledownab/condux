@@ -25,7 +25,6 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Compose_aggregates_volume_movement_top_issues_users_and_fixes()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (orgId, projectId) = await SeedOrgProjectAsync();
         var issues = new IssueRepository(pg.ConnectionString);
 
@@ -92,7 +91,6 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Compose_returns_no_activity_for_a_dormant_org()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (orgId, _) = await SeedOrgProjectAsync();
         using var http = Http();
 
@@ -110,7 +108,6 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Ledger_claims_each_week_exactly_once()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (orgId, _) = await SeedOrgProjectAsync();
         var ledger = new PostgresWeeklySummaryLedger(pg.ConnectionString);
         var now = DateTimeOffset.UtcNow;
@@ -190,7 +187,6 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Recipients_exclude_members_who_opted_out()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var orgs = new OrgRepository(pg.ConnectionString);
         var users = new UserRepository(pg.ConnectionString);
         var members = new OrgMemberRepository(pg.ConnectionString);
@@ -222,7 +218,6 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     [Fact]
     public async Task Opt_out_is_per_user_not_per_org()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var orgs = new OrgRepository(pg.ConnectionString);
         var users = new UserRepository(pg.ConnectionString);
         var members = new OrgMemberRepository(pg.ConnectionString);

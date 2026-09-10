@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Condux.IntegrationTests.Fixtures;
 using Microsoft.AspNetCore.Hosting;
@@ -17,17 +16,9 @@ namespace Condux.IntegrationTests;
 public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
 {
     // A GitHub-App-enabled host: the linkRepo connection guard only engages when the App is configured on
-    // the server (a GitHub-less self-host still links freely). A generated key is enough — the guard reads
-    // installations from Postgres and never mints a JWT.
-    private static readonly string GithubKeyPem = RSA.Create(2048).ExportRSAPrivateKeyPem();
-
-    private static void EnableGitHubApp(IWebHostBuilder b)
-    {
-        b.UseSetting("CONDUX_GITHUB_CLIENT_ID", "Iv1.test");
-        b.UseSetting("CONDUX_GITHUB_WEBHOOK_SECRET", "test-webhook-secret");
-        b.UseSetting("CONDUX_GITHUB_APP_SLUG", "condux-test");
-        b.UseSetting("CONDUX_GITHUB_PRIVATE_KEY", GithubKeyPem);
-    }
+    // the server (a GitHub-less self-host still links freely). The shared settings are enough here, since
+    // the guard reads installations from Postgres and never mints a JWT.
+    private static void EnableGitHubApp(IWebHostBuilder b) => GithubAppSettings.Apply(b);
 
     private async Task<(HttpClient Client, long ProjectId)> ProvisionAsync(
         Action<IWebHostBuilder>? configure = null)
@@ -48,7 +39,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task LinkRepo_AddMapping_RecordRelease_RoundTrips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var linkResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
@@ -80,7 +70,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task LinkRepo_WithGitHubAppConfiguredButNotConnected_Returns409()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync(EnableGitHubApp);
 
         // The App is configured on this server but the org has installed no installation, so the Conductor
@@ -95,7 +84,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task CodeMapping_ForUnknownRepo_Returns404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var resp = await client.PostAsJsonAsync(
@@ -107,7 +95,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task DeleteCodeMapping_RemovesOne_LeavingTheRest()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repoId = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api" })).Content.ReadFromJsonAsync<JsonElement>())
@@ -137,7 +124,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task CveFindings_WithoutGitHubConnected_ReturnsEmpty()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repoId = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api" })).Content.ReadFromJsonAsync<JsonElement>())
@@ -152,7 +138,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task SuggestedMappings_WithoutGitHubConnected_ReturnsEmpty()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repoId = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api" })).Content.ReadFromJsonAsync<JsonElement>())
@@ -167,7 +152,6 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task UnlinkRepo_RemovesTheRepoAndCascadesItsMappings()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repoId = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api" })).Content.ReadFromJsonAsync<JsonElement>())

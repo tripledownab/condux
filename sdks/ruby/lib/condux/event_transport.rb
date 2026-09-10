@@ -59,8 +59,12 @@ module Condux
       status == 429 || status >= 500
     end
 
-    # Honor Retry-After (seconds) on a 429; otherwise capped exponential backoff. Returns seconds.
+    # Honor Retry-After (seconds) on a 429, else exponential backoff. Both paths are capped at
+    # MAX_BACKOFF_MS, at ONE return so a later branch cannot route past it: the SDK holds the caller's
+    # thread while it waits, so bounding that wait is its own obligation and not the relay's to set.
+    # Returns seconds.
     def backoff_seconds(attempt, status, headers)
+      wanted_ms = BASE_BACKOFF_MS * (2**attempt)
       if status == 429
         retry_after = header(headers, "retry-after")
         if retry_after && !retry_after.strip.empty?
@@ -69,10 +73,10 @@ module Condux
           rescue ArgumentError, TypeError
             nil
           end
-          return [seconds, 0.0].max if seconds
+          wanted_ms = [seconds, 0.0].max * 1000.0 if seconds
         end
       end
-      [BASE_BACKOFF_MS * (2**attempt), MAX_BACKOFF_MS].min / 1000.0
+      [wanted_ms, MAX_BACKOFF_MS].min / 1000.0
     end
 
     def header(headers, name)

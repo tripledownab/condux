@@ -29,7 +29,6 @@ public sealed class RunnerCveLeaseTest(PostgresFixture pg) : IClassFixture<Postg
 
     private async Task<(long OrgId, long ProjectId, Guid RepoLinkId)> SeedRepoAsync()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (orgId, projectId) = await ProjectSeed.CreateOrgAndProjectAsync(pg.ConnectionString);
         var repo = await new RepoLinkRepository(pg.ConnectionString)
             .LinkAsync(projectId, "acme/api", "main");

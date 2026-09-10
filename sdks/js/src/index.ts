@@ -29,8 +29,8 @@ export interface NodeOptions extends ConduxOptions {
 }
 
 /**
- * Initialize reporting. Identical to the core's `init` except that it also reads the installed
- * package tree once, unless `sendModules` is false.
+ * Initialize reporting. Calls the core's `init`, then reads the installed package tree once, unless
+ * `sendModules` is false. The two lines below are the whole of the difference.
  *
  * <p>Collection happens here rather than on first capture so the cost lands during startup, where an
  * application expects work, instead of inside the handling of its first error.</p>

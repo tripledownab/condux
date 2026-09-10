@@ -12,7 +12,10 @@ using Condux.Storage.Postgres;
 // signature-verified Stripe webhook moves it (ADR-0026). Accepting a client tier let any signed-up
 // user POST tier=3 and take Enterprise: unlimited ingest, uncapped Conductor runs, and — with no BYO
 // key configured — those runs billed to the platform's own model key.
-internal sealed record CreateOrgRequest(string Slug, string Name);
+// No slug either, for a smaller version of the same reason: it was derived in the browser from the name
+// and posted, so a value the database constrained was computed where the database could not see it. The
+// server derives it now (Condux.Core.Orgs.OrgNames), and a slug in the body is ignored.
+internal sealed record CreateOrgRequest(string Name);
 // The org's AI-fix settings, submitted together from Settings → General. AiFixCostCapUsd is the optional
 // monthly Conductor spend ceiling (null clears it — no cap; #120 budgets).
 // FixExecution is nullable and means "leave it as it is" when omitted (ADR-0033 slice 4c). It has to be:
@@ -25,6 +28,15 @@ internal sealed record UpdateProjectRequest(string Name, string? Platform);
 internal sealed record CreateKeyRequest(string? Label);
 internal sealed record UpdateKeyRequest(string Label);
 internal sealed record Credentials(string Email, string Password);
+
+/// <summary>Changing a password while signed in: the current one proves it is really you, the new one replaces it.</summary>
+internal sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+/// <summary>Asking for a reset link. Answered identically whether or not the address exists.</summary>
+internal sealed record ForgotPasswordRequest(string Email);
+
+/// <summary>Redeeming a reset link: the emailed token, and the password to set.</summary>
+internal sealed record ResetPasswordRequest(string Token, string NewPassword);
 internal sealed record UpdateMemberRoleRequest(string Role);
 internal sealed record CreateInviteRequest(string Email, string Role);
 internal sealed record AcceptInviteRequest(string Token);
@@ -66,12 +78,18 @@ internal sealed record ReportRequest(
     string LeaseId, int Status, string Branch, string PrUrl, string Summary, string Model,
     long InputTokens, long OutputTokens);
 
-// Scoped MCP tokens (ADR-0029): a per-project read-only credential an AI agent presents as a bearer to
-// the MCP endpoint. Mirrors the release-token DTOs; the raw token is returned once, on mint.
-internal sealed record CreateMcpTokenRequest(string Name);
-internal sealed record MintedMcpTokenResponse(Guid Id, string Name, string Token, DateTimeOffset CreatedAt);
+// Scoped MCP tokens (ADR-0029): a per-project credential an AI agent presents as a bearer to the MCP
+// endpoint. Shaped like the release-token DTOs; the raw token is returned once, on mint.
+//
+// Capability is the wire name of an McpCapability, "read" or "triage" (ADR-0046). It is absent from the
+// mint request for a read token and cannot be edited afterwards, so it is reported on the listed row
+// rather than accepted on a PATCH: changing what a token may do means revoking it and minting another.
+internal sealed record CreateMcpTokenRequest(string Name, string? Capability);
+internal sealed record MintedMcpTokenResponse(
+    Guid Id, string Name, string Token, string Capability, DateTimeOffset CreatedAt);
 internal sealed record McpTokenResponse(
-    Guid Id, string Name, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt, bool Revoked);
+    Guid Id, string Name, string Capability, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt,
+    bool Revoked);
 
 // Source-map artifacts (ADR-0028): the uploaded map's index row, returned to the CI uploader.
 internal sealed record SourceMapArtifactResponse(
@@ -84,7 +102,7 @@ internal sealed record ListLlmModelsRequest(string Provider, string? BaseUrl, st
 // Enterprise SSO (#72): the org's IdP config. Protocol is the SsoProtocol enum (0 OIDC, 1 SAML); each
 // protocol fills its own fields and issuer is shared (the OIDC issuer / the SAML IdP entity ID). The OIDC
 // client secret is write-only (sealed at rest, never echoed back), so it rides the request but not the
-// response — mirrors the BYO-key SetLlmConfig/LlmConfig pair. The SAML certificate is the IdP's public
+// response, shaped like the BYO-key SetLlmConfig/LlmConfig pair. The SAML certificate is the IdP's public
 // signing certificate (not a secret), so it echoes back for the admin to verify.
 internal sealed record SetSsoConfigRequest(
     string EmailDomain, string Issuer, int Protocol,
@@ -140,10 +158,12 @@ internal sealed record IssueCountsResponse(
 internal sealed record UpdateIssueStatusRequest(int Status);
 internal sealed record AssignIssueRequest(long? UserId);
 // Per-issue collaborative notes: create takes the body; the response carries the note's UUID id and the
-// author's email (null if that account was since deleted).
+// author's email (null if that account was since deleted). AuthorTokenName is set instead when an agent
+// wrote the note over MCP (ADR-0046), which has no user to name; a note carries one or the other.
 internal sealed record CreateNoteRequest(string Body);
 internal sealed record NoteResponse(
-    Guid Id, string Body, long? AuthorUserId, string? AuthorEmail, DateTimeOffset CreatedAt);
+    Guid Id, string Body, long? AuthorUserId, string? AuthorEmail, string? AuthorTokenName,
+    DateTimeOffset CreatedAt);
 internal sealed record SavedViewRequest(string Name, string Query, string Sort);
 internal sealed record IssueStatsResponse(IReadOnlyList<HistogramBucket> Buckets, int BucketSeconds);
 internal sealed record IssueSparkline(Guid IssueId, IReadOnlyList<HistogramBucket> Buckets);

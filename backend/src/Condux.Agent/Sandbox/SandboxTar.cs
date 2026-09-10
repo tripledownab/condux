@@ -1,5 +1,6 @@
 using System.Formats.Tar;
 using System.Text;
+using Condux.Core.SourceControl;
 
 namespace Condux.Agent.Sandbox;
 
@@ -9,7 +10,14 @@ namespace Condux.Agent.Sandbox;
 /// </summary>
 public static class SandboxTar
 {
-    /// <summary>Pack repo-relative files into a tar archive Docker can expand into the workspace.</summary>
+    /// <summary>
+    /// Pack repo-relative files into a tar archive Docker can expand into the workspace.
+    ///
+    /// An entry name is what Docker turns into a path on extraction, so a traversing one writes outside
+    /// the workspace directory. The check is here rather than in the callers because this is the single
+    /// place a name becomes a file: the workspace seeds a checkout through it and also stages every agent
+    /// write through it, and guarding only the second would leave the first to be discovered later.
+    /// </summary>
     public static byte[] FromFiles(IReadOnlyDictionary<string, string> files)
     {
         using var buffer = new MemoryStream();
@@ -20,7 +28,7 @@ public static class SandboxTar
             foreach (var (path, contents) in files)
             {
                 var bytes = Encoding.UTF8.GetBytes(contents);
-                var entry = new PaxTarEntry(TarEntryType.RegularFile, path)
+                var entry = new PaxTarEntry(TarEntryType.RegularFile, RepoPaths.Normalize(path))
                 {
                     DataStream = new MemoryStream(bytes),
                     // Readable and writable by the owner: the agent edits these files in place.

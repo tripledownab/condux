@@ -71,12 +71,19 @@ enum ConnectOutcome {
   Connected = "connected",
   Select = "select",
   Taken = "taken",
+  // Installed on GitHub, but held for an organization owner to approve, so there is nothing to link yet.
+  Pending = "pending",
   Failed = "failed",
 }
 
-const OUTCOME_MESSAGE_KEYS: Partial<Record<ConnectOutcome, string>> = {
-  [ConnectOutcome.Taken]: "selectTaken",
-  [ConnectOutcome.Failed]: "failed",
+// What a returned outcome says, and whether it reads as a failure. Pending is not one: the app is
+// installed and a GitHub organization owner has to approve it, so styling it as an error would report a
+// problem that is not there. Each entry states its own tone rather than inheriting one from the slot it
+// renders in, so a new outcome has to decide.
+const OUTCOME_MESSAGES: Partial<Record<ConnectOutcome, { key: string; failed: boolean }>> = {
+  [ConnectOutcome.Taken]: { key: "selectTaken", failed: true },
+  [ConnectOutcome.Pending]: { key: "pending", failed: false },
+  [ConnectOutcome.Failed]: { key: "failed", failed: true },
 };
 
 type ReturnedOutcome = { status: ConnectOutcome; selection: string | null };
@@ -156,7 +163,7 @@ export function GitHubConnect({ projectName }: { projectName?: string }) {
     );
   }
 
-  const outcomeMessageKey = outcome ? OUTCOME_MESSAGE_KEYS[outcome.status] : undefined;
+  const outcomeMessage = outcome ? OUTCOME_MESSAGES[outcome.status] : undefined;
   const connectedText = connectedMessage(translate, installation?.accountLogin, projectName);
   const connectPromptText = projectName
     ? translate("connectPromptFor", { project: projectName })
@@ -282,8 +289,14 @@ export function GitHubConnect({ projectName }: { projectName?: string }) {
             {verdict.text}
           </p>
         ) : null}
-        {outcomeMessageKey ? (
-          <p className="text-sm text-error">{translate(outcomeMessageKey)}</p>
+        {outcomeMessage ? (
+          <p
+            className={
+              outcomeMessage.failed ? "text-sm text-error" : "text-sm text-muted-foreground"
+            }
+          >
+            {translate(outcomeMessage.key)}
+          </p>
         ) : null}
       </div>
     </div>

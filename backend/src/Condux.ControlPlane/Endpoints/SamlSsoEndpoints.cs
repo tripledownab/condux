@@ -39,7 +39,7 @@ internal static class SamlSsoEndpoints
         var request = new Saml2AuthnRequest(SamlSso.Configuration(config, cfg));
         binding.Bind(request);
 
-        var cookieOptions = OidcFlow.StateCookieOptions(http, crossSite: true);
+        var cookieOptions = OidcFlow.StateCookieOptions(crossSite: true);
         http.Response.Cookies.Append(StateCookie, state, cookieOptions);
         http.Response.Cookies.Append(RequestCookie, request.IdAsString, cookieOptions);
         http.Response.Cookies.Append(SsoEndpoints.OrgCookie, config.OrgId.ToString(), cookieOptions);

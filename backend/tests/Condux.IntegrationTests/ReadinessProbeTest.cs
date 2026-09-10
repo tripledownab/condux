@@ -21,8 +21,6 @@ public sealed class ReadinessProbeTest(PostgresFixture pg) : IClassFixture<Postg
     [Fact]
     public async Task Reports_ready_when_the_stores_answer()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         Assert.True(await StoreReadiness.PostgresAsync(pg.ConnectionString));
     }
 
@@ -77,7 +75,6 @@ public sealed class ReadinessProbeTest(PostgresFixture pg) : IClassFixture<Postg
         // End to end through the real app, since the status code is what a monitor reads. Without a
         // ClickHouse fixture the app points at an unresolvable host, so Postgres is live and ClickHouse is
         // not: which also proves one failing store is enough to report not ready.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = ControlPlaneApp.Create(pg.ConnectionString);
 
         var resp = await app.CreateClient().GetAsync("/api/readyz");

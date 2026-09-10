@@ -31,7 +31,6 @@ public sealed class AdminBillingTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Action_routes_404_when_stripe_is_off_but_status_still_reads()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
         var (admin, orgId) = await AdminWithOrgAsync(app, adminEmail);
@@ -51,7 +50,6 @@ public sealed class AdminBillingTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Guards_reject_a_stripe_org_with_no_subscription_or_customer_and_leave_the_tier_alone()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(
             pg.ConnectionString, platformAdminEmails: adminEmail, configure: StripeOn);

@@ -73,6 +73,13 @@ internal static class LlmConfigEndpoints
                         return TypedResults.BadRequest(new ErrorResponse("invalid_request"));
                     }
 
+                    // Checked before the row is written, so a stored config is always a URL we would
+                    // accept today. Checked again where it is used, because rows predating this were not.
+                    if (!LlmUrls.IsValidBaseUrl(baseUrl))
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_base_url"));
+                    }
+
                     var validator = http.RequestServices.GetRequiredService<ILlmKeyValidator>();
                     if (await validator.ListModelsAsync(
                             request.Provider, baseUrl, request.ApiKey, http.RequestAborted) is null)
@@ -94,31 +101,66 @@ internal static class LlmConfigEndpoints
 
         // List the models a key can use, to populate the settings picker. Uses the key in the body when
         // adding/replacing one, or the org's stored key when it is omitted (browsing the existing config).
+        //
+        // A STORED SECRET ONLY EVER GOES TO A STORED DESTINATION. When the caller supplies no key, the
+        // provider and base URL come from the stored config too and the request body's are ignored, not
+        // compared: a comparison is a rule someone can later relax, an ignored parameter is not. Pairing
+        // the decrypted key with a destination the caller names is how a key sealed at rest and never
+        // returned by the read endpoint became readable by anyone who could call this one.
         app.MapPost("/api/orgs/{orgId:long}/llm-config/models",
-                async Task<Results<Ok<LlmModelsResponse>, NotFound, BadRequest<ErrorResponse>>> (
-                    long orgId, ListLlmModelsRequest request, SecretsConfig secrets, HttpContext http) =>
+                async Task<Results<Ok<LlmModelsResponse>, NotFound, BadRequest<ErrorResponse>,
+                    Conflict<ErrorResponse>>> (
+                    long orgId, ListLlmModelsRequest request, SecretsConfig secrets, OrgRepository orgs,
+                    HttpContext http) =>
                 {
                     if (!secrets.Enabled || !LlmProviders.IsSupported(request.Provider))
                     {
                         return TypedResults.NotFound();
                     }
 
+                    // The same plan gate the PUT applies. Without it this route read and used a stored
+                    // BYO key for an org whose tier is not entitled to hold one.
+                    if (await orgs.GetAsync(orgId) is not { } org)
+                    {
+                        return TypedResults.NotFound();
+                    }
+                    if (!PlanCatalog.For((Tier)org.Tier).ByoKey)
+                    {
+                        return TypedResults.Conflict(new ErrorResponse("byo_key_requires_upgrade"));
+                    }
+
+                    // Where the request is allowed to send a key, and which key. These move together on
+                    // purpose: the caller names a destination only when the caller also supplied the
+                    // credential to send there.
                     var apiKey = request.ApiKey;
+                    var provider = request.Provider;
+                    var baseUrl = request.BaseUrl ?? "";
                     if (string.IsNullOrEmpty(apiKey))
                     {
-                        // Fall back to the org's stored key (decrypted here, never returned).
                         var store = http.RequestServices.GetRequiredService<PostgresLlmConfigStore>();
                         var box = http.RequestServices.GetRequiredService<SecretBox>();
                         if (await store.GetAsync(orgId, http.RequestAborted) is not { } stored)
                         {
                             return TypedResults.BadRequest(new ErrorResponse("no_key"));
                         }
+
                         apiKey = box.Open(stored.KeyEncrypted);
+                        provider = stored.Provider;
+                        baseUrl = stored.BaseUrl;
+                    }
+
+                    // After the branch, so it covers BOTH: the value the caller sent and the value read
+                    // from storage. A stored one still needs checking, because a row written before the
+                    // store-side check existed was never validated, and that is exactly the row that
+                    // would carry a bad value.
+                    if (!LlmUrls.IsValidBaseUrl(baseUrl))
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_base_url"));
                     }
 
                     var validator = http.RequestServices.GetRequiredService<ILlmKeyValidator>();
                     var models = await validator.ListModelsAsync(
-                        request.Provider, request.BaseUrl ?? "", apiKey, http.RequestAborted);
+                        provider, baseUrl, apiKey, http.RequestAborted);
                     return models is null
                         ? TypedResults.BadRequest(new ErrorResponse("invalid_key"))
                         : TypedResults.Ok(new LlmModelsResponse(models));

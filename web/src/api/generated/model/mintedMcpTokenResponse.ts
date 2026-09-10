@@ -9,5 +9,6 @@ export interface MintedMcpTokenResponse {
   id: string;
   name: string;
   token: string;
+  capability: string;
   createdAt: string;
 }

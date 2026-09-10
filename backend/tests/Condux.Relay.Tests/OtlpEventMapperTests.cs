@@ -200,6 +200,57 @@ public class OtlpEventMapperTests
         Assert.Equal("""["a",2]""", Assert.Single(FromJson(json)).Tags["tags"]);
     }
 
+    /// <summary>
+    /// The stacktrace attribute is whatever the sender puts there, bounded only by the ingest body ceiling,
+    /// and parsing it happens on the relay's request thread. Under a backtracking engine this one line is
+    /// quadratic: every " (" is a candidate function-name boundary and each one rescans the rest of the
+    /// line for a ":digits:digits" tail. Measured on the compiled backtracking engine it grows as the
+    /// square: 76ms at 30,000 repetitions, 446ms at 60,000, 1.9s at 120,000, 14.2s at the 480,000 used
+    /// here, against about a millisecond linear. The size is chosen for that margin. 30,000 was tried
+    /// first and passed under both engines, which proved nothing.
+    /// </summary>
+    [Fact]
+    public void PathologicalStacktraceLine_ParsesInLinearTime()
+    {
+        var stack = "    at " + string.Concat(Enumerable.Repeat(" (", 480_000));
+        var json = """
+            {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"severityNumber":17,"attributes":[
+                {"key":"exception.type","value":{"stringValue":"TypeError"}},
+                {"key":"exception.stacktrace","value":{"stringValue":"STACK"}}]}]}]}]}
+            """.Replace("STACK", stack, StringComparison.Ordinal);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var mapped = FromJson(json);
+        clock.Stop();
+
+        // No frame parses out of it, which is the point: the cost of deciding that has to be linear.
+        Assert.Null(Assert.Single(mapped[0].Exceptions).Stacktrace);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"parsing took {clock.Elapsed}");
+    }
+
+    /// <summary>
+    /// A stack of millions of lines must not become a list of millions of frames. The cap keeps the newest
+    /// frames, which are the ones that name the fault, and they end up last once the list is reversed.
+    /// </summary>
+    [Fact]
+    public void OverlongStacktrace_KeepsABoundedNumberOfNewestFrames()
+    {
+        var stack = string.Join("\\n",
+            Enumerable.Range(0, 400).Select(i => $"    at f{i} (/app/src/f{i}.js:{i + 1}:1)"));
+        var json = """
+            {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"severityNumber":17,"attributes":[
+                {"key":"exception.type","value":{"stringValue":"TypeError"}},
+                {"key":"exception.stacktrace","value":{"stringValue":"STACK"}}]}]}]}]}
+            """.Replace("STACK", stack, StringComparison.Ordinal);
+
+        var frames = Assert.Single(FromJson(json)[0].Exceptions).Stacktrace!.Frames;
+
+        Assert.Equal(250, frames.Count);
+        // V8 reports newest first, so f0 is the crashing frame and survives, at the end after the reverse.
+        Assert.Equal("f0", frames[^1].Function);
+        Assert.Equal("f249", frames[0].Function);
+    }
+
     [Fact]
     public void EmptyOrRecordlessPayloads_ReturnNoEvents()
     {

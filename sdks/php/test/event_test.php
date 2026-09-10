@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 // Proves the emitted JSON is the Sentry store wire shape (field by field) and the transport is
-// resilient, with an injected transport + sleep so there is no real network or waiting. Mirrors the
-// JS/Python/Ruby/Go suites.
+// resilient, with an injected transport + sleep so there is no real network or waiting. Built like
+// the JS/Python/Ruby/Go suites.
 
 namespace Condux;
 

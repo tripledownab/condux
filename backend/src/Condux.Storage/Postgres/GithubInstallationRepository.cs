@@ -9,14 +9,17 @@ public sealed record GithubInstallation(
 /// <summary>Maps GitHub App installations to orgs (#61). The Setup URL links one; the webhook removes it.</summary>
 public sealed class GithubInstallationRepository(string connectionString)
 {
-    // Re-installing (or re-linking) updates the owning org rather than failing on the unique id. A known
-    // account login is kept when the caller doesn't have one, so a relink can't blank what a webhook set.
+    // Re-installing (or re-linking) refreshes the row rather than failing on the unique id, but only for
+    // the org that already holds it: the WHERE makes the statement itself refuse to move an installation
+    // between orgs, so the row count is the answer and no caller can read-then-write around it. Freeing
+    // one for another org to claim is a delete, which is what disconnect does. A known account login is
+    // kept when the caller doesn't have one, so a relink can't blank what a webhook set.
     private const string LinkSql = """
         INSERT INTO github_installations (installation_id, org_id, account_login)
         VALUES (@installation, @org, @login)
         ON CONFLICT (installation_id) DO UPDATE
-        SET org_id = EXCLUDED.org_id,
-            account_login = COALESCE(EXCLUDED.account_login, github_installations.account_login);
+        SET account_login = COALESCE(EXCLUDED.account_login, github_installations.account_login)
+        WHERE github_installations.org_id = EXCLUDED.org_id;
         """;
 
     private const string ByIdSql = """
@@ -38,8 +41,12 @@ public sealed class GithubInstallationRepository(string connectionString)
         FROM github_installations WHERE org_id = @org ORDER BY created_at;
         """;
 
-    /// <summary>Tie an installation to an org (from the Setup URL, authorized by the connect state token).</summary>
-    public async Task LinkAsync(
+    /// <summary>
+    /// Tie an installation to an org, reporting whether it is now this org's. False means another org
+    /// already holds it and nothing was written: reaching an installation on GitHub takes only read
+    /// access, so a caller who can name an id must not be able to take it from the tenant using it.
+    /// </summary>
+    public async Task<bool> LinkAsync(
         long installationId, long orgId, string? accountLogin = null, CancellationToken ct = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);
@@ -48,7 +55,7 @@ public sealed class GithubInstallationRepository(string connectionString)
         cmd.Parameters.AddWithValue("installation", installationId);
         cmd.Parameters.AddWithValue("org", orgId);
         cmd.Parameters.AddWithValue("login", (object?)accountLogin ?? DBNull.Value);
-        await cmd.ExecuteNonQueryAsync(ct);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
     /// <summary>One installation by its GitHub id, or null if we hold no link for it.</summary>

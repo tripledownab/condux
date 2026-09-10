@@ -30,8 +30,12 @@ externalStores:
 
 # Credentials. For production set `existingSecret` to a Secret you created with these keys
 # (CONDUX_POSTGRES, CONDUX_CLICKHOUSE_USER, CONDUX_CLICKHOUSE_PASSWORD, and — if used — CONDUX_SECRET_KEY,
-# CONDUX_ANTHROPIC_API_KEY, CONDUX_GITHUB_WEBHOOK_SECRET, github-app.pem), and leave the inline values
-# empty. For dev you may inline them and the chart creates the Secret.
+# CONDUX_ANTHROPIC_API_KEY, CONDUX_GITHUB_WEBHOOK_SECRET, CONDUX_GITHUB_CLIENT_SECRET, github-app.pem),
+# and leave the inline values empty. For dev you may inline them and the chart creates the Secret.
+#
+# This list is a copy of what the deployments reference, and nothing compares the two: a key added to a
+# deployment and not to this line renders happily and then fails the pod at startup on a missing key.
+# When you add one, add it here.
 secret:
   existingSecret: ""
   postgresConnectionString: "" # e.g. Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require
@@ -50,10 +54,13 @@ config:
   ingestScheme: https       # http only for a cluster with no TLS at the edge
   corsOrigins: ""           # leave empty when the dashboard is same-origin (prod); set for split-origin
   platformAdminEmails: ""   # comma-separated allowlist for the /admin console (empty → none)
-  # Absolute dashboard URL for the links in email. Leaving it empty degrades each mailer differently:
-  # the consumer still sends the weekly summary but without its button, while the control-plane skips
-  # the invite email entirely. Neither fails a request, and an invite still works, since its accept
-  # link is returned to the inviter to pass on.
+  # Absolute dashboard URL. It is REQUIRED once ingress.tls is set, and the render fails without it,
+  # because the control-plane also reads it to decide whether its session cookie carries Secure: TLS
+  # ends at the ingress, so the request reaching the pod is plain http and says nothing about how the
+  # browser got there. On a plain-http install it may stay empty, which degrades each mailer
+  # differently: the consumer still sends the weekly summary but without its button, while the
+  # control-plane skips the invite email entirely. Neither fails a request, and an invite still works,
+  # since its accept link is returned to the inviter to pass on.
   appBaseUrl: ""            # e.g. https://app.example.com
   sampleKeepFirst: "50"     # consumer: keep the first N raw events per issue
   sampleEvery: "20"         # then store 1-in-M repeats
@@ -78,12 +85,20 @@ conductor:
 
 # GitHub App (the Conductor) — opt-in. When enabled the private key + webhook secret are stored in the
 # Secret and the control-plane's /api/github/* routes + the anthropic provider activate.
+#
+# clientSecret and oauthRedirectUri are as required as the rest: connecting an org to an installation is
+# done through GitHub user authorization, because that is the only way to ask which installations a given
+# person can reach. Without them the control-plane refuses to start rather than fall back to trusting an
+# installation id from a query string. oauthRedirectUri must equal the App's Callback URL and point at the
+# API, e.g. https://app.example.com/api/github/oauth/callback.
 github:
   enabled: false
   clientId: ""
   appSlug: ""
   webhookSecret: ""
   privateKey: ""            # the App private key PEM (stored as the Secret key github-app.pem)
+  clientSecret: ""
+  oauthRedirectUri: ""
 
 # Source-map object store (ADR-0028) — opt-in, BYO S3-compatible bucket. When enabled the control-plane's
 # /api/sourcemaps upload routes activate; the access key + secret are stored in the Secret. Leave the

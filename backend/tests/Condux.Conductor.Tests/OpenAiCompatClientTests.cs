@@ -48,6 +48,35 @@ public class OpenAiCompatClientTests
         Assert.Equal("user", messages[1].GetProperty("role").GetString());
     }
 
+    /// <summary>
+    /// The org supplies this base URL and the conductor runs inside the deployment, so an unchecked one
+    /// is a request we make from the inside on the org's behalf. It is validated where it is stored too,
+    /// but a row written before that check existed was never validated.
+    ///
+    /// The assertion that carries the weight is the second: no request was sent. A test that only checked
+    /// for a throw would pass against a client that sent the request and then failed on the response.
+    ///
+    /// Measured by removing the guard: only <c>file://</c> actually depends on it. The other three are
+    /// malformed enough that the request pipeline rejects them anyway, so they document the rule without
+    /// protecting it. Keep the <c>file://</c> case whatever else changes here, since a well-formed URL
+    /// with a scheme we do not speak is the one an attacker would choose.
+    /// </summary>
+    [Theory]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("//evil.example/v1")]
+    [InlineData("not a url")]
+    [InlineData("")]
+    public async Task Refuses_a_base_url_that_is_not_absolute_http_without_sending_anything(string baseUrl)
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, "{}");
+        var client = new OpenAiCompatClient(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.CreateAsync("gpt-x", "system", "user", "sk-test", baseUrl));
+
+        Assert.Null(handler.LastRequest);
+    }
+
     [Fact]
     public async Task Throws_on_a_non_success_response()
     {

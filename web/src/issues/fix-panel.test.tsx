@@ -21,6 +21,13 @@ vi.mock("@/src/api/generated/condux", () => ({
   getListFixesQueryKey: () => ["fixes"],
 }));
 
+// The panel disables the trigger when the org's GitHub connection is gone, because a run needs an
+// installation token. The real hook reads the selected-org context, which this file does not mount.
+const useGithubConnectionMock = vi.fn();
+vi.mock("@/src/settings/use-github-connection", () => ({
+  useGithubConnection: () => useGithubConnectionMock(),
+}));
+
 import { FixPanel } from "./fix-panel";
 
 const idle = { mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null };
@@ -34,6 +41,7 @@ function confirmSuggest() {
 }
 
 beforeEach(() => {
+  useGithubConnectionMock.mockReturnValue({ needsReconnect: false });
   useAiFixUsageMock.mockReturnValue({
     data: { data: { monthToDateUsd: 0, capUsd: null, remainingFixes: 5, uncappedFixes: false } },
   });
@@ -51,6 +59,22 @@ describe("FixPanel", () => {
     renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
     expect(screen.getByRole("button", { name: "Suggest fix" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "View suggested fix" })).not.toBeInTheDocument();
+  });
+
+  // Disconnecting GitHub keeps the repo links on purpose, so the row still looks linked. Without this
+  // the request goes out and dies in the worker with no installation token and nothing on screen.
+  it("refuses to start a run while the org has no GitHub connection", () => {
+    useGithubConnectionMock.mockReturnValue({ needsReconnect: true });
+    useListFixesMock.mockReturnValue({ data: { data: [] } });
+    useRequestFixMock.mockReturnValue(idle);
+    renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+
+    expect(screen.getByRole("button", { name: "Suggest fix" })).toBeDisabled();
+    expect(screen.getByText(/GitHub is not connected/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reconnect GitHub" })).toHaveAttribute(
+      "href",
+      "/projects",
+    );
   });
 
   it("links straight to the run once a fix exists, hiding the trigger", () => {

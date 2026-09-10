@@ -109,8 +109,8 @@ internal static class SsoEndpoints
         }
 
         var state = OidcFlow.RandomToken();
-        http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions(http));
-        http.Response.Cookies.Append(OrgCookie, config.OrgId.ToString(), OidcFlow.StateCookieOptions(http));
+        http.Response.Cookies.Append(StateCookie, state, OidcFlow.StateCookieOptions());
+        http.Response.Cookies.Append(OrgCookie, config.OrgId.ToString(), OidcFlow.StateCookieOptions());
 
         return config.AuthorizationEndpoint
             + (config.AuthorizationEndpoint.Contains('?') ? "&" : "?")

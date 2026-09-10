@@ -23,7 +23,6 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Non_admins_and_anon_are_hidden_from_the_management_routes()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: NewAdminEmail());
 
         var tenant = app.CreateClient();
@@ -44,7 +43,6 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Admin_edits_an_org_without_touching_the_tier_and_it_is_audited()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 
@@ -78,7 +76,6 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Admin_manages_members_cross_tenant_and_cannot_strand_the_last_owner()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 
@@ -117,7 +114,6 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task Admin_reads_the_unfiltered_audit_log()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var adminEmail = NewAdminEmail();
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 

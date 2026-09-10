@@ -238,7 +238,6 @@ public sealed class MfaApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
 
     private async Task<(HttpClient Client, string Secret)> SignedUpAsync()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = NewBrowser();
         var email = $"mfa-{Guid.NewGuid():N}@example.test";
         await client.PostAsJsonAsync("/api/auth/signup", new { email, password = Password });

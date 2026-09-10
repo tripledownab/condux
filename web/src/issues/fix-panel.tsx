@@ -8,6 +8,7 @@ import { getListFixesQueryKey, useListFixes, useRequestFix } from "@/src/api/gen
 import { PRIMARY_BUTTON_CLASS } from "@/src/components/form";
 import { Button } from "@/src/components/ui/button";
 import { fixDetailPath, ROUTES } from "@/src/routes";
+import { useGithubConnection } from "@/src/settings/use-github-connection";
 import { ConnectRepoDialog } from "./connect-repo-dialog";
 import { fixErrorKey } from "./fix-format";
 import { SuggestFixDialog } from "./suggest-fix-dialog";
@@ -35,6 +36,10 @@ export function FixPanel({
   // A run costs a real allowance, so it is confirmed first (#128) — the button opens this dialog, and
   // only Confirm fires the request.
   const [showConfirm, setShowConfirm] = useState(false);
+  // A run needs an installation token, so an org whose GitHub connection is gone cannot start one. The
+  // repo link survives a disconnect on purpose, which is exactly why the button has to say this: without
+  // it the request goes out and dies in the worker with nothing on screen.
+  const github = useGithubConnection();
   const fixes = useListFixes(projectId, issueId, {
     query: {
       // The run is created asynchronously by the worker; after a request, poll briefly so the link
@@ -82,11 +87,19 @@ export function FixPanel({
       <button
         type="button"
         onClick={() => setShowConfirm(true)}
-        disabled={requestFix.isPending}
+        disabled={requestFix.isPending || github.needsReconnect}
         className={`w-full ${PRIMARY_BUTTON_CLASS}`}
       >
         {requestFix.isPending ? translate("suggesting") : translate("suggest")}
       </button>
+      {github.needsReconnect ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          {translate("githubDisconnected")}{" "}
+          <Link href={ROUTES.projects} className="underline underline-offset-4">
+            {translate("reconnectGithub")}
+          </Link>
+        </p>
+      ) : null}
       {inlineError ? (
         <p className="mt-3 text-sm text-error">
           {translate(inlineError)}

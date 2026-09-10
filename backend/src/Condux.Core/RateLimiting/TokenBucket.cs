@@ -8,7 +8,8 @@ namespace Condux.Core.RateLimiting;
 ///
 /// This is the single source of truth for the limiter math. Both the in-memory
 /// limiters (<see cref="InMemoryRateLimiter"/>, <see cref="SpikeGuard"/>) and the
-/// Valkey Lua script implement the same algorithm, so their behavior matches. It
+/// Valkey Lua script implement the same algorithm, and the Lua is driven against this over the same
+/// sequence to prove it (pinned by ValkeyRateLimiterTest). It
 /// is a pure function (no clock, no state) so refill logic is deterministically
 /// testable.
 /// </summary>

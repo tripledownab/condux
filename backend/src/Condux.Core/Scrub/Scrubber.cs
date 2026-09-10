@@ -17,6 +17,14 @@ public static partial class Scrubber
     /// </summary>
     public const string Redacted = "[redacted]";
 
+    // This pattern reads like a ReDoS: the domain's [A-Za-z0-9.-]+ can also match the "." the pattern
+    // needs next, and it runs on the ingest hot path over strings a sender chooses. Measured on .NET 10
+    // before changing it, because the fix costs something. The textbook input, "a"*n + "@" + "b"*n, stays
+    // at about 1ms from n=25,000 to n=100,000: flat, not quadratic, so the engine is not retrying every
+    // start position here. RegexOptions.NonBacktracking gives the same answer and costs about 30%
+    // throughput on ordinary event text, so it is deliberately NOT set. ScrubberTests pins that input, so
+    // an edit making the pattern quadratic on it fails rather than ships; a different pathological shape
+    // would need its own case. Reviewed 2026-09-07.
     [GeneratedRegex(@"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")]
     private static partial Regex EmailRegex();
 

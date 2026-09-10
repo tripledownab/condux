@@ -22,7 +22,6 @@ public sealed class OnboardingApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Fresh_signup_is_not_onboarded_until_complete_is_called()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client);
 
@@ -42,7 +41,6 @@ public sealed class OnboardingApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Accepting_an_invite_marks_the_invitee_onboarded()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgResp = await owner.PostAsJsonAsync("/api/orgs",

@@ -4,7 +4,8 @@ namespace Condux.Core.WeeklySummaries;
 
 /// <summary>Builds the plain-text subject and body of the weekly summary email (ADR-0031). Pure (no HTML, no
 /// I/O), the text/plain source of truth; the title, numbers, and metric rows come from the shared
-/// <see cref="WeeklySummaryFormat"/> so this and the HTML view never diverge. Mirrors <c>ConductorPauseText</c>.</summary>
+/// <see cref="WeeklySummaryFormat"/>, which is the one source this and the HTML view both read.
+/// Built like <c>ConductorPauseText</c>.</summary>
 public static class WeeklySummaryText
 {
     public static string Subject(WeeklySummary s) => WeeklySummaryFormat.Title(s);

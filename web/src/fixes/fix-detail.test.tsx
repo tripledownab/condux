@@ -53,7 +53,6 @@ function succeededFix(overrides: Record<string, unknown> = {}) {
       {
         actor: "conductor",
         event: "draft_pr_opened",
-        detail: '{"inputTokens":1200,"outputTokens":300}',
         createdAt: "2026-07-22T10:01:00Z",
       },
     ],

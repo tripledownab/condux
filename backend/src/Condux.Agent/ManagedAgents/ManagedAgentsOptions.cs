@@ -15,7 +15,7 @@ public sealed record ManagedAgentsOptions(string ApiKey, decimal MaxSessionUsd)
     public string? AgentId { get; init; }
     public string? EnvironmentId { get; init; }
 
-    /// <summary>Read from the environment; mirrors <see cref="SandboxOptions.FromEnv"/> — a missing
+    /// <summary>Read from the environment; built like <see cref="SandboxOptions.FromEnv"/>: a missing
     /// key throws (the managed-agents provider cannot run without it), optionals default.</summary>
     public static ManagedAgentsOptions FromEnv(IConfiguration config)
     {

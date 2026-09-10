@@ -21,7 +21,6 @@ public sealed class FixCatalogApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Fix_catalog_lists_reads_views_and_archives()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
@@ -57,9 +56,19 @@ public sealed class FixCatalogApiTest(PostgresFixture pg) : IClassFixture<Postgr
         // Detail returns the audit trail.
         var detail = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/fixes/{fixId}");
         Assert.Equal("guards the null deref", detail.GetProperty("summary").GetString());
-        Assert.Contains(
-            detail.GetProperty("audit").EnumerateArray(),
-            a => a.GetProperty("event").GetString() == "draft_pr_opened");
+        var entries = detail.GetProperty("audit").EnumerateArray().ToList();
+        Assert.Contains(entries, a => a.GetProperty("event").GetString() == "draft_pr_opened");
+
+        // The trail says what happened and never carries the row's detail JSON. That column is written by
+        // six places with no shared rule about what may go in it, and this endpoint is member-level, so
+        // an entry that carried it would publish whatever the newest writer happened to put there. The
+        // NotEmpty guards the assertion itself: Assert.All over an empty list passes and proves nothing.
+        Assert.NotEmpty(entries);
+        Assert.All(entries, a =>
+        {
+            Assert.False(a.TryGetProperty("detail", out _));
+            Assert.True(a.TryGetProperty("event", out _));
+        });
 
         // Viewing clears it from the badge.
         Assert.Equal(HttpStatusCode.NoContent,
@@ -79,7 +88,6 @@ public sealed class FixCatalogApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Fix_cost_rollup_prices_priced_models_and_leaves_byo_uncounted()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",
@@ -139,7 +147,6 @@ public sealed class FixCatalogApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Fixes_of_another_project_are_not_visible()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",

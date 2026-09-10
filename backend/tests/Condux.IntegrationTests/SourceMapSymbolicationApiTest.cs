@@ -32,8 +32,6 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
     [Fact]
     public async Task GetIssue_deminifies_the_stored_frame()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         // Object storage configured (so symbolication runs) but backed by an in-memory fake holding the map.
         const string objectKey = "sourcemaps/by-debug-id/abc123";
         var store = new MapStore(objectKey, Encoding.UTF8.GetBytes(Map));

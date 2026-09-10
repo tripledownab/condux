@@ -16,9 +16,25 @@ internal static class OtlpStacktrace
 {
     // A V8 `error.stack` line: "at fn (file:line:col)" or the anonymous "at file:line:col". Non-matching
     // lines, including the leading "Type: message", are skipped.
+    //
+    // NonBacktracking is load-bearing, and RegexOptions.Compiled here was not enough. This string is an
+    // OTLP attribute the sender chooses, bounded only by CONDUX_MAX_INGEST_BYTES, and the two lazy groups
+    // are quadratic: every " (" in the line is a candidate function-name boundary, and each one rescans
+    // the rest looking for a ":digits:digits" tail. Measured compiled, a single line of " (" repeated
+    // takes 76ms at 30,000 repetitions and 14.2s at 480,000: a 16-fold longer line for about 190 times
+    // the work, on one ingest thread, for a request under a megabyte. Linear it is about a millisecond.
+    //
+    // The lazy quantifiers are kept because a file can contain colons (`https://…`, a Windows path), so a
+    // negated class here would stop reading real stacks.
     private static readonly Regex V8Frame = new(
         @"^\s*at (?:(?<fn>.+?) \()?(?<file>.+?):(?<line>\d+):(?<col>\d+)\)?\s*$",
-        RegexOptions.Compiled);
+        RegexOptions.NonBacktracking);
+
+    // A real stack is dozens of frames. Reading a bounded prefix keeps a 20 MiB attribute of newlines from
+    // costing a list of millions, and the cap is on frames kept as well as lines read because the two
+    // diverge: a stack can be all frames or none.
+    private const int MaxLines = 1000;
+    private const int MaxFrames = 250;
 
     internal static Stacktrace? ParseV8(string? stack)
     {
@@ -28,9 +44,15 @@ internal static class OtlpStacktrace
         }
 
         var frames = new List<Frame>();
-        foreach (var line in stack.Split('\n'))
+        var lines = 0;
+        foreach (var line in stack.AsSpan().EnumerateLines())
         {
-            var match = V8Frame.Match(line);
+            if (++lines > MaxLines || frames.Count == MaxFrames)
+            {
+                break;
+            }
+
+            var match = V8Frame.Match(line.ToString());
             if (!match.Success)
             {
                 continue;
@@ -52,7 +74,8 @@ internal static class OtlpStacktrace
             return null;
         }
 
-        // V8 stacks are newest-first; the model orders oldest (outermost) to newest (crashing).
+        // V8 stacks are newest-first; the model orders oldest (outermost) to newest (crashing). Reversing
+        // after the cap is also why the cap keeps the newest frames, which are the ones that name the fault.
         frames.Reverse();
         return new Stacktrace { Frames = frames };
     }
@@ -64,8 +87,11 @@ internal static class OtlpStacktrace
     /// This answers the same question as the JS SDK's own <c>isInApp</c>, for the same V8 frames, and the
     /// two must agree: the fingerprint is built from every in-app frame, so one path calling a frame
     /// application code while the other does not splits a single fault into two issues depending on how
-    /// it was reported. They cannot share an implementation across the language boundary, so keep this
-    /// list and the SDK's in step whenever either moves. The framework entry is not decoration: a bundled
+    /// it was reported.
+    ///
+    /// <b>unenforced parity:</b> the other side is TypeScript, in <c>sdks/core/src/stack.ts</c>, so no
+    /// test in this solution can run both and compare. Keep this list and the SDK's in step whenever
+    /// either moves. The framework entry is not decoration: a bundled
     /// Next.js server puts its own frames in every stack, and marking those in-app puts them in the
     /// fingerprint, where a framework upgrade then re-groups every existing issue.
     /// </remarks>

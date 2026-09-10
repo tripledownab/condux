@@ -39,30 +39,16 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
             .GetProperty("project").GetProperty("id").GetInt64();
     }
 
-    private HttpClient BearerClient(string token)
-    {
-        var client = CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return client;
-    }
+    private HttpClient BearerClient(string token) => McpRpc.BearerClient(CreateClient(), token);
 
-    private static async Task<JsonElement> RpcAsync(HttpClient client, string method, object? prms = null)
-    {
-        var resp = await client.PostAsJsonAsync("/api/mcp",
-            new { jsonrpc = "2.0", id = 1, method, @params = prms });
-        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-        return await resp.Content.ReadFromJsonAsync<JsonElement>();
-    }
+    private static Task<JsonElement> RpcAsync(HttpClient client, string method, object? prms = null) =>
+        McpRpc.CallMethodAsync(client, method, prms);
 
-    // The text payload a tools/call result carries (our tools serialize their data as JSON text).
-    private static JsonElement ToolJson(JsonElement rpc) =>
-        JsonDocument.Parse(rpc.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!)
-            .RootElement;
+    private static JsonElement ToolJson(JsonElement rpc) => McpRpc.ToolJson(rpc);
 
     [Fact]
     public async Task Initialize_ListTools_And_CallListIssues_ScopedToTheTokensProject()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
         var projectA = await CreateProjectAsync(client, orgId, "A");
         var projectB = await CreateProjectAsync(client, orgId, "B");
@@ -85,8 +71,7 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
             init.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString());
 
         // tools/list names the read-only tools.
-        var tools = (await RpcAsync(agent, "tools/list")).GetProperty("result").GetProperty("tools");
-        var names = tools.EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToArray();
+        var names = McpRpc.ToolNames(await RpcAsync(agent, "tools/list"));
         Assert.Contains("list_issues", names);
         Assert.Contains("get_issue", names);
         Assert.Contains("list_issue_events", names);
@@ -94,7 +79,7 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // tools/call list_issues returns only project A's issue.
         var call = await RpcAsync(agent, "tools/call",
             new { name = "list_issues", arguments = new { limit = 50 } });
-        Assert.False(call.GetProperty("result").GetProperty("isError").GetBoolean());
+        Assert.False(McpRpc.IsError(call));
         var listed = ToolJson(call).GetProperty("issues");
         Assert.Equal(1, listed.GetArrayLength());
         Assert.Equal("A boom", listed[0].GetProperty("title").GetString());
@@ -103,7 +88,6 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     [Fact]
     public async Task ToolErrors_SurfaceAsIsError_NotProtocolErrors()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
         var projectId = await CreateProjectAsync(client, orgId, "A");
         var raw = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens", new { name = "x" }))
@@ -112,11 +96,11 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
 
         // An unknown tool and a missing issue are tool errors (isError), not JSON-RPC protocol errors.
         var unknown = await RpcAsync(agent, "tools/call", new { name = "delete_everything", arguments = new { } });
-        Assert.True(unknown.GetProperty("result").GetProperty("isError").GetBoolean());
+        Assert.True(McpRpc.IsError(unknown));
 
         var missing = await RpcAsync(agent, "tools/call",
             new { name = "get_issue", arguments = new { issueId = Guid.NewGuid().ToString() } });
-        Assert.True(missing.GetProperty("result").GetProperty("isError").GetBoolean());
+        Assert.True(McpRpc.IsError(missing));
 
         // An out-of-range page is a tool error (validated before the lookup, so no issue is required).
         var badPage = await RpcAsync(agent, "tools/call", new
@@ -124,13 +108,12 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
             name = "list_issue_events",
             arguments = new { issueId = Guid.NewGuid().ToString(), limit = 9999 },
         });
-        Assert.True(badPage.GetProperty("result").GetProperty("isError").GetBoolean());
+        Assert.True(McpRpc.IsError(badPage));
     }
 
     [Fact]
     public async Task NoOrRevokedToken_Is401()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, orgId) = await ProvisionAsync();
         var projectId = await CreateProjectAsync(client, orgId, "A");
 

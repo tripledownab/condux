@@ -1,6 +1,7 @@
 using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Setup;
 using Condux.Core.Auth;
+using Condux.Core.Http;
 using Condux.Core.Plans;
 using Condux.Core.Secrets;
 using Condux.Storage.Postgres;
@@ -10,7 +11,7 @@ namespace Condux.ControlPlane.Endpoints;
 
 /// <summary>
 /// The per-org enterprise-SSO OIDC config (#72): the org's IdP endpoints + client id + email domain, with
-/// the client secret stored encrypted (<see cref="SecretBox"/>) and never read back — mirrors the BYO-key
+/// the client secret stored encrypted (<see cref="SecretBox"/>) and never read back, following the BYO-key
 /// registry (<see cref="LlmConfigEndpoints"/>). Opt-in behind <see cref="SecretsConfig"/> (404 when the
 /// secret store isn't configured) and gated on the plan's <c>Sso</c> feature. Reads member+, writes admin+
 /// (an org-level integration secret, like the GitHub connect / LLM key).
@@ -139,8 +140,9 @@ internal static class SsoConfigEndpoints
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
     }
 
-    private static bool IsHttpUrl(string? value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
+    // An SSO endpoint must be present as well as well-formed, which is this policy's difference from the
+    // model provider's optional base URL. The shape check itself is shared, so the two cannot drift.
+    private static bool IsHttpUrl(string? value) => HttpUrls.IsAbsoluteHttp(value);
 
     // The client secret is never returned — write-only, like the LLM key. The SAML certificate is the
     // IdP's public signing certificate, so it echoes back for the admin to verify.

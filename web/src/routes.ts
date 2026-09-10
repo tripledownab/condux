@@ -4,6 +4,9 @@ export const ROUTES = {
   home: "/",
   login: "/login",
   signup: "/signup",
+  // Both public: someone who cannot sign in is exactly who needs them.
+  forgotPassword: "/forgot-password",
+  resetPassword: "/reset",
   fixes: "/fixes",
   projects: "/projects",
   developer: "/developer",

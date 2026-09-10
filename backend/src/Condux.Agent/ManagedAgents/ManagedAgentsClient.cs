@@ -17,8 +17,9 @@ public sealed class ManagedAgentsApiException(HttpStatusCode statusCode, string 
 /// <summary>
 /// A thin HTTP layer over the Anthropic Managed Agents beta (ADR-0038) — the same plain-HttpClient
 /// shape as <see cref="AnthropicMessagesClient"/>, no SDK. Every call carries the beta header; errors
-/// surface as <see cref="ManagedAgentsApiException"/> with the vendor's message. Retry/backoff is the
-/// caller's job (the fix provider's poll interval is the backoff).
+/// surface as <see cref="ManagedAgentsApiException"/> carrying the status and the vendor's message,
+/// reduced by <see cref="ModelApiError"/> and bounded by it. Retry/backoff is the caller's job (the fix
+/// provider's poll interval is the backoff), and it keys on the status, never the text.
 /// </summary>
 public sealed class ManagedAgentsClient(HttpClient http, ManagedAgentsOptions options)
 {

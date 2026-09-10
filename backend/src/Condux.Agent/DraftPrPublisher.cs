@@ -8,6 +8,11 @@ namespace Condux.Agent;
 /// changed file, then the DRAFT pull request. This is where the safety invariant lives — the host does
 /// all git with the full-permission token, so no execution environment (local sandbox or vendor-hosted)
 /// ever needs a write-capable credential, and nothing but a draft PR can come out of a run.
+///
+/// It is also where every model-chosen path is checked, for the same reason: both gateways call this and
+/// it is the only caller of <c>PutFileAsync</c>, so a check here cannot be skipped by adding a third
+/// gateway. The managed-agents gateway used to carry its own copy of the rule and the single-shot one
+/// carried none, which is exactly what a per-caller check produces.
 /// </summary>
 internal static class DraftPrPublisher
 {
@@ -16,6 +21,13 @@ internal static class DraftPrPublisher
         IReadOnlyDictionary<string, string> files, string proposalSummary,
         IReadOnlyList<RepoFile>? prefetched = null, CancellationToken ct = default)
     {
+        // Before the first git call: a run that names a path outside the repository fails without having
+        // created a branch, rather than part way through committing.
+        foreach (var path in files.Keys)
+        {
+            RepoPaths.Normalize(path);
+        }
+
         var branch = $"condux/fix-{spec.IssueId}-{runId[..Math.Min(8, runId.Length)]}";
         var baseSha = await repo.GetBranchHeadShaAsync(token, spec.RepoFullName, spec.BaseBranch, ct);
         await repo.CreateBranchAsync(token, spec.RepoFullName, branch, baseSha, ct);

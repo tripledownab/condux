@@ -6,7 +6,7 @@ namespace Condux.Storage.Postgres;
 /// The weekly-summary send ledger (ADR-0031): one row per (org, weekly send) that has been handled. The
 /// claim is an atomic <c>INSERT ... ON CONFLICT DO NOTHING RETURNING</c> — it returns a row only for the
 /// caller that inserts it, so exactly one worker tick (across restarts and replicas) composes and sends a
-/// given week. Mirrors the pause-notify throttle's guarded-write idiom.
+/// given week. Uses the pause-notify throttle's guarded-write idiom.
 /// </summary>
 public sealed class PostgresWeeklySummaryLedger(string connectionString)
 {

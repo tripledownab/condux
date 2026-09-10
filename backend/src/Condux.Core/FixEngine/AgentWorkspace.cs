@@ -1,3 +1,5 @@
+using Condux.Core.SourceControl;
+
 namespace Condux.Core.FixEngine;
 
 /// <summary>
@@ -57,43 +59,20 @@ public sealed class InMemoryWorkspace : IAgentWorkspace
     public Task<IReadOnlyList<string>> ListFilesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<string>>([.. files.Keys.OrderBy(path => path, StringComparer.Ordinal)]);
 
+    // The model chooses these paths, so they are untrusted input. The rule is RepoPaths.Normalize and is
+    // called directly rather than through a local alias: an alias is somewhere to add "just one" tweak,
+    // and a second home for this rule is what let two other callers ship without it.
     public Task<string?> ReadFileAsync(string path, CancellationToken cancellationToken = default)
     {
-        var normalized = NormalizePath(path);
+        var normalized = RepoPaths.Normalize(path);
         return Task.FromResult(files.TryGetValue(normalized, out var contents) ? contents : null);
     }
 
     public Task WriteFileAsync(string path, string contents, CancellationToken cancellationToken = default)
     {
-        var normalized = NormalizePath(path);
+        var normalized = RepoPaths.Normalize(path);
         files[normalized] = contents;
         changed[normalized] = contents;
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// The model chooses these paths, so they are untrusted input. Reject anything that could escape the
-    /// repo root (absolute paths, drive letters, or a parent-directory segment) rather than normalizing it
-    /// away, so a traversal attempt fails loudly as a tool error instead of silently writing elsewhere.
-    /// </summary>
-    private static string NormalizePath(string path)
-    {
-        var trimmed = path.Replace('\\', '/').Trim();
-        if (trimmed.Length == 0)
-        {
-            throw new ArgumentException("Path is empty.", nameof(path));
-        }
-
-        if (trimmed.StartsWith('/') || trimmed.Contains(':'))
-        {
-            throw new ArgumentException($"Path must be repo-relative: {path}", nameof(path));
-        }
-
-        if (trimmed.Split('/').Any(segment => segment == ".."))
-        {
-            throw new ArgumentException($"Path must not leave the repo root: {path}", nameof(path));
-        }
-
-        return trimmed.StartsWith("./", StringComparison.Ordinal) ? trimmed[2..] : trimmed;
     }
 }

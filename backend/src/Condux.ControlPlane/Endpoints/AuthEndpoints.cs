@@ -14,6 +14,29 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class AuthEndpoints
 {
+    // A reset mails a stranger-supplied address, so it is a spam vector pointed at our own SMTP
+    // reputation as much as at the recipient. Bounded per account rather than per request: the address is
+    // what the sender controls, and it is what receives the mail.
+    private static readonly TimeSpan ThrottleWindow = TimeSpan.FromHours(1);
+    private const int MaxResetsPerWindow = 3;
+
+    /// <summary>
+    /// Sends the reset mail outside the request. Failures are logged, never surfaced: telling a caller
+    /// that delivery failed still tells them the address exists.
+    /// </summary>
+    private static async Task SendResetAsync(
+        PasswordResetMailer mailer, string email, string rawToken, ILogger log)
+    {
+        try
+        {
+            await mailer.SendAsync(email, rawToken, CancellationToken.None);
+        }
+        catch (Exception failure)
+        {
+            log.LogError(failure, "Password reset email failed to send.");
+        }
+    }
+
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/auth/signup",
@@ -78,6 +101,105 @@ internal static class AuthEndpoints
                     return TypedResults.NoContent();
                 })
             .WithName("logout").WithTags("Auth");
+
+        // Change password while signed in. Re-asks for the current one rather than trusting the session
+        // cookie, and ends every OTHER session, because a password someone else knew must stop working
+        // the moment it is replaced. The caller's own session survives so they are not signed out of the
+        // page they just used.
+        app.MapPost("/api/auth/password",
+                async Task<Results<NoContent, UnauthorizedHttpResult, BadRequest<ErrorResponse>>> (
+                    ChangePasswordRequest req, UserRepository users,
+                    SessionRepository sessions, HttpContext http) =>
+                {
+                    // Same bounds as signup, stated once there and repeated here because this is a second
+                    // way in and an unbounded value would reach the hasher either way.
+                    if (string.IsNullOrEmpty(req.NewPassword)
+                        || req.NewPassword.Length < 8 || req.NewPassword.Length > 200)
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_password"));
+                    }
+
+                    // A federated account has no password to verify, so this returns null and the answer
+                    // is 401 rather than an offer to set one: their identity provider owns the credential.
+                    if (await Sessions.ReauthenticateAsync(http, users, req.CurrentPassword) is not { } user)
+                    {
+                        return TypedResults.Unauthorized();
+                    }
+
+                    await users.SetPasswordHashAsync(user.Id, PasswordHasher.Hash(req.NewPassword));
+                    await Sessions.RevokeOtherSessionsAsync(http, sessions, user.Id);
+                    return TypedResults.NoContent();
+                })
+            .WithName("changePassword").WithTags("Auth").RequireAuthorization();
+
+        // Ask for a reset link. ALWAYS 202, whatever happens next, because any other answer turns this
+        // into an oracle for which addresses have accounts. That means the failures below are logged and
+        // not returned: no such user, a federated account with no password to reset, SMTP off, too many
+        // requests. The user is told "if that address has an account, we have sent a link" either way.
+        app.MapPost("/api/auth/password/forgot",
+                async Task<Accepted> (
+                    ForgotPasswordRequest req, UserRepository users, PasswordResetRepository resets,
+                    PasswordResetMailer mailer, ILogger<Program> log, HttpContext http) =>
+                {
+                    var email = Emails.IsValid(req.Email) ? Emails.Normalize(req.Email) : null;
+                    var user = email is null ? null : await users.GetByEmailAsync(email);
+
+                    // A federated account has no password, so a reset would set one behind the identity
+                    // provider's back and create a second way in that the org never approved.
+                    if (user is { PasswordHash: not null }
+                        && await resets.CountSinceAsync(user.Id, ThrottleWindow, http.RequestAborted)
+                            < MaxResetsPerWindow)
+                    {
+                        var (raw, hash) = SessionTokens.Create();
+                        await resets.CreateAsync(
+                            user.Id, hash, DateTimeOffset.UtcNow.Add(PasswordResetEmailText.Lifetime),
+                            http.RequestAborted);
+                        // Not awaited, and NOT on RequestAborted: a constant status is only half of
+                        // "this endpoint says nothing". Waiting for SMTP would make a known address
+                        // measurably slower than an unknown one, which is the same oracle by a
+                        // stopwatch instead of a status code. Detached, and cancelled by nothing, so
+                        // the send outlives the response it must not delay.
+                        _ = SendResetAsync(mailer, user.Email, raw, log);
+                    }
+                    else if (user is not null)
+                    {
+                        log.LogInformation(
+                            "Password reset not sent for user {UserId}: federated account or throttled.",
+                            user.Id);
+                    }
+
+                    return TypedResults.Accepted((string?)null);
+                })
+            .WithName("forgotPassword").WithTags("Auth");
+
+        // Redeem a reset link. Deliberately does NOT sign the user in: it sends them to sign in with the
+        // new password, so an account with a second factor is still challenged for it. Signing them in
+        // here would make mailbox access alone enough to bypass MFA entirely.
+        app.MapPost("/api/auth/password/reset",
+                async Task<Results<NoContent, BadRequest<ErrorResponse>>> (
+                    ResetPasswordRequest req, UserRepository users, PasswordResetRepository resets,
+                    SessionRepository sessions, HttpContext http) =>
+                {
+                    if (string.IsNullOrEmpty(req.NewPassword)
+                        || req.NewPassword.Length < 8 || req.NewPassword.Length > 200)
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_password"));
+                    }
+
+                    if (string.IsNullOrEmpty(req.Token)
+                        || await resets.RedeemAsync(SessionTokens.HashToken(req.Token), http.RequestAborted)
+                            is not { } redeemed)
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse("invalid_token"));
+                    }
+
+                    await users.SetPasswordHashAsync(redeemed.UserId, PasswordHasher.Hash(req.NewPassword));
+                    // Every session, not all-but-one: whoever is resetting is not signed in here, and the
+                    // reason to reset is usually that someone else might be.
+                    await sessions.RevokeAllExceptAsync(redeemed.UserId, string.Empty, http.RequestAborted);
+                    return TypedResults.NoContent();
+                })
+            .WithName("resetPassword").WithTags("Auth");
 
         // The current user, resolved from the session cookie by the auth handler. Id/Email/IsPlatformAdmin
         // are always the caller's real identity; Impersonation is non-null only while this admin is in a

@@ -74,7 +74,13 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         PauseNotifier(pauseSink), NullLogger<AutoFixDispatcher>.Instance);
 
     // An org at the given tier + mode, a project, and optionally a linked repo + GitHub installation.
-    private async Task<(long OrgId, long ProjectId)> SeedAsync(int tier, int mode, bool withRepo, bool withInstall)
+    //
+    // The installation id is derived from the org rather than being a constant, because every call makes a
+    // NEW org and the class shares one database. A shared id used to work only because linking overwrote
+    // the owning org, so six of the seven callers here were quietly seeding an installation that belonged
+    // to a different org and passing anyway. Linking now refuses that, which is why the seed asserts.
+    private async Task<(long OrgId, long ProjectId, long InstallationId)> SeedAsync(
+        int tier, int mode, bool withRepo, bool withInstall)
     {
         var orgs = new OrgRepository(pg.ConnectionString);
         var org = await orgs.CreateAsync("org-" + Guid.NewGuid().ToString("N"), "Org", tier);
@@ -88,11 +94,14 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         {
             await new RepoLinkRepository(pg.ConnectionString).LinkAsync(project.Id, "acme/api", "main");
         }
+        var installationId = 500_000 + org.Id;
         if (withInstall)
         {
-            await new GithubInstallationRepository(pg.ConnectionString).LinkAsync(555, org.Id);
+            Assert.True(
+                await new GithubInstallationRepository(pg.ConnectionString).LinkAsync(installationId, org.Id),
+                $"installation {installationId} is already held by another org");
         }
-        return (org.Id, project.Id);
+        return (org.Id, project.Id, installationId);
     }
 
     private async Task<UpsertResult> NewIssueAsync(long projectId, string fingerprint, Level level) =>
@@ -102,8 +111,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Auto_org_publishes_a_fix_job_for_a_new_error_issue()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-        var (orgId, projectId) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var (orgId, projectId, installationId) = await SeedAsync(
+            (int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         var upsert = await NewIssueAsync(projectId, "fp-auto", Level.Error);
         var pub = new CapturingPublisher();
 
@@ -114,30 +123,29 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         Assert.Equal(orgId, job.OrgId);
         Assert.Equal("acme/api", job.RepoFullName);
         Assert.Equal("main", job.BaseBranch);
-        Assert.Equal(555, job.InstallationId);
+        Assert.Equal(installationId, job.InstallationId);
         Assert.Equal("auto", job.Actor);
     }
 
     [Fact]
     public async Task Manual_mode_and_sub_error_issues_publish_nothing()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var pub = new CapturingPublisher();
 
         // Manual mode: even a new error issue is left for a human to trigger.
-        var (_, manualProject) = await SeedAsync((int)Tier.Team, mode: 0, withRepo: true, withInstall: true);
+        var (_, manualProject, _) = await SeedAsync((int)Tier.Team, mode: 0, withRepo: true, withInstall: true);
         await Dispatcher(pub).DispatchAsync(manualProject,
             await NewIssueAsync(manualProject, "fp-manual", Level.Error), new Event { Level = Level.Error });
         Assert.Empty(pub.Jobs);
 
         // Auto mode but a warning (below error) — auto-fix skips low-value issues.
-        var (_, autoProject) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var (_, autoProject, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         await Dispatcher(pub).DispatchAsync(autoProject,
             await NewIssueAsync(autoProject, "fp-warn", Level.Warning), new Event { Level = Level.Warning });
         Assert.Empty(pub.Jobs);
 
         // Auto mode + error but no repo linked — nowhere to open a PR.
-        var (_, noRepoProject) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: false, withInstall: true);
+        var (_, noRepoProject, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: false, withInstall: true);
         await Dispatcher(pub).DispatchAsync(noRepoProject,
             await NewIssueAsync(noRepoProject, "fp-norepo", Level.Error), new Event { Level = Level.Error });
         Assert.Empty(pub.Jobs);
@@ -146,8 +154,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Auto_org_over_its_cost_cap_publishes_nothing_and_notifies()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-        var (orgId, projectId) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var (orgId, projectId, installationId) = await SeedAsync(
+            (int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         await new OrgNotificationChannelRepository(pg.ConnectionString)
             .AddAsync(orgId, NotificationChannel.Webhook, "https://hooks.test/pause");
 
@@ -178,8 +186,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Auto_org_out_of_allowance_publishes_nothing_and_notifies()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-        var (orgId, projectId) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var (orgId, projectId, installationId) = await SeedAsync(
+            (int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         await new OrgNotificationChannelRepository(pg.ConnectionString)
             .AddAsync(orgId, NotificationChannel.Webhook, "https://hooks.test/pause");
 
@@ -206,8 +214,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Fix_job_prompt_carries_the_release_attribution()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-        var (_, projectId) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var (_, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         // Record the release the event will carry → its commit, so the fix prompt gets the bisect hint (#144).
         var repo = (await new RepoLinkRepository(pg.ConnectionString).ListByProjectAsync(projectId))[0];
         await new ReleaseRepository(pg.ConnectionString).RecordAsync(projectId, repo.Id, "1.4.2", "abc123def456");

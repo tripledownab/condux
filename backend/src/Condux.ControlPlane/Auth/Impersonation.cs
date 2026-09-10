@@ -27,12 +27,14 @@ internal static class Impersonation
     public static long? TargetOrgId(HttpContext http) =>
         http.Items.TryGetValue(ItemsKey, out var value) && value is long orgId ? orgId : null;
 
-    /// <summary>Mint the cookie for a validated start (called by the impersonation start endpoint).</summary>
+    /// <summary>
+    /// Mint the cookie for a validated start (called by the impersonation start endpoint). <c>Secure</c>
+    /// is set for every cookie by <see cref="CookieSecurity"/>, not decided here.
+    /// </summary>
     public static void SetCookie(HttpContext http, string token, DateTimeOffset expiresAt) =>
         http.Response.Cookies.Append(Cookie, token, new CookieOptions
         {
             HttpOnly = true,
-            Secure = http.Request.IsHttps,
             SameSite = SameSiteMode.Lax,
             Path = "/",
             Expires = expiresAt,

@@ -22,7 +22,6 @@ public sealed class IssueStatsApiTest(PostgresFixture pg, ClickHouseFixture ch)
     [Fact]
     public async Task Stats_ReturnsAZeroFilledHourlySeriesWithExactCounts()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = ControlPlaneApp.Create(pg.ConnectionString, ch).CreateClient();
         await ApiAuth.SignUpAsync(client);
         var orgResp = await client.PostAsJsonAsync("/api/orgs",

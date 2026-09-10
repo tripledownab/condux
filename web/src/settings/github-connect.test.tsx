@@ -312,6 +312,22 @@ describe("GitHubConnect", () => {
     expect(screen.getByText(/Disconnect it there first/)).toBeInTheDocument();
   });
 
+  // Installed and waiting for a GitHub organization owner to approve it. Nothing went wrong, so it says
+  // what to do next and is not styled as a failure.
+  it("reports a pending install without reporting it as an error", () => {
+    useListGithubInstallationsMock.mockReturnValue({
+      isPending: false,
+      error: null,
+      data: { status: 200, data: [] },
+    });
+    returnFromGithub("?github=pending");
+    renderWithIntl(<GitHubConnect />);
+
+    const message = screen.getByText(/still has to approve it/);
+    expect(message).toBeInTheDocument();
+    expect(message).not.toHaveClass("text-error");
+  });
+
   // The link belongs to an installation, so an org without one has nothing to point at.
   it("offers no manage link when nothing is connected", () => {
     useListGithubInstallationsMock.mockReturnValue({

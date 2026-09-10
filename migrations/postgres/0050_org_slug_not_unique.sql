@@ -1,0 +1,13 @@
+-- orgs.slug is display text, so stop constraining it to be unique.
+--
+-- The slug was globally UNIQUE while being derived, invisibly, from a name that is not unique. The
+-- create-org form asks only for a name, so a second customer called Acme could not create an org at all,
+-- and had no field to change: the request reached the constraint and came back 500. Nothing looks an org
+-- up by slug (verified: every read is the admin list, the impersonation banner and the settings display),
+-- so the constraint protected no invariant and only produced that failure.
+--
+-- Uniqueness of an org is its BIGSERIAL id, which is what every foreign key and every route already uses.
+--
+-- Dropping a UNIQUE constraint drops its index with it, and nothing queries the column, so no replacement
+-- index is wanted here.
+ALTER TABLE orgs DROP CONSTRAINT IF EXISTS orgs_slug_key;

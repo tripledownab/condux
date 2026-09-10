@@ -6,8 +6,8 @@ import java.util.regex.Pattern;
 
 /**
  * Proves the emitted JSON is the Sentry store wire shape (field by field) and the transport is resilient,
- * with an injected transport + sleep so there is no real network or waiting. Mirrors the JS/Python/Go/
- * Ruby/PHP suites. A plain-Java harness (a main + assertions) so CI needs only a JDK — no JUnit, no build
+ * with an injected transport + sleep so there is no real network or waiting. Built like the JS/Python/
+ * Go/Ruby/PHP suites. A plain-Java harness (a main + assertions) so CI needs only a JDK: no JUnit, no build
  * tool. Assertions are substring/regex checks on the raw JSON, since the SDK is dependency-free (no JSON
  * parser to read it back).
  */

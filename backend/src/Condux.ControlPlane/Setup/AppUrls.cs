@@ -1,25 +1,19 @@
+using Condux.Core.Http;
+
 namespace Condux.ControlPlane.Setup;
 
 /// <summary>
-/// Resolves the dashboard's absolute base URL for links that must work outside the browser — notably
-/// invite emails, where a same-origin relative path is useless. Precedence: an explicit
-/// <c>CONDUX_APP_BASE_URL</c> (set in same-origin production, e.g. https://app.condux.ai), else the first
-/// <c>CONDUX_CORS_ORIGINS</c> entry (split-origin dev, e.g. http://localhost:3000), else empty. An empty
-/// result means we cannot build an absolute link, so a caller should skip sending rather than emit a
-/// broken one. Any trailing slash is trimmed so callers concatenate a leading-slash path cleanly.
+/// The control-plane's reading of the deployment's own address: which environment variables state it,
+/// and what an unset one means here. The resolution itself is <see cref="AppOrigins"/> in Core, because
+/// the consumer worker resolves the same two variables and cannot reference this type.
+///
+/// Empty is this caller's answer to absence, chosen because every consumer interpolates the result
+/// straight into a link. An empty base means no absolute link can be built, so a caller should skip
+/// sending rather than emit a broken one.
 /// </summary>
 internal static class AppUrls
 {
-    public static string BaseUrl(IConfiguration config)
-    {
-        var explicitUrl = config["CONDUX_APP_BASE_URL"];
-        if (!string.IsNullOrWhiteSpace(explicitUrl))
-        {
-            return explicitUrl.TrimEnd('/');
-        }
-
-        var firstCorsOrigin = (config["CONDUX_CORS_ORIGINS"] ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return firstCorsOrigin.Length > 0 ? firstCorsOrigin[0].TrimEnd('/') : string.Empty;
-    }
+    public static string BaseUrl(IConfiguration config) =>
+        AppOrigins.ResolveBaseUrl(config["CONDUX_APP_BASE_URL"], config["CONDUX_CORS_ORIGINS"])
+            ?? string.Empty;
 }

@@ -22,7 +22,6 @@ public sealed class ControlPlaneApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task ProvisionOrgProjectAndKey_OverHttp()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client); // authenticate; the caller owns any org it creates
 
@@ -71,7 +70,6 @@ public sealed class ControlPlaneApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Unknown_Org_And_Project_Return404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var client = CreateClient();
         await ApiAuth.SignUpAsync(client);
 
@@ -85,7 +83,6 @@ public sealed class ControlPlaneApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task Provisioning_Requires_Authentication()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var anon = CreateClient(); // no signup → no session cookie
 
         var resp = await anon.PostAsJsonAsync("/api/orgs", new { slug = "x", name = "X" });

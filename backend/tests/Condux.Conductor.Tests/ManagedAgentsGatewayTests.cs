@@ -188,7 +188,10 @@ public sealed class ManagedAgentsGatewayTests
         var progress = await gateway.PollAsync(run.RunId);
 
         Assert.Equal(AgentRunStatus.Failed, progress.Status);
-        Assert.Contains("outside the repository", progress.Error);
+        // The offending path, not either module's wording: the rule moved from this gateway into the
+        // shared RepoPaths and its message came with it, and a test pinned to a phrase would have read
+        // as a regression when nothing about the behaviour changed.
+        Assert.Contains("../../etc/passwd", progress.Error);
         Assert.DoesNotContain(github.Requests, r => r.Key.Contains("/git/") || r.Key.Contains("/pulls"));
     }
 

@@ -29,8 +29,8 @@ export interface ConduxConfigOptions {
   dist?: string;
   /** The Condux app/API base URL uploads go to, e.g. https://app.condux.ai. Default CONDUX_URL. */
   url?: string;
-  /** Skip everything (no source maps forced, no stamping) — an escape hatch for a build that must stay
-   * byte-identical to an unwrapped one. */
+  /** Skip everything (no source maps forced, no stamping): an escape hatch for a build that must come
+   * out byte for byte as an unwrapped one does. */
   disable?: boolean;
 }
 

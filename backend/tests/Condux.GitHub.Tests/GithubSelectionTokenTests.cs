@@ -63,7 +63,7 @@ public class GithubSelectionTokenTests
     [Fact]
     public void Does_not_validate_a_connect_state_token()
     {
-        var connect = GithubConnectState.Create(42, "/projects/x", Now.AddMinutes(10), Secret);
+        var connect = GithubConnectState.Create(42, "/projects/x", false, Now.AddMinutes(10), Secret);
         Assert.Null(GithubSelectionToken.Validate(connect, Now, Secret));
 
         var selection = GithubSelectionToken.Create(42, Candidates, Now.AddMinutes(10), Secret);

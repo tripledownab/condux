@@ -24,6 +24,10 @@ public sealed class ModelKeyResolver(
         if (configs is not null && box is not null && orgId != 0
             && await configs.GetAsync(orgId, cancellationToken) is { } config)
         {
+            // The base URL is NOT checked here. It is checked in OpenAiCompatClient, which is the only
+            // client that uses it: the Anthropic client builds its URL from its own configured host and
+            // ignores this value entirely, so rejecting it here would fail every fix run for an org whose
+            // stored row happens to carry a stale base URL that nothing would ever have fetched.
             return new ResolvedLlm(
                 config.Provider, box.Open(config.KeyEncrypted), config.Model, config.BaseUrl);
         }

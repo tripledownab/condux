@@ -42,7 +42,6 @@ public sealed class ReleaseTokenApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task MintToken_RecordReleaseViaBearer_List_Revoke_RoundTrips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api", defaultBranch = "main" });
@@ -83,7 +82,6 @@ public sealed class ReleaseTokenApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task RecordRelease_WithAnUnknownToken_Returns401()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var ci = BearerClient("condux_rel_not-a-real-token");
         var resp = await ci.PostAsJsonAsync("/api/releases", new { version = "1.0.0", commitSha = "abc" });
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
@@ -92,7 +90,6 @@ public sealed class ReleaseTokenApiTest(PostgresFixture pg) : IClassFixture<Post
     [Fact]
     public async Task RecordRelease_WhenNoRepoLinked_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var mintResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/release-tokens", new { name = "CI" });
         var rawToken = (await mintResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;

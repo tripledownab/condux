@@ -76,7 +76,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_ViaBearer_StoresBytes_IndexesRow()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var store = new FakeObjectStore();
         var app = AppWithStore(pg.ConnectionString, store);
         var (admin, projectId) = await ProvisionAsync(app);
@@ -101,7 +100,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WithBadToken_Returns401()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
         var ci = Bearer(app, "condux_rel_nope");
         var resp = await ci.PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js", MapContent());
@@ -111,7 +109,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WhenObjectStoreNotConfigured_Returns404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         // No CONDUX_S3_* set, so the feature is off and the route 404s before auth.
         var app = ControlPlaneApp.Create(pg.ConnectionString);
         var resp = await app.CreateClient()
@@ -122,7 +119,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WithNonSourceMapBody_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
         var (admin, projectId) = await ProvisionAsync(app);
         var token = await MintTokenAsync(admin, projectId);
@@ -137,7 +133,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WithOverlongField_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
         var (admin, projectId) = await ProvisionAsync(app);
         var token = await MintTokenAsync(admin, projectId);

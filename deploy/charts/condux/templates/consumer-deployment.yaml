@@ -32,9 +32,7 @@ spec:
             {{- if .Values.email.enabled }}
             {{- include "condux.smtpEnv" . | nindent 12 }}
             {{- end }}
-            {{- if .Values.config.appBaseUrl }}
             {{- include "condux.appBaseUrlEnv" . | nindent 12 }}
-            {{- end }}
             - name: CONDUX_SAMPLE_KEEP_FIRST
               value: {{ .Values.config.sampleKeepFirst | quote }}
             - name: CONDUX_SAMPLE_EVERY

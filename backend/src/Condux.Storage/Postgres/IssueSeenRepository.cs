@@ -4,7 +4,7 @@ namespace Condux.Storage.Postgres;
 
 /// <summary>Per-user "new issues" nav badge state (ADR-0030): a per (user, project) watermark of when the
 /// user last opened the project's issue list, and the count of issues activated (new or regressed) since
-/// then. Mirrors the fixes badge's per-user viewed model, but a single watermark per project rather than
+/// then. Built like the fixes badge's per-user viewed model, but a single watermark per project rather than
 /// a row per issue — a badge only needs "since when".</summary>
 public sealed class IssueSeenRepository(string connectionString)
 {

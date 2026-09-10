@@ -30,7 +30,6 @@ public sealed class OrgInviteTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task Invite_then_accept_joins_the_org_with_the_invited_role()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -69,7 +68,6 @@ public sealed class OrgInviteTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task Accepting_with_a_different_email_is_forbidden()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -88,7 +86,6 @@ public sealed class OrgInviteTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task Revoked_and_unknown_tokens_are_rejected()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -115,7 +112,6 @@ public sealed class OrgInviteTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task Admin_cannot_invite_someone_as_owner()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -140,7 +136,6 @@ public sealed class OrgInviteTest(PostgresFixture pg) : IClassFixture<PostgresFi
     [Fact]
     public async Task Members_cannot_create_invites()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);

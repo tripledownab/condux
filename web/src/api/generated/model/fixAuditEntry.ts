@@ -8,6 +8,5 @@
 export interface FixAuditEntry {
   actor: string;
   event: string;
-  detail: string;
   createdAt: string;
 }

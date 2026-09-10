@@ -33,8 +33,6 @@ public sealed class AlertDeliveryChainTest(PostgresFixture pg) : IClassFixture<P
     [Fact]
     public async Task New_error_issue_is_delivered_to_a_real_webhook_endpoint()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         // A free loopback port for the receiver, then the org/project/rule/channel that route to it.
         var probe = new TcpListener(IPAddress.Loopback, 0);
         probe.Start();

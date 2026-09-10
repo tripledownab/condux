@@ -39,7 +39,6 @@ public sealed class IssueBadgeApiTest(PostgresFixture pg) : IClassFixture<Postgr
     [Fact]
     public async Task Counts_new_and_regressed_since_seen_and_clears()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var repo = new IssueRepository(pg.ConnectionString);
         var t0 = DateTimeOffset.UtcNow;

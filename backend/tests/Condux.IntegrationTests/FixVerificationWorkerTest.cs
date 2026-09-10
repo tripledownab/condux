@@ -98,7 +98,6 @@ public sealed class FixVerificationWorkerTest(PostgresFixture pg, ClickHouseFixt
     private async Task<(Guid FixId, UpsertResult Issue, long ProjectId)> SeedMergedFixAsync(
         string fingerprint, DateTimeOffset mergedAt)
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var issue = await new IssueRepository(pg.ConnectionString).UpsertAsync(
             projectId, new Grouping(fingerprint, "TypeError: boom", "run"), Level.Error,

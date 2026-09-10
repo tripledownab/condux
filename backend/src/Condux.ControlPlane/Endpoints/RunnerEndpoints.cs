@@ -11,7 +11,7 @@ namespace Condux.ControlPlane.Endpoints;
 /// Customer-hosted runners (ADR-0033 slice 4, #68). Two surfaces that share a credential:
 ///
 /// Management is cookie-authed from the dashboard, admin mints and revokes, member reads, and the raw
-/// token is returned once on mint. Mirrors <see cref="McpTokenEndpoints"/>, but scoped to an org rather
+/// token is returned once on mint. Built like <see cref="McpTokenEndpoints"/>, but scoped to an org rather
 /// than a project, because a runner serves whatever work its org produces.
 ///
 /// The lease surface is what the runner itself calls, authenticated by that token alone with no cookie.

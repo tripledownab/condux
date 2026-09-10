@@ -46,7 +46,16 @@
   <ItemGroup>
     <None Include="../../../migrations/postgres/*.sql" LinkBase="migrations" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../../migrations/clickhouse/*.sql" LinkBase="migrations-clickhouse" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Serialize container-based fixtures so they don't all start at once (Docker contention). -->
+    <!-- Runs test collections in parallel. JSON takes no comments, so the reasoning lives here.
+         It used to serialize them, because every class started its own containers and running 69 of
+         those at once was not viable. Classes now share one Postgres server and take a database each
+         (Fixtures/PostgresServer), so they are independent without being expensive. Parallel, the whole
+         suite runs in 283s to 314s where serial it took 408s to 492s, both measured locally.
+         The suite is worth parallelising because it waits rather than computes: the serial run used
+         274s of CPU across 408s of wall clock.
+         maxParallelThreads is 4 because that is the only degree measured. Higher was never tried, and
+         these numbers come from an 8-core Mac rather than from a CI runner, whose core count nobody
+         here has established. Both are worth measuring before treating 4 as the right answer. -->
     <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -163,20 +163,11 @@ builder.Services.AddHostedService<CveFixWorker>();
 builder.Services.AddHostedService<VerificationWorker>();
 builder.Build().Run();
 
-// The GitHub App private key, inline (CONDUX_GITHUB_PRIVATE_KEY) or from the mounted .pem path — the
-// same resolution the control-plane uses. Required by the anthropic provider; fails fast when absent.
-static string ReadPrivateKey(IConfiguration cfg)
-{
-    var inline = cfg["CONDUX_GITHUB_PRIVATE_KEY"];
-    if (!string.IsNullOrEmpty(inline))
-    {
-        return inline;
-    }
-
-    var path = cfg["CONDUX_GITHUB_PRIVATE_KEY_PATH"];
-    return !string.IsNullOrEmpty(path) && File.Exists(path)
-        ? File.ReadAllText(path)
-        : throw new InvalidOperationException(
+// The GitHub App private key, through the one resolver both deployments share, which is where the
+// diagnostic for a key that exists but cannot be read lives. Only the meaning of ABSENT differs between
+// them, and that difference is this line: the anthropic provider cannot run without a key.
+static string ReadPrivateKey(IConfiguration cfg) =>
+    GitHubPrivateKey.Resolve(cfg["CONDUX_GITHUB_PRIVATE_KEY"], cfg["CONDUX_GITHUB_PRIVATE_KEY_PATH"])
+        ?? throw new InvalidOperationException(
             "The anthropic provider needs the GitHub App private key: set CONDUX_GITHUB_PRIVATE_KEY or a "
             + "readable CONDUX_GITHUB_PRIVATE_KEY_PATH.");
-}

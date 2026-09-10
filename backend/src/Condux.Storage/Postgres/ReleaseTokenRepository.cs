@@ -12,7 +12,7 @@ public sealed class ReleaseTokenRepository(string connectionString)
 
     public Task<ScopedTokenRow> CreateAsync(
         long projectId, string tokenHash, string name, CancellationToken ct = default) =>
-        tokens.CreateAsync(projectId, tokenHash, name, ct);
+        tokens.CreateAsync(projectId, tokenHash, name, ct: ct);
 
     public Task<IReadOnlyList<ScopedTokenRow>> ListByProjectAsync(long projectId, CancellationToken ct = default) =>
         tokens.ListAsync(projectId, ct);

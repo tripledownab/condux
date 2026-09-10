@@ -10,9 +10,6 @@ public sealed record InviteEmail(string Subject, string Body);
 /// </summary>
 public static class InviteEmailText
 {
-    // Mirrors the OrgInviteRepository lifetime; stated in the body so the invitee knows the window.
-    public const int ExpiresInDays = 7;
-
     public static InviteEmail Compose(string orgName, string inviterEmail, string role, string acceptLink)
     {
         var subject = $"You are invited to join {orgName} on Condux";
@@ -20,7 +17,7 @@ public static class InviteEmailText
             $"{inviterEmail} invited you to join {orgName} on Condux as {role}.\n\n" +
             $"Accept the invitation:\n{acceptLink}\n\n" +
             "Sign in or create your Condux account with this email address to join. " +
-            $"This invitation expires in {ExpiresInDays} days.\n\n" +
+            $"This invitation expires in {InviteLifetime.Days} days.\n\n" +
             "If you were not expecting this invitation, you can ignore this email.";
         return new InviteEmail(subject, body);
     }

@@ -40,7 +40,6 @@ public sealed class ProjectCrudTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Admin_can_rename_and_delete_a_project_and_delete_cascades_its_issues()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -68,7 +67,6 @@ public sealed class ProjectCrudTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Get_by_public_id_returns_one_project_for_a_member_and_hides_it_from_non_members()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);
@@ -97,7 +95,6 @@ public sealed class ProjectCrudTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Member_cannot_mutate_and_non_member_gets_404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var orgId = await CreateOrgAsync(owner);

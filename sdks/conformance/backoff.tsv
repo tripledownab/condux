@@ -1,0 +1,70 @@
+# The retry backoff every Condux SDK must produce, as data rather than as prose.
+#
+# One algorithm, written seven times, in seven languages. Each SDK's transport carried a comment
+# saying it mirrored the others, and nothing compared them, so the schedule is written here once and
+# every suite asserts against it rather than against a sentence.
+#
+# The cases are deliberately ones our own relay never emits, since its Retry-After is a non-negative
+# whole number of seconds. What reaches an SDK is whatever the network in front of the relay sends,
+# so these are exactly the inputs no amount of reading the relay would tell anyone about.
+#
+# Columns, tab separated:
+#   attempt          the zero-based retry index the sleep follows
+#   status           the HTTP status of the response that failed
+#   retryAfter       the Retry-After header on it, or <none> when absent, or <empty> when blank
+#   expectedMs       how long the SDK must wait next, in whole milliseconds
+#
+# Milliseconds, and whole ones, because the seven transports return four different time types
+# between them. An integer is the one form all of them can reach without a rounding tolerance, and
+# a tolerance is where a conformance test quietly stops discriminating.
+#
+# Read it through the SDK's real send path, never by reaching for the private backoff function:
+# script the failing response, set maxRetries to attempt + 1, record the sleeps, and assert on the
+# one at index `attempt`. A test of the private function proves the function agrees and leaves the
+# question of whether anything calls it.
+
+# Capped exponential backoff: 200ms doubling, ceiling 30s. Attempts 7 and 8 straddle the ceiling,
+# which no SDK reaches in practice (the default is 3 retries) and none of them had ever exercised.
+0	500	<none>	200
+1	500	<none>	400
+2	500	<none>	800
+3	500	<none>	1600
+7	500	<none>	25600
+8	500	<none>	30000
+
+# A 429 obeys the relay. Whole seconds are what our own relay sends; fractional is what a proxy or
+# a CDN in front of it may send instead.
+0	429	5	5000
+0	429	0.5	500
+2	429	5	5000
+
+# It obeys the relay up to the same 30s ceiling it applies to its own schedule, and no further. An SDK
+# holds the caller's thread while it waits, so bounding that wait is its own obligation and not the
+# relay's to set. The cost is honest and goes the other way, since a relay asking for longer than 30s
+# is retried sooner than it asked. The cap sits at ONE return point in each of the seven backoff
+# functions rather than inside the Retry-After branch, so a later branch cannot route past it.
+0	429	29.5	29500
+0	429	30.5	30000
+0	429	86400	30000
+
+# Zero is a real instruction and means retry now. A negative value is a broken sender, and the
+# fleet answers it by clamping rather than by falling back, so that a sender which is merely wrong
+# about the sign cannot buy itself an exponential wait it never asked for.
+0	429	0	0
+0	429	-1	0
+
+# Unparseable is not an instruction, so the SDK falls back to its own schedule for that attempt.
+1	429	abc	400
+1	429	<empty>	400
+1	429	<none>	400
+
+# A number, but not a finite one, is also not an instruction. Most of these languages parse "Infinity"
+# and "NaN" as perfectly good floats, and nothing downstream of that has a sensible answer, so the
+# value is discarded rather than clamped. Parsing permissively is the easy half. Deciding what counts
+# as an instruction is the half that has to be written down, which is why it is a row here.
+0	429	Infinity	200
+0	429	NaN	200
+
+# Retry-After is honoured on a 429 only. A 5xx carrying one is a server confused about its own
+# status code, and obeying it would let a broken origin dictate our retry schedule.
+1	500	5	400

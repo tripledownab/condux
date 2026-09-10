@@ -68,14 +68,21 @@ func isRetriable(status int) bool {
 	return status == 0 || status == http.StatusTooManyRequests || status >= 500
 }
 
-// backoff honors Retry-After (seconds) on a 429; otherwise capped exponential backoff.
+// backoff honors Retry-After (seconds) on a 429, else exponential backoff. Both paths are capped at
+// maxBackoff, at ONE return so a later branch cannot route past it: the SDK holds the caller's
+// goroutine while it waits, so bounding that wait is its own obligation and not the relay's to set.
 func backoff(attempt, status int, retryAfter string) time.Duration {
+	wantedMs := float64(baseBackoff/time.Millisecond) * math.Pow(2, float64(attempt))
 	if status == http.StatusTooManyRequests && strings.TrimSpace(retryAfter) != "" {
-		if seconds, err := strconv.ParseFloat(strings.TrimSpace(retryAfter), 64); err == nil && seconds >= 0 {
-			return time.Duration(seconds * float64(time.Second))
+		// A negative value is clamped rather than discarded, so a sender merely wrong about the sign is
+		// read as asking to retry now. What IS discarded is anything that is not a finite number:
+		// ParseFloat returns +Inf for "Infinity" and NaN for "NaN", both with a nil error, and a
+		// Duration built from either saturates rather than meaning anything.
+		seconds, err := strconv.ParseFloat(strings.TrimSpace(retryAfter), 64)
+		if err == nil && !math.IsInf(seconds, 0) && !math.IsNaN(seconds) {
+			wantedMs = math.Max(0, seconds) * 1000
 		}
 	}
-	ms := float64(baseBackoff/time.Millisecond) * math.Pow(2, float64(attempt))
-	capped := math.Min(ms, float64(maxBackoff/time.Millisecond))
+	capped := math.Min(wantedMs, float64(maxBackoff/time.Millisecond))
 	return time.Duration(capped) * time.Millisecond
 }

@@ -33,7 +33,6 @@ public sealed class OrgSettingsTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Admin_switches_to_auto_on_a_paid_plan_and_free_is_gated()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
 
@@ -55,7 +54,6 @@ public sealed class OrgSettingsTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Free_org_cannot_enable_auto_and_non_admins_are_blocked()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var freeOrg = await CreateOrgAsync(owner, (int)Tier.Free);
@@ -87,7 +85,6 @@ public sealed class OrgSettingsTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Team_cap_is_the_plan_fair_use_ceiling_customers_cannot_change()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var org = await CreateOrgAsync(owner, (int)Tier.Team);
@@ -111,7 +108,6 @@ public sealed class OrgSettingsTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Free_org_meter_reports_its_monthly_allowance_and_fair_use_ceiling()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var org = await CreateOrgAsync(owner, (int)Tier.Free);
@@ -134,7 +130,6 @@ public sealed class OrgSettingsTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Enterprise_customer_sets_their_own_byo_budget_which_round_trips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var owner = CreateClient();
         await ApiAuth.SignUpAsync(owner);
         var org = await CreateOrgAsync(owner, (int)Tier.Enterprise);

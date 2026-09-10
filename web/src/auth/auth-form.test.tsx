@@ -55,10 +55,32 @@ describe("AuthForm", () => {
 
     await userEvent.type(screen.getByLabelText("Email"), "new@condux.ai");
     await userEvent.type(screen.getByLabelText("Password"), "hunter2hunter");
+    await userEvent.type(screen.getByLabelText("Confirm password"), "hunter2hunter");
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(signupMutate).toHaveBeenCalledTimes(1);
     expect(loginMutate).not.toHaveBeenCalled();
+  });
+
+  // A mistyped password at signup is unrecoverable: there is no change-password for someone who cannot
+  // sign in, and the email cannot be reused because signup answers 409. So the account must not be
+  // created at all until the two agree.
+  it("refuses to create an account when the confirmation does not match", async () => {
+    renderWithIntl(<AuthForm mode={AuthMode.Signup} />);
+
+    await userEvent.type(screen.getByLabelText("Email"), "new@condux.ai");
+    await userEvent.type(screen.getByLabelText("Password"), "hunter2hunter");
+    await userEvent.type(screen.getByLabelText("Confirm password"), "hunter2hunterr");
+
+    expect(screen.getByText("The two passwords do not match.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+    expect(signupMutate).not.toHaveBeenCalled();
+  });
+
+  // Login must not grow a confirmation field: it would be nonsense and would break sign-in.
+  it("does not ask for a confirmation when signing in", () => {
+    renderWithIntl(<AuthForm mode={AuthMode.Login} />);
+    expect(screen.queryByLabelText("Confirm password")).not.toBeInTheDocument();
   });
 
   it("redirects to a safe next path after login", async () => {

@@ -25,7 +25,6 @@ public sealed class AlertRuleRepositoryTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task Create_AddChannel_And_LoadEnabledWithChannels()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
 
@@ -50,7 +49,6 @@ public sealed class AlertRuleRepositoryTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task DisabledRule_IsExcludedFromEnabledWithChannels()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
 
@@ -67,7 +65,6 @@ public sealed class AlertRuleRepositoryTest(PostgresFixture pg) : IClassFixture<
     [Fact]
     public async Task DeleteRule_CascadesChannels()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var repo = new AlertRuleRepository(pg.ConnectionString);
         var projectId = await SeedProjectAsync();
 

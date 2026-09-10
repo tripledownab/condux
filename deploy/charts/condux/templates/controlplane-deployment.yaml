@@ -37,9 +37,7 @@ spec:
             {{- if .Values.email.enabled }}
             {{- include "condux.smtpEnv" . | nindent 12 }}
             {{- end }}
-            {{- if .Values.config.appBaseUrl }}
             {{- include "condux.appBaseUrlEnv" . | nindent 12 }}
-            {{- end }}
             {{- if .Values.config.corsOrigins }}
             - name: CONDUX_CORS_ORIGINS
               value: {{ .Values.config.corsOrigins | quote }}
@@ -67,6 +65,13 @@ spec:
                   key: CONDUX_GITHUB_WEBHOOK_SECRET
             - name: CONDUX_GITHUB_PRIVATE_KEY_PATH
               value: /run/secrets/github-app.pem
+            - name: CONDUX_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_GITHUB_CLIENT_SECRET
+            - name: CONDUX_GITHUB_OAUTH_REDIRECT_URI
+              value: {{ required "github.oauthRedirectUri is required when github.enabled: the App's Callback URL, e.g. https://app.example.com/api/github/oauth/callback. Connecting an org goes through user authorization, and the control-plane refuses to start without it." .Values.github.oauthRedirectUri | quote }}
             {{- end }}
             {{- if .Values.objectStore.enabled }}
             {{- if .Values.objectStore.endpoint }}

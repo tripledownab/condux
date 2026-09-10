@@ -32,7 +32,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task CreateRule_AddChannel_List_ThenDisableAndDelete()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var createResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
@@ -70,7 +69,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task UpdateRule_And_Channel_Persist()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var createResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
@@ -107,7 +105,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task UpdateRule_InvalidLevel_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var createResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
             new { name = "prod errors", events = new[] { 1 }, levels = new[] { 4, 5 } });
@@ -123,7 +120,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task CreateRule_InvalidLevel_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
@@ -135,7 +131,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task CreateRule_NoEvents_Returns400()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
@@ -147,7 +142,6 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     [Fact]
     public async Task TestChannel_UnconfiguredEmail_ReportsNotConfigured_MissingIs404()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         var createResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",

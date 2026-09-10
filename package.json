@@ -14,6 +14,7 @@
     "check:style": "bash scripts/check-style.sh",
     "check:docs": "python3 scripts/check-doc-refs.py",
     "check:sdk-chain": "python3 scripts/check-sdk-chain.py",
+    "check:parity": "python3 scripts/check-parity-claims.py",
     "clean:docker": "docker builder prune -f && docker image prune -f",
     "gen:postman": "node scripts/gen-postman.mjs",
     "seed:demo": "bash scripts/seed-demo.sh"
@@ -23,7 +24,7 @@
   },
   "pnpm": {
     "overrides": {
-      "sharp": "^0.35.0",
+      "sharp": "^0.35.4",
       "postcss": "^8.5.18",
       "nanoid": "^3.3.17"
     }

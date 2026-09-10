@@ -50,7 +50,6 @@ public sealed class McpTokenApiTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task Mint_UseOverBearer_List_Revoke_RoundTrips()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
 
         // Minted once, and the raw value is returned exactly once.
@@ -86,8 +85,6 @@ public sealed class McpTokenApiTest(PostgresFixture pg) : IClassFixture<Postgres
     [Fact]
     public async Task An_unknown_token_is_unauthorized()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
-
         var resp = await BearerClient("condux_mcp_notarealtokenatall").PostAsync("/api/mcp", ToolsList());
 
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
@@ -98,7 +95,6 @@ public sealed class McpTokenApiTest(PostgresFixture pg) : IClassFixture<Postgres
     {
         // Release and MCP tokens now share one repository. Resolving is scoped by table, so a release
         // token must not open an MCP session however similar the two look.
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (client, projectId) = await ProvisionAsync();
         var mintResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/release-tokens",
             new { name = "CI" });

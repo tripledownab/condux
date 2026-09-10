@@ -1,19 +1,28 @@
 "use client";
 
 import { useFormatter, useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useState } from "react";
-import { FIELD_CLASS, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
+import type { ReactNode } from "react";
+import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
+import type { ComboboxOption } from "@/src/components/ui/combobox";
+import { MintedToken, type MintedView, TokenMintForm } from "./token-mint";
 
 // The two scoped-token surfaces (release tokens, MCP tokens) are the same machine credential shape — mint
 // once, list, revoke; only the hash is stored — so this presentational component owns all of it. Callers
 // wire their own hooks + i18n namespace (parallel key sets) and, optionally, a connect snippet to show
-// beside the freshly minted token. Nothing here fetches; state lives in the caller.
+// beside the freshly minted token. Nothing here fetches; state lives in the caller. Minting lives in
+// ./token-mint, which is where the optional capability picker sits.
 
-/// A token as listed (both token kinds share this shape).
-export type TokenView = { id: string; name: string; lastUsedAt?: string | null; revoked: boolean };
-/// The one-time minted value (shown once, never re-fetchable).
-export type MintedView = { name: string; token: string };
+/// A token as listed (both token kinds share this shape). `capability` is the wire name of what the token
+/// may do, for the kinds that carry one; a kind without capabilities leaves it undefined.
+export type TokenView = {
+  id: string;
+  name: string;
+  lastUsedAt?: string | null;
+  revoked: boolean;
+  capability?: string;
+};
+export type { MintedView };
 
 export function TokenManager({
   namespace,
@@ -24,6 +33,7 @@ export function TokenManager({
   minted,
   creating,
   revoking,
+  capabilities,
   onCreate,
   onRevoke,
   onDismissMinted,
@@ -37,19 +47,13 @@ export function TokenManager({
   minted: MintedView | null;
   creating: boolean;
   revoking: boolean;
-  onCreate: (name: string) => void;
+  capabilities?: readonly ComboboxOption[];
+  onCreate: (name: string, capability?: string) => void;
   onRevoke: (id: string) => void;
   onDismissMinted: () => void;
-  renderConnect?: (rawToken: string) => ReactNode;
+  renderConnect?: (minted: MintedView) => ReactNode;
 }) {
   const translate = useTranslations(namespace);
-  const [name, setName] = useState("");
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    onCreate(name.trim());
-    setName("");
-  };
 
   return (
     <section>
@@ -59,18 +63,12 @@ export function TokenManager({
       </div>
 
       {canManage ? (
-        <form onSubmit={submit} className="mt-4 flex flex-wrap items-center gap-2">
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder={translate("namePlaceholder")}
-            aria-label={translate("nameLabel")}
-            className={`${FIELD_CLASS} min-w-0 flex-1`}
-          />
-          <button type="submit" disabled={creating} className={PRIMARY_BUTTON_CLASS}>
-            {creating ? translate("creating") : translate("create")}
-          </button>
-        </form>
+        <TokenMintForm
+          namespace={namespace}
+          creating={creating}
+          capabilities={capabilities}
+          onCreate={onCreate}
+        />
       ) : null}
 
       {minted ? (
@@ -94,56 +92,6 @@ export function TokenManager({
         />
       </div>
     </section>
-  );
-}
-
-// The freshly-minted token, shown once with a copy button (only the hash is stored, so this is the one
-// chance to grab it); an optional connect snippet renders beneath it while the raw token is on screen.
-function MintedToken({
-  namespace,
-  token,
-  onDismiss,
-  renderConnect,
-}: {
-  namespace: string;
-  token: MintedView;
-  onDismiss: () => void;
-  renderConnect?: (rawToken: string) => ReactNode;
-}) {
-  const translate = useTranslations(namespace);
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(token.token);
-      setCopied(true);
-    } catch {
-      // Clipboard unavailable (e.g. insecure context) — the value stays selectable to copy by hand.
-    }
-  };
-
-  return (
-    <div className="mt-3 rounded-lg border border-info/50 bg-card p-3">
-      <p className="text-xs text-muted-foreground">
-        {translate("mintedTitle", { name: token.name })}
-      </p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input
-          readOnly
-          value={token.token}
-          aria-label={translate("mintedLabel")}
-          className={`${FIELD_CLASS} min-w-0 flex-1 font-mono text-xs`}
-        />
-        <button type="button" onClick={copy} className={SECONDARY_BUTTON_CLASS}>
-          {copied ? translate("copied") : translate("copy")}
-        </button>
-        <button type="button" onClick={onDismiss} className={SECONDARY_BUTTON_CLASS}>
-          {translate("dismiss")}
-        </button>
-      </div>
-      <p className="mt-1 text-xs text-muted-foreground">{translate("mintedHint")}</p>
-      {renderConnect?.(token.token)}
-    </div>
   );
 }
 
@@ -208,8 +156,15 @@ function TokenRow({
   return (
     <li className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-foreground">{token.name}</span>
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{token.name}</span>
         <div className="flex items-center gap-3">
+          {/* What the token may do, so an operator can tell a writing token from a reading one at a
+              glance. It cannot be edited, so this is a label rather than a control. */}
+          {token.capability === undefined ? null : (
+            <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs uppercase text-muted-foreground">
+              {translate(`capability.${token.capability}`)}
+            </span>
+          )}
           <span
             className={`text-xs uppercase ${token.revoked ? "text-muted-foreground" : "text-info"}`}
           >

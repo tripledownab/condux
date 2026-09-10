@@ -25,7 +25,6 @@ public sealed class RunnerLeaseTest(PostgresFixture pg) : IClassFixture<Postgres
     /// <summary>An org with one issue, ready for either kind of run to be attached to it.</summary>
     private async Task<(long OrgId, long ProjectId, long IssueId)> SeedIssueAsync()
     {
-        await Migrations.ApplyAllAsync(pg.ConnectionString);
         var (orgId, projectId) = await ProjectSeed.CreateOrgAndProjectAsync(pg.ConnectionString);
         var issue = await new IssueRepository(pg.ConnectionString).UpsertAsync(
             projectId, new Grouping($"fp-{Guid.NewGuid():N}", "ValueError: boom", "run"),

@@ -122,8 +122,10 @@ public final class ConduxExceptionResolver implements HandlerExceptionResolver, 
             return status >= 400 && status < 500;
         }
         // ConversionNotSupportedException EXTENDS TypeMismatchException while being a 500, so it is
-        // excluded before the check below, mirroring the order DefaultHandlerExceptionResolver uses for
-        // the same reason. Without this, a server-side conversion failure would be silently dropped.
+        // excluded before the check below, in step with the order DefaultHandlerExceptionResolver uses
+        // for the same reason (pinned by sdks/jvm/src/test/java/ai/condux/spring/ConduxExceptionResolverTest.java,
+        // which constructs the real exception). Without this, a server-side conversion failure would be
+        // silently dropped.
         if (error instanceof ConversionNotSupportedException) {
             return false;
         }
