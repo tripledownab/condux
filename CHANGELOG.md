@@ -9,8 +9,10 @@ being typed into a release box at the moment everyone wants the release out.
 
 ## 0.4.0
 
-**If you self-host and you have connected Condux to GitHub, this release needs two configuration values
-you may not have set.** Read the first section before upgrading. Everything else here is additive.
+**Three things want your attention before you upgrade.** Two configuration values if you have connected
+Condux to GitHub, one more if something else terminates TLS in front of Condux, and an SDK upgrade that
+will stop some events you currently receive. Each has its own section below. Everything after them is
+additive.
 
 ### Connecting a GitHub installation now proves it is yours
 
@@ -42,10 +44,126 @@ listed in `values.yaml` beside the other keys that Secret must carry.
 
 Managed cloud already had both, so nothing there changes.
 
+### Session cookies were missing `Secure` when something else terminates TLS
+
+Condux decided whether to mark its cookies `Secure` by asking whether the request it was handling
+arrived over HTTPS. Behind a reverse proxy that terminates TLS, which is the ordinary way to run this,
+the answer is no: the proxy speaks HTTPS to the browser and plain HTTP to Condux. So the session cookie,
+the impersonation cookie and the sign-in state cookies were all issued without the attribute that stops
+a browser ever sending them over an unencrypted connection.
+
+The deployment's own address decides it now, not the request's. Condux reads `CONDUX_APP_BASE_URL`,
+falling back to the first entry in `CONDUX_CORS_ORIGINS`, and applies one answer to every cookie it
+writes, so a cookie added later inherits it rather than repeating the decision.
+
+**What you need to do.** Set `CONDUX_APP_BASE_URL` to the address your users type, including the scheme.
+If you serve Condux over HTTPS and leave it unset, cookies keep their previous behaviour and the problem
+above is unchanged. Helm users set `config.appBaseUrl`; a chart install with `ingress.tls` set will not
+render without it, because a silent wrong answer here looks exactly like a healthy deployment.
+
+Existing sessions are unaffected and no one is signed out.
+
+### Your identity provider can no longer sign in an account it did not create
+
+If your organisation uses OIDC or SAML, its provider could sign in any account whose email address
+matched the organisation's domain, including an account somebody had created for themselves earlier and
+that the organisation had never invited.
+
+Nothing verifies that an organisation owns the domain it claims, and the organisation supplies the
+provider doing the asserting, so those two facts together were the whole of what stood between a claimed
+domain and other people's accounts. A provider may now sign in an address nobody holds, or one held by a
+member the organisation already has, and nothing else. Anything else answers `sso_invite_required`.
+
+**What this changes for you.** An existing Condux user joining your organisation now arrives by
+invitation, which is the path that carries evidence you asked for that address. Users your provider
+creates are unaffected, and so is everyone already in your organisation.
+
+### Errors your callers caused are no longer filed as your defects
+
+An error monitor should tell you what your application got wrong. Several of our framework integrations
+were also reporting what the person making the request got wrong: a 404 on a path nobody implemented, a
+malformed request body, a value that failed to bind. Anyone can send those at will, so they buried real
+errors underneath noise nobody could act on.
+
+Four integrations change: **Spring**, **ASP.NET Core**, **Express** and **Rack**. Each now asks its own
+framework which exceptions that framework already answers with a 4xx, rather than matching a list of
+ours, so an application that has customised its own error handling stays consistent with itself. Flask,
+Django, Laravel and FastAPI needed no change and behave as before.
+
+**The consequence: events you currently receive will stop arriving once you upgrade the SDK.** That is
+the point of the change, but it will read as a drop in volume, so it is worth doing deliberately. There
+is no setting to turn it off, because the frameworks that publish this classification already let you
+change it, and the one that does not is bare Rack with no framework above it, which keeps reporting
+everything as before.
+
+### Answer whether a vulnerable dependency is actually running
+
+A security advisory tells you a package version is affected. A manifest tells you what you asked for.
+Neither tells you what is running in production right now, which is the question you actually have.
+
+Server-side SDKs now report the package versions their runtime actually resolved, and a dependency alert
+in Condux shows the versions seen running, with the environment, release and when each was last seen.
+The answer often differs from the manifest, and where it is missing Condux says nothing at all rather
+than implying you are unaffected.
+
+The inventory is sorted and capped at 1000 entries, and rides one event in fifteen minutes rather than
+every event. Turn it off with `sendModules: false`, `send_modules=False` or `SendModules = false`
+depending on the SDK, or `DisableModules: true` in Go. The browser and edge SDKs send nothing, because
+there is no package tree in a browser to read, and the JVM SDK sends nothing because too few jars carry
+the metadata to make the answer trustworthy.
+
+### Changing and recovering a password
+
+Until now there was neither, and the two gaps compounded: a password mistyped at signup could not be
+changed, could not be reset, and the address could not be reused. Signup now asks you to confirm the
+password, which is the only one of the three that prevents the problem rather than recovering from it.
+
+Signed in, change it from Settings. Signed out, ask for a reset link from the sign-in page. Three rules
+are worth knowing. Asking for a link always answers the same way, whether or not the address has an
+account, so the form cannot be used to find out who your users are. An account that signs in through
+Google or through your identity provider gets no link, because setting a password behind that provider's
+back would create a second way in that nobody approved. And completing a reset sends you to the sign-in
+page rather than signing you in, so an account with two-factor authentication is still challenged.
+
+Requests are limited to three per account per hour.
+
+### An AI agent can now triage, not only read
+
+MCP tokens let an agent read a project's issues and events. A token may now be minted with a **triage**
+capability instead, which additionally lets the agent resolve or ignore an issue and leave a note on it.
+Resolving this way fires the same alert rules as resolving in the dashboard, and a note left by an agent
+is attributed to the token that wrote it rather than appearing to come from nobody.
+
+The capability is chosen when the token is minted and cannot be edited afterwards, so what a token can do
+is answerable from the token itself. Tokens minted before this release read, as they always did. No
+capability lets an agent request a fix or spend your fix allowance.
+
 ### Also in this release
 
 - Reading an OpenTelemetry exception stack trace is now bounded work. A deliberately malformed one could
   previously cost an ingest thread far more than its size suggested.
+- A stored model provider key is now only ever sent to the destination stored beside it. Listing
+  available models previously took the provider and base URL from the request, so a key held encrypted
+  and deliberately absent from every read could be pointed at a host of the caller's choosing.
+- A fix run's audit trail no longer returns its internal detail column to members of the organisation.
+  Six places write that column with no shared rule about what belongs in it, and a provider error body
+  had reached it that way.
+- File paths taken from a stack frame or from a model's proposed fix are checked in one place before they
+  reach a repository host, so a crafted path cannot address a resource other than the file it names.
+- Creating an organisation now derives its identifier on the server from the name you give. It was being
+  computed in the browser and stored under a uniqueness constraint the browser could not see, so two
+  organisations chosen independently could collide, and some names produced an empty identifier that the
+  first organisation took and every later one collided with. Both cases answered `500`. A blank name now
+  answers `400 invalid_name`.
+- The event consumer flushes buffered events when it shuts down instead of dropping them. Message offsets
+  advance whether or not the buffer was written, so a restart during normal operation could lose the
+  events it was holding rather than delay them.
+- Members can opt out of the weekly summary email individually, from Settings, without an administrator
+  turning the digest off for the whole organisation. Each issue in the digest now links to itself.
+- The Helm chart requires `config.ingestHost`. Installing without it previously minted DSNs pointing at
+  localhost while every pod reported healthy, so no event could reach the relay.
+- The dashboard's dependencies move past published advisories, including two in Next.js that did not
+  require authentication to reach.
 
 ## 0.3.0
 
