@@ -19,11 +19,11 @@ import {
   type ConduxRequest,
   captureException,
   init as initServer,
-  parseDsn,
 } from "@condux/core";
 import { type BrowserOptions, init as initBrowser } from "@condux/browser";
 import { collectServerModules } from "./modules.ts";
 
+export { conduxTunnelRoute } from "./tunnel.ts";
 export {
   addBreadcrumb,
   captureException,
@@ -167,53 +167,4 @@ export function initClient(options: Partial<BrowserOptions> = {}): void {
     environment: options.environment ?? process.env.NODE_ENV,
     release: options.release ?? process.env.NEXT_PUBLIC_CONDUX_RELEASE,
   });
-}
-
-// Events are small JSON; anything past this is not one of ours and is refused before it is forwarded.
-const TUNNEL_MAX_BODY_BYTES = 1024 * 1024;
-
-/**
- * The ad-blocker tunnel (ADR-0028 slice 5): a same-origin route that forwards browser events to the
- * relay, so an extension that cuts third-party monitoring hosts cannot drop reports. Pair it with the
- * client's `tunnel` option:
- *
- * ```ts
- * // app/monitoring/route.ts
- * import { conduxTunnelRoute } from "@condux/nextjs";
- * export const POST = conduxTunnelRoute();
- *
- * // instrumentation-client.ts
- * initClient({ tunnel: "/monitoring" });
- * ```
- *
- * The route authenticates with its own DSN (`CONDUX_DSN`, falling back to the public one), never with
- * anything the browser sent — so it can only ever report into this app's project, and abusing it is
- * exactly as possible as using the public DSN directly. Body size is capped; the relay's own rate limit
- * and quota still apply behind it.
- */
-export function conduxTunnelRoute(
-  options: { dsn?: string; fetch?: typeof fetch } = {},
-): (request: Request) => Promise<Response> {
-  const doFetch = options.fetch ?? fetch;
-  return async (request: Request): Promise<Response> => {
-    const dsn = options.dsn ?? process.env.CONDUX_DSN ?? process.env.NEXT_PUBLIC_CONDUX_DSN;
-    if (!dsn) {
-      return Response.json({ error: "tunnel_not_configured" }, { status: 503 });
-    }
-
-    const body = await request.text();
-    if (body.length > TUNNEL_MAX_BODY_BYTES) {
-      return new Response(null, { status: 413 });
-    }
-
-    const { endpoint, projectId, publicKey } = parseDsn(dsn);
-    const relayResponse = await doFetch(`${endpoint}/api/${projectId}/store/`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-condux-auth": publicKey },
-      body,
-    });
-    // Status passthrough: the browser SDK's transport reads it to decide retries (429/5xx), so hiding a
-    // relay refusal here would turn every failure into a silent success.
-    return new Response(await relayResponse.text(), { status: relayResponse.status });
-  };
 }

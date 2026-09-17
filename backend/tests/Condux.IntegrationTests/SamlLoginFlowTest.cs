@@ -34,9 +34,16 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     // CONDUX_APP_BASE_URL in the test app, so the SP entity id + ACS are absolute like production.
     private const string AppBase = "https://localhost";
 
+    // Domain verification is switched off for this host the way a self-hosted deployment switches it off
+    // (ADR-0043), so these tests stay about the SAML flow and make no DNS lookup. That a claim nobody
+    // proved routes nothing is pinned by SsoDomainVerificationApiTest, not here.
     private WebApplicationFactory<Program> CreateApp() =>
         ControlPlaneApp.Create(pg.ConnectionString, appBaseUrl: AppBase)
-            .WithWebHostBuilder(b => b.UseSetting("CONDUX_SECRET_KEY", SecretKey));
+            .WithWebHostBuilder(b =>
+            {
+                b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
+                b.UseSetting("CONDUX_SSO_SKIP_DOMAIN_VERIFICATION", "1");
+            });
 
     // What this adds over the host's default client is seeing each redirect rather than following it.
     // It carries the base address over explicitly because CreateClient(options) replaces the factory's
@@ -249,14 +256,15 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
     private async Task<long> SetUpOrgWithSamlAsync(
         WebApplicationFactory<Program> app, string domain, X509Certificate2 idpCertificate)
     {
-        var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin);
-        var created = await admin.PostAsJsonAsync("/api/orgs",
+        // Owner, not admin: creating an org makes you its owner, and writing the config needs that role.
+        var owner = app.CreateClient();
+        await ApiAuth.SignUpAsync(owner);
+        var created = await owner.PostAsJsonAsync("/api/orgs",
             new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" }); // Business has Sso
         var orgId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
         await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
 
-        var put = await admin.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
+        var put = await owner.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
         {
             emailDomain = domain,
             issuer = IdpEntityId,
@@ -265,6 +273,11 @@ public sealed class SamlLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgr
             samlCertificate = idpCertificate.ExportCertificatePem(),
         });
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        // A saved claim is provisional and routes nothing until the org proves the domain (ADR-0043).
+        // This host opted out of the DNS check, so the click is all that is left of it.
+        var verified = await owner.PostAsync($"/api/orgs/{orgId}/sso-config/verify", null);
+        Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
         return orgId;
     }
 

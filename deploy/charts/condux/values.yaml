@@ -91,6 +91,19 @@ conductor:
 # person can reach. Without them the control-plane refuses to start rather than fall back to trusting an
 # installation id from a query string. oauthRedirectUri must equal the App's Callback URL and point at the
 # API, e.g. https://app.example.com/api/github/oauth/callback.
+# Enterprise SSO (ADR-0032/0037). The feature itself turns on with secret.secretKey above; these two only
+# adjust how a claimed email domain is proved (ADR-0043).
+sso:
+  # Accept a claimed domain without a DNS TXT record, and keep the daily re-check from taking a claim
+  # away again. For a single-tenant install on an internal domain with no public DNS to publish into.
+  # Set it BEFORE upgrading such an install: a claim proved before this chart version, or grandfathered
+  # by the migration, is re-read against public DNS and stops routing a week after nothing answers.
+  # NEVER set it on a deployment that serves more than one organization: it is what stops an org
+  # claiming a domain it does not own.
+  skipDomainVerification: false
+  # Override the DNS-over-HTTPS resolver the TXT lookup goes to, e.g. your own. Empty uses the default.
+  dohEndpoint: ""
+
 github:
   enabled: false
   clientId: ""

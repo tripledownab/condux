@@ -21,9 +21,23 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    ports: ["80:80", "443:443", "443:443/udp"]
+    # Each binding is a variable for the reason the note above gives: concatenation means a later file
+    # can only ADD a published port, never take one away, so a variable in the file that declares the
+    # port is the only mechanism that can un-publish it. A second environment sharing a host with
+    # something that already owns 80/443 sets these; a deployment that owns the host sets nothing and
+    # gets the values that were here before.
+    ports:
+      - "${EDGE_HTTP_BIND:-80:80}"
+      - "${EDGE_HTTPS_BIND:-443:443}"
+      - "${EDGE_HTTPS_UDP_BIND:-443:443/udp}"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # THE DIRECTORY, NOT THE FILE. A single-file bind mount pins to the file's inode, and anything
+      # that replaces the file rather than writing through it gives it a new one: a git checkout, an
+      # rsync, an editor that writes-and-renames. The container then keeps serving the OLD content
+      # while the host shows the new, and a reload reports success having applied nothing. Measured on
+      # a running edge: after replacing the file the container's inode was unchanged and it could not
+      # see a line that was plainly in the host's copy.
+      - ./caddy:/etc/caddy:ro
       - ./.data/caddy/data:/data
       - ./.data/caddy/config:/config
     depends_on: [web, controlplane, relay]
@@ -74,8 +88,14 @@ services:
       CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
       # DSNs / ingest URLs handed to users must point at the public relay host, not the dev localhost
       # default (Caddy fronts the relay at ingest.condux.ai over TLS).
-      CONDUX_INGEST_SCHEME: "https"
-      CONDUX_INGEST_HOST: "ingest.condux.ai"
+      #
+      # VARIABLES, NOT LITERALS, and this is the one pair in this file where that matters most. These
+      # two values are baked into every DSN the control-plane mints. As literals, a second environment
+      # layered on this overlay would hand out DSNs naming the production relay, so anything wired to
+      # that environment would report into production, attributed to a release production never ran.
+      # Nothing downstream could tell those events apart from real ones.
+      CONDUX_INGEST_SCHEME: ${CONDUX_INGEST_SCHEME:-https}
+      CONDUX_INGEST_HOST: ${CONDUX_INGEST_HOST:-ingest.condux.ai}
       # Never seed a dev admin in production.
       CONDUX_SEED_ADMIN_EMAIL: ""
       CONDUX_SEED_ADMIN_PASSWORD: ""
@@ -103,7 +123,12 @@ services:
         NEXT_PUBLIC_CONDUX_API_URL: ""
         # The DSN shown in the dashboard must point SDKs at the public relay (Caddy fronts it over TLS),
         # not the dev localhost fallback, so a copied DSN actually reaches ingest.
-        NEXT_PUBLIC_CONDUX_INGEST_URL: "https://ingest.condux.ai"
+        #
+        # BUILT FROM THE SAME TWO VARIABLES the control-plane mints DSNs from, rather than repeating
+        # the host. This is the DSN a human copies out of the dashboard, so it has to name the relay
+        # the server-side one names; a third value here could disagree with them, and the way anyone
+        # would find out is a copied DSN quietly reporting somewhere else.
+        NEXT_PUBLIC_CONDUX_INGEST_URL: ${CONDUX_INGEST_SCHEME:-https}://${CONDUX_INGEST_HOST:-ingest.condux.ai}
         # Client-side self-reporting (#75): same key as CONDUX_WEB_DSN but with the public ingest host
         # (events tunnel through /monitoring; the DSN's key is public by design). Optional.
         NEXT_PUBLIC_CONDUX_DSN: ${CONDUX_WEB_PUBLIC_DSN:-}
@@ -115,7 +140,12 @@ services:
         # dashboard reports AND the release its maps upload under — one value, derived from the checkout
         # by deploy-app.yml, so the two cannot disagree. The upload goes through the public app URL.
         NEXT_PUBLIC_CONDUX_RELEASE: ${CONDUX_COMMIT:-}
-        CONDUX_URL: "https://app.condux.ai"
+        # The upload target is this deployment's own dashboard, which the overlay already names once
+        # above, so read that rather than repeat it. A literal here would make a non-production build
+        # offer its maps to production, which answers 401 and leaves the maps unuploaded. The upload
+        # strips a trailing slash from this value, so the two spellings cannot diverge in behaviour,
+        # pinned by sdks/nextjs/test/sourcemaps.test.ts.
+        CONDUX_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
       secrets: [condux_release_token]
     environment:
       # The server half of the dashboard reports the same release as the baked client one above.

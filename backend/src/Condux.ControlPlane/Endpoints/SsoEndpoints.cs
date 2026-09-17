@@ -34,9 +34,21 @@ internal static class SsoEndpoints
                         return TypedResults.NotFound();
                     }
 
+                    // Only a verified claim resolves (ADR-0043), and the lookup is a plain read of a column
+                    // the row already carries. No DNS query runs here, deliberately: a resolver in the
+                    // critical path of every enterprise sign-in turns a DNS outage into an authentication
+                    // outage. Verification happens on the Verify button and on the daily re-check.
+                    //
+                    // This is the ONLY place the verified gate is applied, and that is sound rather than
+                    // lucky: both callbacks resolve their config by org id out of a cookie that only this
+                    // route sets, and both refuse outright when it is absent. So neither is an entry point
+                    // of its own. A new route that reaches SsoSignIn without coming through here would be,
+                    // and would have to carry the gate itself.
                     var domain = email is null ? null : Emails.Domain(email);
                     var store = http.RequestServices.GetRequiredService<PostgresSsoConfigStore>();
-                    var config = domain is null ? null : await store.GetByEmailDomainAsync(domain, http.RequestAborted);
+                    var config = domain is null
+                        ? null
+                        : await store.GetVerifiedByEmailDomainAsync(domain, http.RequestAborted);
                     if (config is null)
                     {
                         return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_not_available"));

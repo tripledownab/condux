@@ -66,3 +66,8 @@ See [`values.yaml`](values.yaml) for the full list. Highlights: `externalStores.
 `ingress.*`, per-service `replicas`/`resources`/`autoscaling`, `github.*` (opt-in Conductor GitHub App),
 `conductor.provider` (`fake`/`simulated-agent`/`anthropic`), and `config.*` (CORS, platform admins,
 sampling).
+
+`sso.skipDomainVerification` deserves its own line. It accepts an org's claimed email domain without the
+DNS TXT record that proves the org controls it, and it exists for a single-tenant install on an internal
+domain with no public DNS to publish into. On an installation serving more than one organization it is
+what stops an org claiming a domain it does not own, so leave it false.

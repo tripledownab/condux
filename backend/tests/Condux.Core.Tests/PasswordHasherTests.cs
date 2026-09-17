@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Condux.Core.Auth;
 using Xunit;
 
@@ -34,6 +35,30 @@ public class PasswordHasherTests
         Assert.Equal("argon2id", parts[1]);
         Assert.Equal("v=19", parts[2]);
         Assert.Equal("m=19456,t=2,p=1", parts[3]);
+    }
+
+    [Fact]
+    public void VerifyOrDecoy_rejects_an_account_that_has_no_hash()
+    {
+        Assert.False(PasswordHasher.VerifyOrDecoy("password", null));
+        Assert.True(PasswordHasher.VerifyOrDecoy("password", PasswordHasher.Hash("password")));
+    }
+
+    // The point of the decoy is cost, not the answer: an address with no account must not answer faster
+    // than one with a password, or the status code says nothing while the clock says "no such account".
+    // Asserting the answer alone would pass against a plain `return false`, which is the bug.
+    //
+    // A FLOOR, never a ceiling. A ceiling on a deliberately slow operation fails on a loaded runner and
+    // gets deleted; this can only fail if the derivation genuinely did not happen. The real cost is tens
+    // of milliseconds at 19 MiB, and an early return is microseconds, so the bound is far from both.
+    [Fact]
+    public void VerifyOrDecoy_still_derives_a_key_when_there_is_no_hash()
+    {
+        PasswordHasher.VerifyOrDecoy("warm-up", null); // the decoy is built once, so do not time that
+
+        var started = Stopwatch.StartNew();
+        PasswordHasher.VerifyOrDecoy("password", null);
+        Assert.True(started.ElapsedMilliseconds >= 5, $"took {started.ElapsedMilliseconds}ms");
     }
 
     [Theory]

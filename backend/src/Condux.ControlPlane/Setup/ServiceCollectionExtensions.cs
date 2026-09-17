@@ -77,6 +77,10 @@ internal static class ServiceCollectionExtensions
         // Alert dispatch from the control-plane too: triage events (issue resolved/assigned) fire alert
         // rules here, not just the consumer's new-issue/regression path.
         services.AddSingleton<AlertDispatcher>();
+        // Its org-level counterpart (#129), for a notice addressed to the org rather than to a project's
+        // alert rules. The consumer has had this since the Conductor-pause notices; the control-plane needs
+        // it now that the SSO domain re-check below can tell an org its claim is about to stop routing.
+        services.AddSingleton<OrgNotificationDispatcher>();
         // The one home for a triage change and its side effects, shared by the REST endpoints and the MCP
         // triage tools (ADR-0046) so an agent's resolve fires the same rules as a human's.
         services.AddSingleton<Issues.IssueTriage>();
@@ -161,6 +165,14 @@ internal static class ServiceCollectionExtensions
             services.AddHttpClient<ILlmKeyValidator, LlmKeyValidator>();
             // Per-org SSO config store — the client secret is sealed with the same SecretBox (#72).
             services.AddSingleton(new PostgresSsoConfigStore(postgres));
+            // Domain verification (ADR-0043). A timeout because a resolver that never answers would hold a
+            // Verify request open; failing to reach one is a reportable outcome, not something to wait out.
+            services.AddHttpClient<Auth.DohTxtResolver>(c => c.Timeout = TimeSpan.FromSeconds(5));
+            services.AddScoped<Auth.SsoDomainVerifier>();
+            // Slice 2: re-read those records daily and take a claim away once its record has been gone
+            // through the grace period, warning the org first. Registered with the store it reads, so a
+            // deployment with no secret key runs no timer for a table it has no rows in.
+            services.AddHostedService<Auth.SsoVerificationWorker>();
         }
 
         // TOTP second factor (ADR-0039). The store and the service register unconditionally, unlike the

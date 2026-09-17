@@ -96,6 +96,33 @@ describe("parseEventPayload", () => {
     expect(minimal?.userKey).toBe("");
     expect(minimal?.user).toBeUndefined();
   });
+
+  // Whoever sent the event wrote this number, and past the ECMAScript Date range toISOString() throws
+  // a RangeError mid-render. The error boundary then replaces the whole main pane and has no reset, so
+  // one stored event would take the issue surface down for the session. Ingest refuses these now; a
+  // payload stored before it did still has to render.
+  it.each([1e16, -1e16, 8.64e15 + 1])(
+    "renders a breadcrumb timestamp of %p as no timestamp rather than an Invalid Date",
+    (value) => {
+      const event = parseEventPayload(
+        JSON.stringify({ Breadcrumbs: [{ TimestampUnixMs: value }] }),
+      );
+
+      const ms = event?.breadcrumbs[0]?.timestampUnixMs ?? -1;
+      expect(ms).toBe(0);
+      // The assertion that matters is the call the render makes, not the value it makes it with.
+      expect(() => new Date(ms).toISOString()).not.toThrow();
+    },
+  );
+
+  // The boundary itself is a real instant, so it stays. A cap that also dropped the last representable
+  // value would be a different rule from the one the comment claims.
+  it.each([1789199990000, 8.64e15])("keeps a breadcrumb timestamp of %p", (value) => {
+    const event = parseEventPayload(JSON.stringify({ Breadcrumbs: [{ TimestampUnixMs: value }] }));
+
+    expect(event?.breadcrumbs[0]?.timestampUnixMs).toBe(value);
+    expect(() => new Date(value).toISOString()).not.toThrow();
+  });
 });
 
 describe("facets", () => {

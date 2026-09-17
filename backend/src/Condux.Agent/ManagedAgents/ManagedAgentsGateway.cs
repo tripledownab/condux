@@ -227,10 +227,16 @@ public sealed class ManagedAgentsGateway(
 
     private static string BuildUserMessage(AgentRunSpec spec)
     {
+        // spec.Prompt arrives already fenced from the assembler. What is added here is not our text
+        // either: a scoped path only ever passed a CONTAINMENT check, and RepoEndpoints stores a
+        // repository name and a default branch with no shape check at all. Each is interpolated rather
+        // than fenced because it has to read as the task, so neutralizing is the whole defence.
+        var scoped = spec.ScopedPaths.Select(UntrustedText.Neutralize);
         var paths = spec.ScopedPaths.Count > 0
-            ? $"\n\nStart with these files (from the error's stack trace): {string.Join(", ", spec.ScopedPaths)}"
+            ? $"\n\nStart with these files (from the error's stack trace): {string.Join(", ", scoped)}"
             : "";
-        return $"{spec.Prompt}\n\nRepository: {spec.RepoFullName} (base branch: {spec.BaseBranch}), "
+        return $"{spec.Prompt}\n\nRepository: {UntrustedText.Neutralize(spec.RepoFullName)} "
+            + $"(base branch: {UntrustedText.Neutralize(spec.BaseBranch)}), "
             + $"mounted read-only at {MountPath}.{paths}";
     }
 }

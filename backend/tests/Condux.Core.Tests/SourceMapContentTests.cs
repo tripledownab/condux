@@ -27,4 +27,14 @@ public sealed class SourceMapContentTests
     [InlineData("[]")]                                        // not an object
     [InlineData("")]                                          // empty
     public void Rejects_non_source_maps(string json) => Assert.False(Check(json));
+
+    // The upload gate asks the decoder's own question, so a map that would be stored and then silently
+    // symbolicate nothing is refused here with a reason instead.
+    [Fact]
+    public void Rejects_a_map_the_decoder_would_refuse()
+    {
+        var mappings = new string(';', 2_000_000);
+
+        Assert.False(Check($$"""{"version":3,"mappings":"{{mappings}}"}"""));
+    }
 }

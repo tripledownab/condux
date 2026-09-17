@@ -11,12 +11,18 @@ public sealed record User(
     long Id, string Email, string? PasswordHash, DateTimeOffset CreatedAt, DateTimeOffset? OnboardedAt,
     // Deliberately has no default. Every column here is read by at least two repositories, and a default
     // would let one of them forget the column and silently produce a value that looks like an answer.
-    bool WeeklySummaryOptOut);
+    bool WeeklySummaryOptOut,
+    // When a password cooldown ends, so the sign-in path learns it from the lookup it already does.
+    // The failure COUNT is deliberately absent: nothing outside the counter needs the number, and
+    // handing it out invites a read-then-write around the guarded UPDATE, which is the exact race that
+    // statement exists to prevent.
+    DateTimeOffset? LoginLockedUntil);
 
 /// <summary>Creates and looks up user accounts for authentication.</summary>
-public sealed class UserRepository(string connectionString)
+public sealed partial class UserRepository(string connectionString)
 {
-    private const string Columns = "id, email, password_hash, created_at, onboarded_at, weekly_summary_opt_out";
+    private const string Columns =
+        "id, email, password_hash, created_at, onboarded_at, weekly_summary_opt_out, login_locked_until";
 
     private const string InsertSql = $"""
         INSERT INTO users (email, password_hash)
@@ -125,12 +131,18 @@ public sealed class UserRepository(string connectionString)
     // callers did: someone who changed their password from Settings because they suspected trouble left
     // any reset link an attacker had already triggered live for the rest of its hour, able to overwrite
     // the password they had just chosen. Written as a CTE so neither half can happen without the other.
-    private const string SetPasswordSql = """
+    // Clearing the guessing counter belongs to the same act for the same reason. The emailed reset is the
+    // way out of an attack, and an attacker only has to fail five sign-ins to start a cooldown; left
+    // standing, it survives the reset, so the user sets a new password and is then told it is wrong for
+    // the rest of the window. Proving control of the mailbox is a stronger claim than the password the
+    // counter was protecting, so there is nothing to weaken by clearing it here.
+    private static readonly string SetPasswordSql = $"""
         WITH spent AS (
             UPDATE password_resets SET used_at = now()
             WHERE user_id = @id AND used_at IS NULL
         )
-        UPDATE users SET password_hash = @hash WHERE id = @id;
+        UPDATE users SET password_hash = @hash, {FailureCooldown.ClearAssignments(LoginFailures)}
+        WHERE id = @id;
         """;
 
     /// <summary>
@@ -171,5 +183,5 @@ public sealed class UserRepository(string connectionString)
     private static User Read(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2),
         r.GetFieldValue<DateTimeOffset>(3), r.IsDBNull(4) ? null : r.GetFieldValue<DateTimeOffset>(4),
-        r.GetBoolean(5));
+        r.GetBoolean(5), r.IsDBNull(6) ? null : r.GetFieldValue<DateTimeOffset>(6));
 }

@@ -107,32 +107,33 @@ public sealed class AgentLoop(
             {
                 case AgentToolNames.ListFiles:
                     var paths = await workspace.ListFilesAsync(cancellationToken);
-                    return new AgentToolResult(call.Id, string.Join('\n', paths));
+                    return AgentToolResult.FromWorkspace(
+                        call.Id, "files in the workspace", string.Join('\n', paths));
 
                 case AgentToolNames.ReadFile:
                     var path = RequireArgument(call, "path");
                     var contents = await workspace.ReadFileAsync(path, cancellationToken);
                     return contents is null
-                        ? new AgentToolResult(call.Id, $"No such file: {path}", IsError: true)
-                        : new AgentToolResult(call.Id, contents);
+                        ? AgentToolResult.Status(call.Id, $"No such file: {path}", isError: true)
+                        : AgentToolResult.FromWorkspace(call.Id, $"contents of {path}", contents);
 
                 case AgentToolNames.WriteFile:
                     var target = RequireArgument(call, "path");
                     await workspace.WriteFileAsync(target, RequireArgument(call, "contents"), cancellationToken);
-                    return new AgentToolResult(call.Id, $"Wrote {target}.");
+                    return AgentToolResult.Status(call.Id, $"Wrote {target}.");
 
                 case AgentToolNames.RunCommand:
                     return await RunCommandAsync(call, cancellationToken);
 
                 default:
-                    return new AgentToolResult(call.Id, $"Unknown tool: {call.Name}", IsError: true);
+                    return AgentToolResult.Status(call.Id, $"Unknown tool: {call.Name}", isError: true);
             }
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException)
         {
             // An invalid path or a missing argument is the model's mistake, so hand it back and let the
             // agent retry. Infrastructure faults are not caught here and end the run.
-            return new AgentToolResult(call.Id, error.Message, IsError: true);
+            return AgentToolResult.Status(call.Id, error.Message, isError: true);
         }
     }
 
@@ -145,12 +146,12 @@ public sealed class AgentLoop(
     {
         if (!workspace.CanRunCommands)
         {
-            return new AgentToolResult(call.Id, "This workspace cannot run commands.", IsError: true);
+            return AgentToolResult.Status(call.Id, "This workspace cannot run commands.", isError: true);
         }
 
         if (!CommandPolicy.TryAuthorize(RequireArgument(call, "command"), out var argv, out var refusal))
         {
-            return new AgentToolResult(call.Id, refusal, IsError: true);
+            return AgentToolResult.Status(call.Id, refusal, isError: true);
         }
 
         var run = await workspace.RunCommandAsync(argv, cancellationToken);
@@ -162,7 +163,12 @@ public sealed class AgentLoop(
 
         // A non-zero exit is reported as an error result so the model sees the failure it must react to,
         // while the output rides along either way — a failing test run is the useful case.
-        return new AgentToolResult(call.Id, $"exit {run.ExitCode}\n{output}", IsError: !run.Succeeded);
+        // The exit code is ours, so it rides in the label, outside the markers. The output is not ours
+        // and goes inside. It was already scrubbed above for secrets, which is the same "this text is not
+        // ours" judgement applied to a different risk: a build that echoes an environment variable, and a
+        // build that echoes an instruction.
+        return AgentToolResult.FromWorkspace(
+            call.Id, $"output of the command (exit {run.ExitCode})", output, isError: !run.Succeeded);
     }
 
     private static string RequireArgument(AgentToolCall call, string name) =>

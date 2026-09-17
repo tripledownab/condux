@@ -6,10 +6,9 @@ namespace Condux.ControlPlane.SourceMaps;
 
 /// <summary>
 /// Read-time source-map symbolication (ADR-0028): rewrite a stored event's minified in-app JS frames to
-/// their original source position. For each frame it resolves the map debugId-first (a debug_meta image
-/// whose code_file matches the frame's abs_path) then by (release, filename), fetches the map from object
-/// storage (parsed once per call), and rewrites filename/line/column + function + the original source line.
-/// Best-effort per frame: an unmatched or undecodable map leaves the frame untouched.
+/// their original source position. The artifacts an event can reach are resolved up front, so each
+/// frame is then a dictionary lookup plus at most one fetch of the map it names (parsed once per call).
+/// Best-effort per frame: an unmatched or undecodable map leaves the frame.
 /// </summary>
 public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IObjectStore objectStore)
 {
@@ -20,7 +19,12 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
             return stored;
         }
 
-        var debugImages = BuildDebugImageMap(stored.DebugImages);
+        var reachable = await ReachableArtifacts.ResolveAsync(artifacts, projectId, stored, cancellationToken);
+        if (reachable.IsEmpty)
+        {
+            return stored;
+        }
+
         var cache = new Dictionary<string, SourceMap?>();
         var exceptions = new List<ExceptionValue>(stored.Exceptions.Count);
         var changed = false;
@@ -36,7 +40,7 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
             var frames = new List<Frame>(ex.Stacktrace.Frames.Count);
             foreach (var frame in ex.Stacktrace.Frames)
             {
-                var rewritten = await SymbolicateFrameAsync(projectId, stored, frame, debugImages, cache, cancellationToken);
+                var rewritten = await SymbolicateFrameAsync(frame, reachable, cache, cancellationToken);
                 changed |= !ReferenceEquals(rewritten, frame);
                 frames.Add(rewritten);
             }
@@ -48,22 +52,10 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
     }
 
     private async Task<Frame> SymbolicateFrameAsync(
-        long projectId, Event stored, Frame frame, IReadOnlyDictionary<string, string> debugImages,
-        Dictionary<string, SourceMap?> cache, CancellationToken cancellationToken)
+        Frame frame, ReachableArtifacts reachable, Dictionary<string, SourceMap?> cache,
+        CancellationToken cancellationToken)
     {
-        if (!frame.InApp || frame.Lineno <= 0)
-        {
-            return frame;
-        }
-
-        var path = frame.AbsPath ?? frame.Filename;
-        if (string.IsNullOrEmpty(path) || !LooksLikeJs(path))
-        {
-            return frame;
-        }
-
-        var artifact = await ResolveArtifactAsync(projectId, stored, frame, path, debugImages, cancellationToken);
-        if (artifact is null)
+        if (reachable.Find(frame) is not { } artifact)
         {
             return frame;
         }
@@ -88,34 +80,6 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
         };
     }
 
-    private async Task<SourceMapArtifact?> ResolveArtifactAsync(
-        long projectId, Event stored, Frame frame, string path,
-        IReadOnlyDictionary<string, string> debugImages, CancellationToken cancellationToken)
-    {
-        if (debugImages.TryGetValue(path, out var debugId)
-            && await artifacts.FindByDebugIdAsync(projectId, debugId, cancellationToken) is { } byDebug)
-        {
-            return byDebug;
-        }
-
-        // Fallback: match on the built file's basename. The upload CLI keys maps by basename, and a browser
-        // frame's abs_path is the full deployed URL (often with a cache-buster query), so basename lines the
-        // two up where an exact path never would.
-        if (!string.IsNullOrEmpty(stored.Release))
-        {
-            return await artifacts.FindByReleaseFileAsync(projectId, stored.Release, Basename(path), cancellationToken);
-        }
-
-        return null;
-    }
-
-    private static string Basename(string path)
-    {
-        var clean = path.Split('?', '#')[0];
-        var slash = clean.LastIndexOfAny(['/', '\\']);
-        return slash >= 0 ? clean[(slash + 1)..] : clean;
-    }
-
     private async Task<SourceMap?> LoadMapAsync(
         SourceMapArtifact artifact, Dictionary<string, SourceMap?> cache, CancellationToken cancellationToken)
     {
@@ -128,29 +92,5 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
         var map = bytes is null ? null : SourceMap.Parse(bytes);
         cache[artifact.ObjectKey] = map;
         return map;
-    }
-
-    private static Dictionary<string, string> BuildDebugImageMap(IReadOnlyList<DebugImage> images)
-    {
-        var map = new Dictionary<string, string>();
-        foreach (var image in images)
-        {
-            // Only a source-map image points at an uploaded map; a native debug image (macho/elf/...) does not.
-            if (string.Equals(image.Type, "sourcemap", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrEmpty(image.CodeFile) && !string.IsNullOrEmpty(image.DebugId))
-            {
-                map[image.CodeFile] = image.DebugId;
-            }
-        }
-
-        return map;
-    }
-
-    private static bool LooksLikeJs(string path)
-    {
-        var clean = path.Split('?', '#')[0];
-        return clean.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
-            || clean.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)
-            || clean.EndsWith(".cjs", StringComparison.OrdinalIgnoreCase);
     }
 }

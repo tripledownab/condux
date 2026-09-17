@@ -1,0 +1,67 @@
+# What belongs here: the staging edge. Same routing as the production Caddyfile, with the two
+# differences a shared host forces.
+#
+# 1. TLS COMES FROM A FILE, NOT ACME. A private address is not routable from the internet, so no ACME
+#    challenge for it can be answered and Caddy cannot manage this certificate itself. Something
+#    outside this stack issues it and renews it; this file only reads it.
+#
+# 2. THE DASHBOARD AND THE RELAY ARE TOLD APART BY PORT, NOT BY HOSTNAME. Production gives each its
+#    own public name. A host with one name has one certificate, so the split moves to the port, and
+#    the DSNs the control-plane mints have to name the relay's port. Both blocks otherwise proxy
+#    exactly what the production file proxies.
+#
+# THE HOST IS REQUIRED, AND THIS FILE CANNOT BE THE THING THAT REQUIRES IT. Measured on the image this
+# runs against: with the variable absent, every site address below collapses from "name:443" to ":443",
+# which Caddy accepts as a valid catch-all rather than rejecting. The edge would then answer to any
+# name, and nothing in a deploy would look wrong. So the value is made required where an absence can
+# actually stop something, on the edge service in docker-compose.staging.yml, and this file only reads
+# what it is given. Do not add a default here: that would hide the absence a second time.
+{
+	# No ACME account is needed, since every site below serves a certificate from disk. Redirects are
+	# off because the published HTTPS port is not 443: an automatic redirect would send a plain-HTTP
+	# caller to a port this edge is not reached on, which reads as a broken site rather than as a
+	# missing redirect.
+	auto_https disable_redirects
+
+	# Per-request metrics, labelled by host. BOTH lines below are needed and neither is the default.
+	# `per_host` adds the host label: without it every series carries only Caddy's internal server
+	# name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge serves
+	# the dashboard and the relay from one process. The `metrics` directive inside each site is what
+	# makes Caddy record the requests at all: without it the endpoint below answers 200 carrying only
+	# Go runtime counters, which looks exactly like a working metrics endpoint.
+	metrics {
+		per_host
+	}
+}
+
+# The dashboard and the control-plane API on one origin, so the session cookie and the OAuth callbacks
+# stay first-party, exactly as in production.
+{$CONDUX_STAGING_HOST}:443 {
+	tls /etc/condux/tls/staging.crt /etc/condux/tls/staging.key
+	encode zstd gzip
+	metrics
+
+	@backend path /api/* /openapi/*
+	handle @backend {
+		reverse_proxy controlplane:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# SDK / OTLP ingest, the stateless relay only. Production reaches this on its own hostname; here it is
+# the same name on its own port, which is what the minted DSNs carry.
+{$CONDUX_STAGING_HOST}:444 {
+	tls /etc/condux/tls/staging.crt /etc/condux/tls/staging.key
+	encode zstd gzip
+	metrics
+	reverse_proxy relay:9000
+}
+
+# Prometheus metrics. NOT published to any host port: it is reachable only on the compose network, by
+# the monitoring stack. The `metrics` directive serves the Prometheus endpoint at /metrics.
+:2020 {
+	metrics
+}

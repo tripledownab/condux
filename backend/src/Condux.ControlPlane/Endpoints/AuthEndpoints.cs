@@ -68,11 +68,13 @@ internal static class AuthEndpoints
                     Credentials req, UserRepository users, SessionRepository sessions,
                     EmailAllowlist platformAdmins, MultiFactor mfa, HttpContext http) =>
                 {
-                    var user = await users.GetByEmailAsync(Emails.Normalize(req.Email ?? string.Empty));
-                    if (user?.PasswordHash is null
-                        || !PasswordHasher.Verify(req.Password ?? string.Empty, user.PasswordHash))
+                    var found = await users.GetByEmailAsync(Emails.Normalize(req.Email ?? string.Empty));
+                    if (await PasswordGate.VerifyAsync(found, req.Password, users, http.RequestAborted)
+                        is not { } user)
                     {
-                        // Generic 401 for unknown email, wrong password, or a federated (no-password) account.
+                        // One 401 for an unknown email, a wrong password, a federated (no-password)
+                        // account and an account in its cooldown. The gate makes them cost the same too,
+                        // so the four are not separable by a stopwatch either.
                         return TypedResults.Unauthorized();
                     }
 

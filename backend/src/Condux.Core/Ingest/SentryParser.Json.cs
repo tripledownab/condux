@@ -36,6 +36,15 @@ public static partial class SentryParser
     private static bool GetBool(JsonElement el, string name) =>
         el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
+    // The widest instant everything downstream can represent, read from the type that decides it rather
+    // than written out, so the two cannot drift. It is narrower than both ClickHouse DateTime64 and the
+    // ECMAScript Date range the dashboard parses the value back into, so bounding here bounds those.
+    // The sender names this field, so a value outside the range is not a clock reading, and one that
+    // reaches storage costs more than the event it came with: every reader that turns it back into an
+    // instant throws on it, and the consumer's drain loop pauses before its next message.
+    private static readonly long MinTimestampMs = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
+    private static readonly long MaxTimestampMs = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
+
     private static long ParseTimestamp(JsonElement el)
     {
         if (!el.TryGetProperty("timestamp", out var ts))
@@ -44,8 +53,9 @@ public static partial class SentryParser
         }
         if (ts.ValueKind == JsonValueKind.Number)
         {
-            return (long)(ts.GetDouble() * 1000);
+            return ToStorableMs(ts.GetDouble() * 1000);
         }
+        // TryParse already answers only within DateTimeOffset's range, so the string form needs no bound.
         if (ts.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(
                 ts.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto))
         {
@@ -53,6 +63,14 @@ public static partial class SentryParser
         }
         return 0;
     }
+
+    // 0 is what this parser already answers for a timestamp that is absent or unreadable, so an
+    // out-of-range one joins them instead of becoming a third outcome nothing downstream expects. The
+    // cast is guarded rather than direct because a large double saturates to long.MaxValue, which is a
+    // number, is positive, and is not a time. The comparison is the whole check: NaN and the infinities
+    // fail it too, so an explicit test for them would be a branch that never decides anything.
+    private static long ToStorableMs(double ms) =>
+        ms >= MinTimestampMs && ms <= MaxTimestampMs ? (long)ms : 0;
 
     private static Level ParseLevel(string? s) => s?.ToLowerInvariant() switch
     {

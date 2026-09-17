@@ -53,16 +53,38 @@ public static class CveFixContextAssembler
     {
         var manifests = Manifests(manifestPaths);
         var advisory = string.IsNullOrEmpty(cveId) ? ghsaId : cveId;
+
+        // Every value that reaches the prompt comes from the advisory or the Dependabot alert, so each is
+        // neutralized ONCE, here. Doing it at each use is what this looked like first, and that version
+        // had already grown the defect it invites: five values were neutralized inline while the manifest
+        // paths beside them were interpolated raw, and those come from the alert too
+        // (GitHubRepoClient reads alert.Dependency.ManifestPath).
+        //
+        // These copies are for the PROMPT ONLY. ScopedPaths below must keep the real paths, or the
+        // gateway fetches a filename that does not exist.
+        var promptPackage = UntrustedText.Neutralize(package);
+        var promptEcosystem = UntrustedText.Neutralize(ecosystem);
+        var promptFromRange = UntrustedText.Neutralize(fromRange);
+        var promptToVersion = UntrustedText.Neutralize(toVersion);
+        var promptAdvisory = UntrustedText.Neutralize(advisory);
+        var promptManifests = manifests.Select(UntrustedText.Neutralize);
+
+        // The advisory summary is fenced rather than interpolated, because it is prose someone wrote
+        // rather than a value the instruction needs to read as its task. It is the declared parallel of
+        // FixContextAssembler, and applying the rule to one and not the other is how the two drift.
         var prompt =
-            $"Security update: bump the dependency \"{package}\" ({ecosystem}) from the vulnerable range "
-            + $"\"{fromRange}\" to version \"{toVersion}\" to remediate {advisory}.\n"
-            + (string.IsNullOrWhiteSpace(summary) ? "" : $"Advisory: {summary}\n")
+            UntrustedText.Guidance + "\n\n"
+            + $"Security update: bump the dependency \"{promptPackage}\" ({promptEcosystem}) from the "
+            + $"vulnerable range \"{promptFromRange}\" to version \"{promptToVersion}\" to remediate "
+            + $"{promptAdvisory}.\n"
+            + (string.IsNullOrWhiteSpace(summary) ? "" : UntrustedText.Fence("advisory", summary) + "\n")
             + (manifests.Count > 0
-                ? $"The vulnerable dependency is declared in: {string.Join(", ", manifests)}.\n"
+                ? $"The vulnerable dependency is declared in: {string.Join(", ", promptManifests)}.\n"
                 : "")
             + "Update the dependency manifest (and its lockfile if one is present) so the resolved "
-            + $"version of \"{package}\" is \"{toVersion}\" or a compatible patched version. Change only "
-            + "what the bump requires; do not modify application code unless the new version needs it.";
+            + $"version of \"{promptPackage}\" is \"{promptToVersion}\" or a compatible patched version. "
+            + "Change only what the bump requires; do not modify application code unless the new version "
+            + "needs it.";
 
         return new FixContext(prompt, ScopedPaths(ecosystem, manifests));
     }

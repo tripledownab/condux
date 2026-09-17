@@ -39,7 +39,19 @@ services:
     ports: ["127.0.0.1:8123:8123", "127.0.0.1:9002:9000"]
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
-    volumes: ["./.data/clickhouse:/var/lib/clickhouse"]
+    volumes:
+      - ./.data/clickhouse:/var/lib/clickhouse
+      # A SINGLE-FILE mount, and the one place in this file where that is the right answer rather
+      # than the trap the edge config warns about. Two measurements force it. config.d is NOT read
+      # recursively, so a directory mounted inside it is silently ignored: a nested config was planted
+      # on a running server and the port it configures stayed shut. And config.d itself cannot be
+      # mounted over, because the image ships `docker_related_config.xml` there, which is what makes
+      # the server listen on anything but loopback.
+      #
+      # The cost is the inode pinning: EDITING this file and deploying will not reach the container,
+      # because a deploy replaces the file rather than writing through it. Recreate the container
+      # rather than assuming a deploy applied it.
+      - ./clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/condux-prometheus.xml:ro
 
   # Kafka-API ingest buffer. Redpanda (C++, no JVM) — lightweight and self-host
   # friendly. Two listeners: internal (other containers → redpanda:9092) and
@@ -70,8 +82,18 @@ services:
   # MinIO is AGPL-3.0 — LOCAL DEV ONLY (S3-compatible target). Not bundled or
   # redistributed in the product, which is why its licence does not reach it;
   # production targets the S3 API instead (your own bucket, or cloud S3).
+  #
+  # Pulled from quay.io, not Docker Hub, and PINNED rather than :latest. Both this image and minio/mc
+  # stopped being anonymously pullable from Docker Hub, which turned CI's integration job red with
+  # "pull access denied" and would have broken a fresh `pnpm dev` on the bucket step below. WHY is not
+  # established and is not guessed at here; what was measured is that the Hub registry answers 401, that
+  # quay serves both, and that the GitHub repository is archived with its licence still reading AGPL-3.0.
+  #
+  # A floating tag on someone else's image turns their publishing decisions into our outage, silently, so
+  # both tags name a release. Each is the digest quay's :latest resolved to when it was pinned. The Hub
+  # original can no longer be fetched, so whether it served the same build is unknown.
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -82,7 +104,7 @@ services:
   # One-shot: create the source-map bucket in the dev MinIO so uploads work out of the box (ADR-0028).
   # Dev-only, like minio itself; prod uses a pre-provisioned BYO bucket and parks this behind a profile.
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       minio: { condition: service_started }
     environment:
@@ -188,6 +210,12 @@ services:
       CONDUX_IMPERSONATION_SIGNING_KEY: ${CONDUX_IMPERSONATION_SIGNING_KEY:-}
       # Secret store master key for the BYO-key registry (#65); opt-in, unset → the llm-config routes 404.
       CONDUX_SECRET_KEY: ${CONDUX_SECRET_KEY:-}
+      # Enterprise SSO domain verification (ADR-0043). The first accepts a claimed email domain with no
+      # DNS TXT record, for a single-tenant install on an internal domain; never set it where more than
+      # one org signs in, since it is what stops an org claiming a domain it does not own. The second
+      # points the TXT lookup at a different DNS-over-HTTPS resolver.
+      CONDUX_SSO_SKIP_DOMAIN_VERIFICATION: ${CONDUX_SSO_SKIP_DOMAIN_VERIFICATION:-}
+      CONDUX_DOH_ENDPOINT: ${CONDUX_DOH_ENDPOINT:-}
       # The dashboard runs on a different origin in dev (web :3000 → API :8080); allow it to send the
       # session cookie. Prod serves both same-origin, so this stays unset there (no CORS emitted).
       CONDUX_CORS_ORIGINS: "http://localhost:3000"

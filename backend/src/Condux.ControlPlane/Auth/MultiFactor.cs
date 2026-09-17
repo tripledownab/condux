@@ -128,7 +128,7 @@ internal sealed class MultiFactor(UserMfaRepository store, SessionRepository ses
             return MfaVerdict.Rejected;
         }
 
-        if (enrolment.LockedUntil is { } until && until > DateTimeOffset.UtcNow)
+        if (FailureCooldown.IsCoolingDown(enrolment.LockedUntil, DateTimeOffset.UtcNow))
         {
             return MfaVerdict.CooledDown;
         }

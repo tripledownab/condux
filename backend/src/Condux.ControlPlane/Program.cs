@@ -125,6 +125,7 @@ app.MapOAuthEndpoints();
 app.MapSsoEndpoints();
 app.MapSamlSsoEndpoints();
 app.MapSsoConfigEndpoints();
+app.MapSsoDomainEndpoints();
 app.MapBillingEndpoints();
 app.MapAdminEndpoints();
 app.MapAdminOrgEndpoints();

@@ -43,6 +43,10 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
         {
             b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
+            // Domain verification is switched off for this host the way a self-hosted deployment switches
+            // it off (ADR-0043), so these tests stay about the OIDC flow and make no DNS lookup. That a
+            // claim nobody proved routes nothing is pinned by SsoDomainVerificationApiTest, not here.
+            b.UseSetting("CONDUX_SSO_SKIP_DOMAIN_VERIFICATION", "1");
             // Stub the SSO exchange client's transport by its named-client name (AddHttpClient<T> names the
             // client after the type), so the token endpoint is never actually called. Keeps the internal
             // SsoOidcClient type out of the test.
@@ -221,14 +225,15 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
     // always creates Free and only the Stripe webhook moves an org off it.
     private async Task<long> SetUpOrgWithSsoAsync(WebApplicationFactory<Program> app, string domain)
     {
-        var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin);
-        var created = await admin.PostAsJsonAsync("/api/orgs",
+        // Owner, not admin: creating an org makes you its owner, and writing the config needs that role.
+        var owner = app.CreateClient();
+        await ApiAuth.SignUpAsync(owner);
+        var created = await owner.PostAsJsonAsync("/api/orgs",
             new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Org" }); // Business has Sso
         var orgId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
         await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
 
-        var put = await admin.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
+        var put = await owner.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", new
         {
             emailDomain = domain,
             issuer = "https://idp.example/",
@@ -238,6 +243,11 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
             clientSecret = "super-secret-value-xyz",
         });
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        // A saved claim is provisional and routes nothing until the org proves the domain (ADR-0043).
+        // This host opted out of the DNS check, so the click is all that is left of it.
+        var verified = await owner.PostAsync($"/api/orgs/{orgId}/sso-config/verify", null);
+        Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
         return orgId;
     }
 

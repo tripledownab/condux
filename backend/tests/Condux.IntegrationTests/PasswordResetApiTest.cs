@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using Condux.ControlPlane.Auth;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Notifications;
 using Condux.Storage.Postgres;
@@ -100,6 +101,38 @@ public sealed class PasswordResetApiTest(PostgresFixture pg) : IClassFixture<Pos
 
     private static string TokenFrom(MailMessage message) =>
         Regex.Match(message.Body, @"/reset\?token=([^\s]+)").Groups[1].Value;
+
+    // The reset is how a user gets out of an attack, and an attacker needs only the address and five
+    // failed sign-ins to start a cooldown. If the reset left the counter standing, the user would set a
+    // new password and then be told it was wrong for the rest of the window, with the remediation they
+    // had just followed appearing to have done nothing.
+    //
+    // Nothing is weakened by clearing it: redeeming the link already proved control of the mailbox, which
+    // is a stronger claim than the password the counter protects.
+    [Fact]
+    public async Task Reset_clears_a_password_cooldown_so_the_new_password_works_at_once()
+    {
+        var (app, smtp) = CreateApp();
+        var email = UniqueEmail();
+        await app.CreateClient().PostAsJsonAsync(
+            "/api/auth/signup", new { email, password = "forgotten-one-123" });
+
+        var attacker = app.CreateClient();
+        for (var attempt = 0; attempt < PasswordGate.MaxAttempts; attempt++)
+        {
+            await attacker.PostAsJsonAsync("/api/auth/login", new { email, password = "not-it" });
+        }
+
+        await app.CreateClient().PostAsJsonAsync("/api/auth/password/forgot", new { email });
+        var token = Uri.UnescapeDataString(TokenFrom(await smtp.NextAsync()));
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await app.CreateClient().PostAsJsonAsync("/api/auth/password/reset",
+                new { token, newPassword = "brand-new-pass-456" })).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await app.CreateClient().PostAsJsonAsync("/api/auth/login",
+                new { email, password = "brand-new-pass-456" })).StatusCode);
+    }
 
     [Fact]
     public async Task Forgot_then_reset_replaces_the_password_and_the_link_works_only_once()

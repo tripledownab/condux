@@ -1,0 +1,85 @@
+name: condux-staging
+
+# What belongs here: the differences between a deployment that owns its host and a staging deployment
+# that shares one. Layered ON TOP of the production overlay rather than instead of it, so staging
+# rehearses production's wiring instead of a second arrangement of it:
+#
+#   docker compose --env-file .env.staging \
+#     -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.staging.yml \
+#     --profile dev-mail up -d --build
+#
+# Four differences, each one forced by sharing a host:
+#   - The edge binds an address and ports the host's other occupants do not already own. The
+#     production file declares its bindings as variables, so .env.staging sets those; this file only
+#     ADDS the relay's own edge port, which is the one thing port concatenation is good for.
+#   - TLS is served from a certificate file. A private address cannot answer an ACME challenge, so
+#     something outside this stack issues the certificate and something outside this stack renews it.
+#   - ClickHouse gets a memory limit, because on a shared host it cannot have the whole machine.
+#   - The bundled mail catcher comes back, so staging cannot mail a real person by accident. The
+#     production overlay parks it behind the dev-mail profile, which the command line above re-enables.
+#
+# The project name differs from the production overlay's, so a stack brought up from these files can
+# never adopt, recreate or tear down containers belonging to one brought up from those.
+#
+# Every value this file needs is REQUIRED with no default. A staging deployment that silently fell
+# back to a production default is the failure this whole file exists to prevent, so an absent value
+# stops the render rather than picking something.
+
+services:
+  caddy:
+    # The edge config reads this to decide which name each site answers to. Caddy reads it from its own
+    # process environment, so it has to be passed in here: nothing else in the stack gives the edge its
+    # hostname, and the production overlay has no need to, because production writes its names into the
+    # config file directly.
+    #
+    # REQUIRED, and enforced HERE rather than in the config file, because the config file cannot
+    # enforce it. Measured on the image this runs: with the value absent, the site addresses collapse
+    # from "name:443" to ":443" and Caddy calls that a valid configuration, because a bare port is a
+    # legitimate catch-all. So the edge would come up answering to any name at all, and the deploy
+    # would go green. Compose refusing to render is the only place the absence is visible.
+    environment:
+      CONDUX_STAGING_HOST: ${CONDUX_STAGING_HOST:?set CONDUX_STAGING_HOST to the name on the certificate}
+    volumes:
+      # REPLACES the production edge config. Compose merges volumes by container path and the last
+      # file to name one wins, so this target has to stay spelled exactly as the production file
+      # spells it. A DIRECTORY for the reason the production file gives: a single-file bind pins to an
+      # inode, and a deploy replaces the file rather than writing through it, so the reload this
+      # deploy runs would report success and apply nothing.
+      - ./caddy-staging:/etc/caddy:ro
+      # MOUNT THE ISSUING DIRECTORY, NEVER A COPY. Whatever renews a shared certificate finds the
+      # containers that must re-read it by looking for the ones mounting the path it writes to, so a
+      # copy is renewed on disk and never re-read here. Nothing fails on the day that is set up: the
+      # symptom is this edge serving an expired certificate once the current one runs out.
+      - ${STAGING_TLS_DIR:?set STAGING_TLS_DIR to the host directory the shared certificate is issued into}:/etc/condux/tls:ro
+    ports:
+      # ADDITIVE, and that is the point: concatenation cannot take the production file's bindings away
+      # but it can add this one. Production fronts the relay on a hostname of its own; a host with one
+      # name has one certificate, so staging tells the dashboard and the relay apart by port instead.
+      - "${EDGE_INGEST_BIND:?set EDGE_INGEST_BIND to the address and port SDKs reach the relay on}"
+
+  mailpit:
+    # The catcher is already what every staging service sends to. This publishes its INBOX, which is a
+    # separate question: the base file binds it to loopback, so reading what staging sent means opening
+    # a tunnel first, and a staging stack whose mail nobody reads is a staging stack whose invite and
+    # alert paths are never actually checked.
+    #
+    # ADDITIVE, like the relay's edge port above. The loopback binding the base file declares stays and
+    # costs nothing. It is NOT behind the edge: the inbox holds staging's own mail on a private network,
+    # so it needs no certificate, and putting it there would mean a third site block for something no
+    # SDK and no browser session depends on.
+    ports:
+      - "${MAILPIT_BIND:?set MAILPIT_BIND to the address and port the staging inbox is read on}"
+
+  clickhouse:
+    # A shared host cannot give ClickHouse the whole machine, and an uncapped one will eventually take
+    # it. The ceiling lives in .env.staging rather than here: it is a property of the host this happens
+    # to run on, which a file in the repository has no way to know and no business stating.
+    #
+    # A CONTAINER LIMIT IS ENOUGH, and that was measured rather than assumed. ClickHouse reads the
+    # cgroup limit and sets its own server memory budget to a fraction of it, so it refuses a query
+    # that would exceed the ceiling instead of being killed at it. Without that, a limit here would
+    # only change which process the kernel kills, which is not the same thing as a cap.
+    deploy:
+      resources:
+        limits:
+          memory: ${CLICKHOUSE_MEMORY_LIMIT:?set CLICKHOUSE_MEMORY_LIMIT to the ceiling ClickHouse may use}

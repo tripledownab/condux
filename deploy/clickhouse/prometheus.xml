@@ -1,0 +1,27 @@
+<!-- Turns on ClickHouse's own Prometheus endpoint, so the monitoring stack can scrape it.
+
+     A DROP-IN, not an edit of config.xml. The server image reads every file in config.d and merges it
+     over the packaged configuration, so this adds one block and inherits every other default. Editing
+     the packaged file would mean owning a copy of it and re-reconciling it on each image bump.
+
+     The endpoint is OFF by default, and its absence is quiet: nothing logs, nothing fails, and the
+     port simply refuses a connection. Measured on the running server before this file existed, a
+     connect to 9363 failed outright while :8123/ping answered 200, so the server was healthy and the
+     endpoint was merely absent. A scrape job added without this file produces a permanent TargetDown.
+
+     9363 is ClickHouse's registered Prometheus port. It is NOT published to any host port: the
+     monitoring stack reaches it over the compose network, like every other exporter. -->
+<clickhouse>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+
+        <!-- The three families, all on. `metrics` is the current gauges and counters, `events` the
+             cumulative counters, `asynchronous_metrics` the background-sampled ones such as memory
+             and disk. Leaving any of them off costs nothing at scrape time and removes the series
+             that would have answered the question being asked. -->
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+</clickhouse>

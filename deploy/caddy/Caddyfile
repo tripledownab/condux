@@ -10,10 +10,21 @@
 {
 	# ACME contact for expiry / issuance notices. Set to a real inbox.
 	email ops@condux.ai
+
+	# Per-request metrics, labelled by host. BOTH lines below are needed and neither is the default.
+	# `per_host` adds the host label: without it every series carries only Caddy's internal server
+	# name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge serves
+	# the dashboard and the relay from one process. The `metrics` directive inside each site is what
+	# makes Caddy record the requests at all: without it the endpoint below answers 200 carrying only
+	# Go runtime counters, which looks exactly like a working metrics endpoint.
+	metrics {
+		per_host
+	}
 }
 
 app.condux.ai {
 	encode zstd gzip
+	metrics
 
 	@backend path /api/* /openapi/*
 	handle @backend {
@@ -29,5 +40,12 @@ app.condux.ai {
 # posts to ingest.condux.ai/api/<project-uuid>/v1/logs.
 ingest.condux.ai {
 	encode zstd gzip
+	metrics
 	reverse_proxy relay:9000
+}
+
+# Prometheus metrics. NOT published to any host port: it is reachable only on the compose network, by
+# the monitoring stack. The `metrics` directive serves the Prometheus endpoint at /metrics.
+:2020 {
+	metrics
 }

@@ -155,6 +155,7 @@ export * from './updateRepoRequest';
 export * from './updateWeeklySummaryRequest';
 export * from './updateWeeklySummarySubscriptionRequest';
 export * from './uploadSourceMapParams';
+export * from './verifySsoDomainResponse';
 export * from './verifyStatus';
 export * from './weeklySummarySettingsResponse';
 export * from './weeklySummaryTestResponse';

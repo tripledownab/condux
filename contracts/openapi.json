@@ -4620,6 +4620,50 @@
         }
       }
     },
+    "/api/orgs/{orgId}/sso-config/verify": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "verifySsoDomain",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifySsoDomainResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/orgs/{orgId}/billing": {
       "get": {
         "tags": [
@@ -8757,7 +8801,12 @@
           "clientId",
           "samlSsoUrl",
           "samlCertificate",
-          "updatedAt"
+          "updatedAt",
+          "verificationRecordName",
+          "verificationRecordValue",
+          "verifiedAt",
+          "verificationLostAt",
+          "verificationLapsesAt"
         ],
         "type": "object",
         "properties": {
@@ -8794,6 +8843,27 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "verificationRecordName": {
+            "type": "string"
+          },
+          "verificationRecordValue": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verificationLostAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verificationLapsesAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         }
       },
@@ -9060,6 +9130,23 @@
         "properties": {
           "optOut": {
             "type": "boolean"
+          }
+        }
+      },
+      "VerifySsoDomainResponse": {
+        "required": [
+          "outcome",
+          "verifiedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         }
       },

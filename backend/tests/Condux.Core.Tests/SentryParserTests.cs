@@ -262,4 +262,63 @@ public class SentryParserTests
 
         Assert.Empty(e.Modules);
     }
+
+    // The sender writes this field, and the seconds are multiplied by 1000 before anyone looks at them,
+    // so the interesting values are the ones that stay a number the whole way and are still not a time.
+    // 1e13 seconds becomes 1e16 ms; 1e300 saturates the cast to long.MaxValue; a string "timestamp"
+    // never reaches the numeric branch at all.
+    [Theory]
+    [InlineData("1e13")]
+    [InlineData("1e300")]
+    [InlineData("-1e13")]
+    [InlineData("253402300800")]
+    public void ATimestampNoStoreCanRepresentIsRefusedRatherThanCarried(string seconds)
+    {
+        var e = SentryParser.ParseStore(EventAtSeconds(seconds)).Event!;
+
+        // 0 is what an absent or unreadable timestamp already answers, and both writers substitute the
+        // arrival time for it, so a refused value costs the sender nothing but a second of clock skew.
+        Assert.Equal(0, e.TimestampUnixMs);
+        Assert.Equal(0, Assert.Single(e.Breadcrumbs).TimestampUnixMs);
+    }
+
+    // Both the event's own timestamp and a breadcrumb's, because they are the same parse and only the
+    // breadcrumb one reaches the browser: it rides inside the stored payload blob rather than through a
+    // column, so nothing server-side ever converts it.
+    private static string EventAtSeconds(string seconds) => TimestampTemplate.Replace(
+        "__SECONDS__", seconds, StringComparison.Ordinal);
+
+    private const string TimestampTemplate = """
+    {
+      "timestamp": __SECONDS__,
+      "level": "error",
+      "exception": { "values": [{ "type": "TypeError", "value": "x" }] },
+      "breadcrumbs": [{ "timestamp": __SECONDS__, "message": "boom" }]
+    }
+    """;
+
+    // The contract the bound exists to keep, stated as the call that used to throw. The consumer runs
+    // this on every message and its catch sleeps a second, so one event that fails here is a second of
+    // stalled ingest for every tenant sharing the consumer group.
+    [Theory]
+    [InlineData("1e13")]
+    [InlineData("1714564800")]
+    [InlineData("1788514972.082")]
+    [InlineData("0")]
+    public void EveryParsedTimestampIsOneTheConsumerCanConvert(string seconds)
+    {
+        var e = SentryParser.ParseStore(EventAtSeconds(seconds)).Event!;
+
+        var record = Record.Exception(() => DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampUnixMs));
+
+        Assert.Null(record);
+    }
+
+    [Fact]
+    public void AnOrdinaryTimestampStillArrivesToTheMillisecond()
+    {
+        var e = SentryParser.ParseStore(EventAtSeconds("1788514972.082")).Event!;
+
+        Assert.Equal(1788514972082, e.TimestampUnixMs);
+    }
 }

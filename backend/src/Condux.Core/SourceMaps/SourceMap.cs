@@ -9,17 +9,14 @@ namespace Condux.Core.SourceMaps;
 /// </summary>
 public sealed class SourceMap
 {
-    // Fields 2..5 of a segment persist across the whole file; a source index of -1 marks a "gap" segment
-    // (one VLQ field, a generated column with no original mapping), so a query there resolves to null.
-    private readonly record struct Segment(
-        int GeneratedColumn, int SourceIndex, int OriginalLine, int OriginalColumn, int NameIndex);
-
     private readonly string[] sources;
     private readonly string?[] sourcesContent;
     private readonly string[] names;
-    private readonly List<Segment>[] lines;
 
-    private SourceMap(string[] sources, string?[] sourcesContent, string[] names, List<Segment>[] lines)
+    private readonly List<SourceMapMappings.Segment>?[] lines;
+
+    private SourceMap(
+        string[] sources, string?[] sourcesContent, string[] names, List<SourceMapMappings.Segment>?[] lines)
     {
         this.sources = sources;
         this.sourcesContent = sourcesContent;
@@ -40,11 +37,16 @@ public sealed class SourceMap
                 return null; // not a plain v3 map (e.g. an index map with "sections")
             }
 
+            if (!SourceMapMappings.IsDecodable(mappings.GetString()!))
+            {
+                return null;
+            }
+
             return new SourceMap(
                 ReadStrings(root, "sources"),
                 ReadNullableStrings(root, "sourcesContent"),
                 ReadStrings(root, "names"),
-                DecodeMappings(mappings.GetString()!));
+                SourceMapMappings.Decode(mappings.GetString()!));
         }
         catch (JsonException)
         {
@@ -61,7 +63,12 @@ public sealed class SourceMap
             return null;
         }
 
-        var segment = FindSegment(lines[generatedLine], generatedColumn);
+        if (lines[generatedLine] is not { } segments)
+        {
+            return null; // a generated line with no segments
+        }
+
+        var segment = SourceMapMappings.FindSegment(segments, generatedColumn);
         if (segment is not { SourceIndex: >= 0 } s || s.SourceIndex >= sources.Length)
         {
             return null;
@@ -71,78 +78,6 @@ public sealed class SourceMap
         var content = s.SourceIndex < sourcesContent.Length ? sourcesContent[s.SourceIndex] : null;
         var sourceLine = content is null ? null : LineAt(content, s.OriginalLine);
         return new OriginalPosition(sources[s.SourceIndex], s.OriginalLine, s.OriginalColumn, name, sourceLine);
-    }
-
-    // The segment with the largest GeneratedColumn <= the query column (segments are column-ordered).
-    private static Segment? FindSegment(List<Segment> segments, int generatedColumn)
-    {
-        int lo = 0, hi = segments.Count - 1, found = -1;
-        while (lo <= hi)
-        {
-            var mid = (lo + hi) / 2;
-            if (segments[mid].GeneratedColumn <= generatedColumn)
-            {
-                found = mid;
-                lo = mid + 1;
-            }
-            else
-            {
-                hi = mid - 1;
-            }
-        }
-
-        return found < 0 ? null : segments[found];
-    }
-
-    private static List<Segment>[] DecodeMappings(string mappings)
-    {
-        var lineStrings = mappings.Split(';');
-        var lines = new List<Segment>[lineStrings.Length];
-        // Fields 2..5 accumulate across the whole file; the generated column resets to 0 each line.
-        int sourceIndex = 0, originalLine = 0, originalColumn = 0, nameIndex = 0;
-        Span<int> fields = stackalloc int[5];
-
-        for (var line = 0; line < lineStrings.Length; line++)
-        {
-            var segments = new List<Segment>();
-            var generatedColumn = 0;
-            foreach (var segStr in lineStrings[line].Split(','))
-            {
-                if (segStr.Length == 0)
-                {
-                    continue;
-                }
-
-                var n = Base64Vlq.Decode(segStr, fields);
-                if (n < 1)
-                {
-                    continue; // malformed segment, skip
-                }
-
-                generatedColumn += fields[0];
-                if (n < 4)
-                {
-                    segments.Add(new Segment(generatedColumn, -1, 0, 0, -1)); // gap: no original position
-                    continue;
-                }
-
-                sourceIndex += fields[1];
-                originalLine += fields[2];
-                originalColumn += fields[3];
-                var name = -1;
-                if (n >= 5)
-                {
-                    nameIndex += fields[4];
-                    name = nameIndex;
-                }
-
-                segments.Add(new Segment(generatedColumn, sourceIndex, originalLine, originalColumn, name));
-            }
-
-            lines[line] = segments;
-        }
-
-        return lines;
     }
 
     // The 0-based line of a sourcesContent blob, without a trailing CR (source maps use \n line endings).

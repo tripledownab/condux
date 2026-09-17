@@ -153,6 +153,7 @@ import type {
   UpdateWeeklySummaryRequest,
   UpdateWeeklySummarySubscriptionRequest,
   UploadSourceMapParams,
+  VerifySsoDomainResponse,
   WeeklySummarySettingsResponse,
   WeeklySummaryTestResponse
 } from './model';
@@ -11206,6 +11207,95 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getDeleteSsoConfigMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type verifySsoDomainResponse200 = {
+  data: VerifySsoDomainResponse
+  status: 200
+}
+
+export type verifySsoDomainResponse404 = {
+  data: void
+  status: 404
+}
+
+export type verifySsoDomainResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+    
+export type verifySsoDomainResponseSuccess = (verifySsoDomainResponse200) & {
+  headers: Headers;
+};
+export type verifySsoDomainResponseError = (verifySsoDomainResponse404 | verifySsoDomainResponse409) & {
+  headers: Headers;
+};
+
+export type verifySsoDomainResponse = (verifySsoDomainResponseSuccess | verifySsoDomainResponseError)
+
+export const getVerifySsoDomainUrl = (orgId: number,) => {
+
+
+  
+
+  return `/api/orgs/${orgId}/sso-config/verify`
+}
+
+export const verifySsoDomain = async (orgId: number, options?: RequestInit): Promise<verifySsoDomainResponse> => {
+  
+  return conduxFetch<verifySsoDomainResponse>(getVerifySsoDomainUrl(orgId),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getVerifySsoDomainMutationOptions = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifySsoDomain>>, TError,{orgId: number}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifySsoDomain>>, TError,{orgId: number}, TContext> => {
+
+const mutationKey = ['verifySsoDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifySsoDomain>>, {orgId: number}> = (props) => {
+          const {orgId} = props ?? {};
+
+          return  verifySsoDomain(orgId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifySsoDomainMutationResult = NonNullable<Awaited<ReturnType<typeof verifySsoDomain>>>
+    
+    export type VerifySsoDomainMutationError = void | ErrorResponse
+
+    export const useVerifySsoDomain = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifySsoDomain>>, TError,{orgId: number}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof verifySsoDomain>>,
+        TError,
+        {orgId: number},
+        TContext
+      > => {
+
+      const mutationOptions = getVerifySsoDomainMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

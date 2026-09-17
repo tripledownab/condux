@@ -128,36 +128,59 @@ public static class FixContextAssembler
         sb.AppendLine("You are a senior engineer fixing a production error. Open a draft pull request that");
         sb.AppendLine("addresses the root cause and adds or updates a test. Change only what the fix requires.");
         sb.AppendLine();
-        sb.Append("Error: ").AppendLine(summary);
-        if (!string.IsNullOrEmpty(culprit))
-        {
-            sb.Append("Culprit: ").AppendLine(culprit);
-        }
+        sb.AppendLine(UntrustedText.Guidance);
+        sb.AppendLine();
+
+        // The error summary, the culprit and the breadcrumbs are all authored by whoever sent the event,
+        // so each goes inside a fence rather than being interpolated beside the instruction above.
+        //
+        // The culprit is fenced for a reason that is easy to miss: unlike the scoped paths below, it is
+        // NOT checked by RepoPaths. Culprit() falls back to the raw frame filename when no code mapping
+        // matches, so it carries whatever the frame said.
+        UntrustedText.AppendFenced(sb, "error reported by the application", summary);
+        UntrustedText.AppendFenced(sb, "culprit frame", culprit);
+
+        // Everything below is interpolated into OUR sentence rather than fenced, because the model has
+        // to read it as the task. That makes neutralizing it the whole defence, and it is done ONCE per
+        // value here rather than at each use: the CVE assembler wrote this per-use first and promptly
+        // grew the gap it invites.
+        //
+        // None of these is our text. The release version is the event's own `release` field, recorded on
+        // the issue by the consumer, so it is as sender-chosen as the error message above. A commit
+        // subject and author are written by whoever made the commit. And a scoped path passed
+        // RepoPaths.IsRepoRelative, which answers CONTAINMENT ("does this leave the repo root") and says
+        // nothing about whether the text can open a region; an earlier comment here claimed that check
+        // was enough, which conflated the two.
+        var version = UntrustedText.Neutralize(release?.Version);
+        var releaseCommit = UntrustedText.Neutralize(release?.CommitSha);
+        var suspectSha = UntrustedText.Neutralize(suspect?.Sha);
+        var suspectAuthor = UntrustedText.Neutralize(suspect?.Author);
+        var suspectSubject = UntrustedText.Neutralize(suspect?.Subject);
 
         // Release attribution (#144): a bisect hint. The fix still lands on the current branch head — the
         // release and commit only tell the model when the bug entered, not where to branch from.
-        if (release is { } r)
+        if (release is not null)
         {
-            sb.Append("This error first appeared in release ").Append(r.Version);
-            if (!string.IsNullOrEmpty(r.CommitSha))
+            sb.Append("This error first appeared in release ").Append(version);
+            if (releaseCommit.Length > 0)
             {
-                sb.Append(", built from commit ").Append(r.CommitSha);
+                sb.Append(", built from commit ").Append(releaseCommit);
             }
             sb.AppendLine(".");
         }
 
         // Suspect commit (#144): the last change to the culprit file as of that release — the most likely
         // origin of the bug, so the model can start there. Still just a hint, not the branch base.
-        if (suspect is { } s)
+        if (suspect is not null)
         {
-            sb.Append("Suspect commit (last change to the culprit file): ").Append(s.Sha);
-            if (!string.IsNullOrEmpty(s.Author))
+            sb.Append("Suspect commit (last change to the culprit file): ").Append(suspectSha);
+            if (suspectAuthor.Length > 0)
             {
-                sb.Append(" by ").Append(s.Author);
+                sb.Append(" by ").Append(suspectAuthor);
             }
-            if (!string.IsNullOrEmpty(s.Subject))
+            if (suspectSubject.Length > 0)
             {
-                sb.Append(" \"").Append(s.Subject).Append('"');
+                sb.Append(" \"").Append(suspectSubject).Append('"');
             }
             sb.AppendLine(".");
         }
@@ -167,17 +190,14 @@ public static class FixContextAssembler
             sb.AppendLine("Relevant files:");
             foreach (var path in scopedPaths)
             {
-                sb.Append("- ").AppendLine(path);
+                sb.Append("- ").AppendLine(UntrustedText.Neutralize(path));
             }
         }
 
         if (breadcrumbs.Count > 0)
         {
-            sb.AppendLine("Recent breadcrumbs:");
-            foreach (var line in breadcrumbs)
-            {
-                sb.Append("- ").AppendLine(line);
-            }
+            UntrustedText.AppendFenced(
+                sb, "recent breadcrumbs", string.Join('\n', breadcrumbs.Select(line => $"- {line}")));
         }
 
         return sb.ToString().TrimEnd();

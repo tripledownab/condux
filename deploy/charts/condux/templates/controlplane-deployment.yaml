@@ -53,6 +53,14 @@ spec:
                   name: {{ include "condux.secretName" . }}
                   key: CONDUX_SECRET_KEY
             {{- end }}
+            {{- if .Values.sso.skipDomainVerification }}
+            - name: CONDUX_SSO_SKIP_DOMAIN_VERIFICATION
+              value: "1"
+            {{- end }}
+            {{- if .Values.sso.dohEndpoint }}
+            - name: CONDUX_DOH_ENDPOINT
+              value: {{ .Values.sso.dohEndpoint | quote }}
+            {{- end }}
             {{- if .Values.github.enabled }}
             - name: CONDUX_GITHUB_CLIENT_ID
               value: {{ .Values.github.clientId | quote }}

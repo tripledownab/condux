@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Condux.Core.Auth;
 using Condux.Core.Secrets;
 using Condux.IntegrationTests.Fixtures;
+using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
@@ -13,9 +15,13 @@ using Xunit;
 namespace Condux.IntegrationTests;
 
 /// <summary>
-/// The per-org enterprise-SSO OIDC config (#72): a Business/Enterprise org registers its IdP; the client
-/// secret is stored encrypted (never round-tripped), gated on the plan's Sso feature, and the email domain
-/// (the login routing key) is globally unique. Mirrors <see cref="LlmConfigApiTest"/>.
+/// The per-org enterprise-SSO OIDC config (#72): a Business/Enterprise org registers its IdP, the client
+/// secret is stored encrypted (never round-tripped), and the whole surface is gated on the plan's Sso
+/// feature. Mirrors <see cref="LlmConfigApiTest"/>.
+///
+/// Who OWNS a claimed email domain is no longer decided here. Saving a config is only a provisional claim
+/// since ADR-0043, and exclusivity attaches to proving it, so those rules live in
+/// <see cref="SsoDomainVerificationApiTest"/> rather than being restated on the write path.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -86,27 +92,6 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
         var body = await put.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("sso_requires_upgrade", body.GetProperty("error").GetString());
-    }
-
-    [Fact]
-    public async Task A_domain_owned_by_another_org_is_refused()
-    {
-        var app = CreateApp();
-
-        var clientA = app.CreateClient();
-        await ApiAuth.SignUpAsync(clientA);
-        var orgA = await CreateOrgAsync(clientA, tier: 2);
-        Assert.Equal(HttpStatusCode.OK,
-            (await clientA.PutAsJsonAsync($"/api/orgs/{orgA}/sso-config", ConfigBody("shared.test"))).StatusCode);
-
-        // A second org (different owner — one org per user) can't claim the same domain.
-        var clientB = app.CreateClient();
-        await ApiAuth.SignUpAsync(clientB);
-        var orgB = await CreateOrgAsync(clientB, tier: 2);
-        var put = await clientB.PutAsJsonAsync($"/api/orgs/{orgB}/sso-config", ConfigBody("shared.test"));
-        Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
-        Assert.Equal("email_domain_taken",
-            (await put.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 
     [Fact]
@@ -185,6 +170,49 @@ public sealed class SsoConfigApiTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
+
+    // The escalation this refuses: an admin who could write the config would name the IdP whose
+    // assertion SsoSignIn turns into a session, and that session can be the owner's, with no password
+    // and no second factor. Changing a member's role is owner-only, so admin-writable SSO was a second
+    // way to the same authority.
+    //
+    // The 403s below are load-bearing as 403s. OrgAuthorization answers 404 when the caller holds no
+    // role at all and 403 only when they hold one below the minimum, so a seeding failure that left
+    // this user outside the org would fail these assertions rather than pass them for the wrong reason.
+    [Fact]
+    public async Task An_admin_who_is_not_an_owner_cannot_write_or_delete_the_config()
+    {
+        var app = CreateApp();
+        var owner = app.CreateClient();
+        await ApiAuth.SignUpAsync(owner);
+        var orgId = await CreateOrgAsync(owner, tier: 2);
+
+        var adminClient = app.CreateClient();
+        var admin = await ApiAuth.SignUpAsync(adminClient);
+        await new OrgMemberRepository(pg.ConnectionString).AddAsync(orgId, admin.UserId, OrgRole.Admin);
+
+        // Its own domain, because every test in this class shares one database and a shared name would
+        // leave the assertions below reading another test's row.
+        const string domain = "owner-gate.test";
+
+        // 403 and not 404: the admin is a member, so the org's existence is not what is being hidden.
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await adminClient.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", ConfigBody(domain)))
+            .StatusCode);
+
+        // The owner writes it, so the refusal above is about the role and not about the body.
+        Assert.Equal(HttpStatusCode.OK,
+            (await owner.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", ConfigBody(domain))).StatusCode);
+
+        // Turning SSO off is the same authority read backwards, and a federated account has no password
+        // to fall back on, so the delete is gated with the write.
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await adminClient.DeleteAsync($"/api/orgs/{orgId}/sso-config")).StatusCode);
+
+        // The admin can still READ it, which is the half that did not move.
+        Assert.Equal(HttpStatusCode.OK,
+            (await adminClient.GetAsync($"/api/orgs/{orgId}/sso-config")).StatusCode);
+    }
 
     [Fact]
     public async Task The_routes_404_when_the_secret_store_is_not_configured()

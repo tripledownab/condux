@@ -20,6 +20,7 @@ import {
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
 import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { SsoDomainVerification } from "./sso-domain-verification";
 
 // Mirrors the backend SsoProtocol enum (sso_configs.protocol).
 enum SsoProtocol {
@@ -44,7 +45,7 @@ function saveErrorKey(error: unknown): string {
     return "invalidRequest";
   }
   if (e?.status === 403) {
-    return "adminOnly";
+    return "ownerOnly";
   }
   return "failed";
 }
@@ -53,8 +54,9 @@ function saveErrorKey(error: unknown): string {
 // in through it, routed by email domain. The IdP speaks OIDC or SAML; each protocol has its own fields and
 // its own values to register on the IdP side (the OIDC redirect URI, or the SAML ACS URL + SP entity ID).
 // The OIDC client secret is encrypted server-side and never read back, so saving re-sends it; the SAML
-// certificate is the IdP's public signing certificate and echoes back. Managing is admin+; the tab is
-// gated on the plan's Sso feature (a save on a non-SSO tier returns the upgrade message).
+// certificate is the IdP's public signing certificate and echoes back. Reading is member+ and managing is
+// owner (see canManage); the tab is gated on the plan's Sso feature (a save on a non-SSO tier returns the
+// upgrade message).
 export function SsoSettings() {
   const translate = useTranslations("settings.sso");
   const tCommon = useTranslations("common");
@@ -77,9 +79,9 @@ export function SsoSettings() {
   const [clientSecret, setClientSecret] = useState("");
   const [samlSsoUrl, setSamlSsoUrl] = useState("");
   const [samlCertificate, setSamlCertificate] = useState("");
-  // What the org's admin registers in the IdP. Served rather than built from window.location.origin:
+  // What the org's owner registers in the IdP. Served rather than built from window.location.origin:
   // the server is what sends the redirect URI and checks the SAML audience, so showing anything but its
-  // own value hands the admin a string that looks right and fails at their IdP.
+  // own value hands them a string that looks right and fails at their IdP.
   const metadata = useGetSsoMetadata();
   const idp = metadata.data?.status === 200 ? metadata.data.data : null;
 
@@ -103,7 +105,11 @@ export function SsoSettings() {
     return <Notice>{translate("noOrg")}</Notice>;
   }
 
-  const canManage = current.role === "owner" || current.role === "admin";
+  // Owner, matching the Members tab rather than the other integration tabs, and for the same reason
+  // Members is owner: this form names the identity provider that can sign anyone in the org in, so it
+  // decides membership by another route. The server gate is the real one and answers 403; this only
+  // decides whether to offer a form that would be refused.
+  const canManage = current.role === "owner";
   const saml = protocol === SsoProtocol.Saml;
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getGetSsoConfigQueryKey(orgId) });
@@ -148,7 +154,7 @@ export function SsoSettings() {
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
         {/* Nothing rather than an empty value when the server did not supply these: a blank field beside
-            "Redirect URI" reads as a value, and an admin would paste it into their IdP. */}
+            "Redirect URI" reads as a value, and it would be pasted into the IdP. */}
         {idp === null ? null : saml ? (
           <>
             <dt className="text-muted-foreground">{translate("acsUrlLabel")}</dt>
@@ -190,8 +196,23 @@ export function SsoSettings() {
         ) : null}
       </dl>
 
+      {/* A saved config is only a provisional claim (ADR-0043). Until the org proves the domain it routes
+          no login at all, so the panel sits above the form rather than below it.
+
+          Keyed on the challenge so that saving a different domain remounts it. The panel holds the result
+          of the last check, and a result about the old claim shown beside the new record reads as though
+          the new one had been checked. */}
+      {existing !== null ? (
+        <SsoDomainVerification
+          key={existing.verificationRecordValue}
+          orgId={orgId}
+          config={existing}
+          canManage={canManage}
+        />
+      ) : null}
+
       {!canManage ? (
-        <p className="text-sm text-muted-foreground">{translate("adminOnly")}</p>
+        <p className="text-sm text-muted-foreground">{translate("ownerOnly")}</p>
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-3">
           <Field id="sso-protocol" label={translate("protocolLabel")}>

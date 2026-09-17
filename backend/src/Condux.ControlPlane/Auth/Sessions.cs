@@ -41,14 +41,16 @@ internal static class Sessions
     /// Sensitive actions re-ask rather than trusting the session: a session cookie proves someone signed
     /// in once on this browser, which is a weaker claim than "the person at the keyboard knows the
     /// password" and is exactly what an unattended machine or a stolen cookie gives an attacker.
+    ///
+    /// Goes through <see cref="PasswordGate"/> so these attempts count against the same allowance as
+    /// signing in. Without that, someone holding a stolen cookie could grind the password here without
+    /// limit while the sign-in page refused them.
     /// </summary>
     public static async Task<User?> ReauthenticateAsync(
         HttpContext http, UserRepository users, string? password)
     {
         var user = await users.GetByIdAsync(OrgAuthorization.CurrentUserId(http.User), http.RequestAborted);
-        return user?.PasswordHash is not null && PasswordHasher.Verify(password ?? string.Empty, user.PasswordHash)
-            ? user
-            : null;
+        return await PasswordGate.VerifyAsync(user, password, users, http.RequestAborted);
     }
 
     /// <summary>

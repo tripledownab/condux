@@ -102,7 +102,9 @@ public class OpenAiToolConversationTests
         var conversation = Create(handler);
 
         await conversation.NextAsync([]);
-        await conversation.NextAsync([new AgentToolResult("call_1", "file contents")]);
+        // Status, not FromWorkspace: this test is about the OpenAI wire mapping, so the content is
+        // asserted verbatim and fencing would only be noise in the assertion.
+        await conversation.NextAsync([AgentToolResult.Status("call_1", "file contents")]);
 
         var messages = JsonNode.Parse(handler.Requests[1])!.AsObject()["messages"]!.AsArray();
         var toolMessage = messages.Last(m => m!["role"]!.GetValue<string>() == "tool")!;

@@ -87,7 +87,7 @@ export function parseEventPayload(payload: string): ParsedEvent | null {
       })),
     })),
     breadcrumbs: asArray(root.Breadcrumbs).map((crumb) => ({
-      timestampUnixMs: typeof crumb?.TimestampUnixMs === "number" ? crumb.TimestampUnixMs : 0,
+      timestampUnixMs: asTimestampMs(crumb?.TimestampUnixMs),
       category: asString(crumb?.Category),
       message: asString(crumb?.Message),
       level: typeof crumb?.Level === "number" ? crumb.Level : 0,
@@ -118,6 +118,19 @@ export function parseEventPayload(payload: string): ParsedEvent | null {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+// A breadcrumb timestamp is written by whoever sent the event and rides inside the payload blob, so
+// it reaches here as a raw number. Past the ECMAScript Date range, new Date(ms).toISOString() throws
+// a RangeError during render, and this parser's whole contract is that a bad payload degrades to the
+// raw JSON view rather than breaking the page. Ingest refuses these now, so this covers the events
+// stored before it did. 0 is the value the render already treats as "no timestamp".
+const MAX_DATE_MS = 8.64e15;
+
+function asTimestampMs(value: unknown): number {
+  // The comparison carries the whole check: NaN and the infinities fail it too, and no explicit test
+  // for them would ever run anyway, since JSON has no way to spell either one.
+  return typeof value === "number" && Math.abs(value) <= MAX_DATE_MS ? value : 0;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: each element is narrowed field by field at the read site.

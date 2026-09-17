@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Condux.Core.SourceMaps;
 using Npgsql;
 
@@ -23,16 +24,22 @@ public sealed class SourceMapArtifactRepository(string connectionString)
         """;
 
     // Resolution for symbolication (ADR-0028): debug id first (robust), then (release, filename) fallback.
-    // Both take the most recent match, so a re-upload wins.
-    private const string FindByDebugIdSql = $"""
-        SELECT {Columns} FROM sourcemap_artifacts
-        WHERE project_id = @project AND debug_id = @debug ORDER BY created_at DESC LIMIT 1;
+    // Both take the most recent match, so a re-upload wins, which is what DISTINCT ON keeps here.
+    //
+    // Batched on purpose: the keys come from an event's frame list, which is written by whoever sent the
+    // event and has no length the sender cannot choose. A per-key round trip turned one dashboard read
+    // into as many queries as the event had frames, so the caller decided how long the control plane
+    // held a connection. One query per event, whatever the frames say.
+    private const string FindByDebugIdsSql = $"""
+        SELECT DISTINCT ON (debug_id) {Columns} FROM sourcemap_artifacts
+        WHERE project_id = @project AND debug_id = ANY(@debug)
+        ORDER BY debug_id, created_at DESC;
         """;
 
-    private const string FindByReleaseFileSql = $"""
-        SELECT {Columns} FROM sourcemap_artifacts
-        WHERE project_id = @project AND release = @release AND filename = @filename
-        ORDER BY created_at DESC LIMIT 1;
+    private const string FindByReleaseFilesSql = $"""
+        SELECT DISTINCT ON (filename) {Columns} FROM sourcemap_artifacts
+        WHERE project_id = @project AND release = @release AND filename = ANY(@filenames)
+        ORDER BY filename, created_at DESC;
         """;
 
     public async Task<SourceMapArtifact> RecordAsync(
@@ -55,29 +62,56 @@ public sealed class SourceMapArtifactRepository(string connectionString)
         return Map(reader);
     }
 
-    public async Task<SourceMapArtifact?> FindByDebugIdAsync(
-        long projectId, string debugId, CancellationToken cancellationToken = default)
+    /// <summary>The newest artifact for each of <paramref name="debugIds"/> that has one, keyed by debug id.</summary>
+    public async Task<IReadOnlyDictionary<string, SourceMapArtifact>> FindByDebugIdsAsync(
+        long projectId, IReadOnlyCollection<string> debugIds, CancellationToken cancellationToken = default)
     {
+        if (debugIds.Count == 0)
+        {
+            return ReadOnlyDictionary<string, SourceMapArtifact>.Empty;
+        }
+
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(FindByDebugIdSql, conn);
+        await using var cmd = new NpgsqlCommand(FindByDebugIdsSql, conn);
         cmd.Parameters.AddWithValue("project", projectId);
-        cmd.Parameters.AddWithValue("debug", debugId);
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
+        cmd.Parameters.AddWithValue("debug", debugIds.ToArray());
+        // Not null on any returned row: the WHERE clause equates debug_id to a member of a non-null
+        // array, and SQL equality never holds for NULL.
+        return await ReadKeyedAsync(cmd, a => a.DebugId!, cancellationToken);
     }
 
-    public async Task<SourceMapArtifact?> FindByReleaseFileAsync(
-        long projectId, string release, string filename, CancellationToken cancellationToken = default)
+    /// <summary>The newest artifact for each of <paramref name="filenames"/> in that release, keyed by filename.</summary>
+    public async Task<IReadOnlyDictionary<string, SourceMapArtifact>> FindByReleaseFilesAsync(
+        long projectId, string release, IReadOnlyCollection<string> filenames,
+        CancellationToken cancellationToken = default)
     {
+        if (filenames.Count == 0)
+        {
+            return ReadOnlyDictionary<string, SourceMapArtifact>.Empty;
+        }
+
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(FindByReleaseFileSql, conn);
+        await using var cmd = new NpgsqlCommand(FindByReleaseFilesSql, conn);
         cmd.Parameters.AddWithValue("project", projectId);
         cmd.Parameters.AddWithValue("release", release);
-        cmd.Parameters.AddWithValue("filename", filename);
+        cmd.Parameters.AddWithValue("filenames", filenames.ToArray());
+        return await ReadKeyedAsync(cmd, a => a.Filename, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, SourceMapArtifact>> ReadKeyedAsync(
+        NpgsqlCommand cmd, Func<SourceMapArtifact, string> key, CancellationToken cancellationToken)
+    {
+        var found = new Dictionary<string, SourceMapArtifact>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var artifact = Map(reader);
+            found[key(artifact)] = artifact;
+        }
+
+        return found;
     }
 
     private static SourceMapArtifact Map(NpgsqlDataReader r) => new(

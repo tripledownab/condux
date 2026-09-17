@@ -77,6 +77,59 @@ public sealed class SourceMapDecodeTests
     public void An_index_map_is_not_supported_yet() =>
         Assert.Null(SourceMap.Parse(Encoding.UTF8.GetBytes("""{"version":3,"sections":[]}""")));
 
+    // The separator counts come from a string a caller uploaded, so without a bound a map that is
+    // almost all separators costs orders of magnitude more memory than it took to send. Refusing reads
+    // to the symbolicator as a map it cannot use, which is a frame left alone rather than an error.
+    // Both separators, because they allocate different things: the semicolons decide how many generated
+    // lines get a list, the commas how many segments those lists hold. A real map is routinely lopsided,
+    // so a bound on one of them waves the other through.
+    [Theory]
+    [InlineData(';')]
+    [InlineData(',')]
+    public void A_mappings_string_of_nothing_but_separators_is_refused_rather_than_decoded(char separator)
+    {
+        var mappings = new string(separator, 2_000_000);
+
+        Assert.Null(SourceMap.Parse(Encoding.UTF8.GetBytes($$"""{"version":3,"mappings":"{{mappings}}"}""")));
+    }
+
+    // The other half, and the half that decides whether the bounds are set anywhere near the truth.
+    // Measured across 7,152 maps from this repository's own bundler output and its installed packages,
+    // the largest had 26,428 generated lines and the largest had 222,248 segments. Both shapes below
+    // are past those, so a build larger than anything this repository has seen still symbolicates.
+    [Fact]
+    public void A_map_with_more_lines_than_any_real_build_still_decodes()
+    {
+        var mappings = string.Join(';', Enumerable.Repeat("AAAA", 30_000));
+
+        var map = SourceMap.Parse(Encoding.UTF8.GetBytes(MapOf(mappings)));
+
+        Assert.NotNull(map);
+        Assert.Equal(0, map.OriginalPositionFor(29_999, 0)!.Column);
+    }
+
+    [Fact]
+    public void A_map_with_more_segments_on_one_line_than_any_real_build_still_decodes()
+    {
+        var mappings = string.Join(',', Enumerable.Repeat("AAAA", 250_000));
+
+        var map = SourceMap.Parse(Encoding.UTF8.GetBytes(MapOf(mappings)));
+
+        Assert.NotNull(map);
+        Assert.NotNull(map.OriginalPositionFor(0, 0));
+    }
+
+    [Fact]
+    public void A_generated_line_with_no_segments_has_no_mapping()
+    {
+        // Line 1 is empty: two separators with nothing between them.
+        const string json = """{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA;;AAAA"}""";
+        var map = SourceMap.Parse(Encoding.UTF8.GetBytes(json))!;
+
+        Assert.Null(map.OriginalPositionFor(1, 0));
+        Assert.NotNull(map.OriginalPositionFor(2, 0));
+    }
+
     [Fact]
     public void A_negative_vlq_delta_decodes_with_the_sign_bit()
     {
@@ -87,4 +140,7 @@ public sealed class SourceMapDecodeTests
         Assert.Equal(5, map.OriginalPositionFor(0, 0)!.Column);
         Assert.Equal(4, map.OriginalPositionFor(0, 1)!.Column);
     }
+
+    private static string MapOf(string mappings) =>
+        $$"""{"version":3,"sources":["a.js"],"names":[],"mappings":"{{mappings}}"}""";
 }

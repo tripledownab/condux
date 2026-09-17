@@ -20,4 +20,12 @@ export interface SsoConfigResponse {
   /** @nullable */
   samlCertificate: string | null;
   updatedAt: string;
+  verificationRecordName: string;
+  verificationRecordValue: string;
+  /** @nullable */
+  verifiedAt: string | null;
+  /** @nullable */
+  verificationLostAt: string | null;
+  /** @nullable */
+  verificationLapsesAt: string | null;
 }

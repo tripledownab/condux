@@ -19,27 +19,9 @@ public sealed class AnthropicAgentGateway(
     ModelKeyResolver keys, HttpClient agentHttp, bool agentic = false,
     SandboxOptions? sandboxOptions = null) : IAgentGateway
 {
-    // Scope caps, reflected in the prompt when hit (never silent): at most this many files, each truncated
-    // to this many characters.
+    // How many scoped files a run reads. The per-file truncation cap lives with the message that
+    // applies it, in AgentPrompts.
     private const int MaxFiles = 6;
-    private const int MaxCharsPerFile = 48_000;
-
-    private const string SystemPrompt =
-        "You are the Condux Conductor, a senior engineer fixing a production error. Respond with ONLY a "
-        + "JSON object, no code fences and no prose: {\"summary\": \"what the fix does and why\", "
-        + "\"files\": [{\"path\": \"repo/relative/path\", \"contents\": \"the COMPLETE new file contents\"}]}. "
-        + "Address the root cause, change only what the fix requires, and keep the existing code style. "
-        + "Add or update a test that fails without your change and passes with it. If you conclude the "
-        + "code is already correct and no such test can be written, say so in the summary and change "
-        + "nothing. Every entry in files must contain the full file, not a diff.";
-
-    private const string AgentSystemPrompt =
-        "You are the Condux Conductor, a senior engineer fixing a production error. Use the tools to read "
-        + "the code before changing it, then write complete file contents (never a diff). Address the root "
-        + "cause, change only what the fix requires, and keep the existing code style. Add or update a test "
-        + "that fails without your change and passes with it. If you conclude the code is already correct "
-        + "and no such test can be written, say so in the summary and change nothing. Call finish with a "
-        + "short summary once the fix is complete.";
 
     private readonly ConcurrentDictionary<string, AgentRunProgress> runs = new();
 
@@ -156,18 +138,18 @@ public sealed class AnthropicAgentGateway(
         IAgentWorkspace workspace = sandbox is not null ? sandbox : new InMemoryWorkspace(checkout);
 
         var tools = AgentToolCatalog.For(workspace);
-        var message = BuildUserMessage(spec, files);
+        var message = AgentPrompts.BuildUserMessage(spec, files);
         // Two wire formats for one loop. The mapping differs (nested tool results, arguments as a JSON
         // string, a system message rather than a field); everything above this line does not.
         IAgentConversation conversation = resolved.Provider == "anthropic"
             ? new AnthropicToolConversation(
-                agentHttp, resolved.ApiKey, resolved.Model, AgentSystemPrompt, message)
+                agentHttp, resolved.ApiKey, resolved.Model, AgentPrompts.AgentSystemPrompt, message)
             {
                 BaseUrl = AgentApiBaseUrl,
                 AvailableTools = tools,
             }
             : new OpenAiToolConversation(
-                agentHttp, resolved.ApiKey, resolved.Model, resolved.BaseUrl, AgentSystemPrompt, message)
+                agentHttp, resolved.ApiKey, resolved.Model, resolved.BaseUrl, AgentPrompts.AgentSystemPrompt, message)
             {
                 AvailableTools = tools,
             };
@@ -189,30 +171,12 @@ public sealed class AnthropicAgentGateway(
         }
 
         var output = await client.CreateAsync(
-            resolved.Model, SystemPrompt, BuildUserMessage(spec, files), resolved.ApiKey, resolved.BaseUrl, ct);
+            resolved.Model, AgentPrompts.SystemPrompt, AgentPrompts.BuildUserMessage(spec, files), resolved.ApiKey, resolved.BaseUrl, ct);
         var plan = FixPlanParser.Parse(output.Text);
         return new FixProposal(
             plan.Summary,
             plan.Files.ToDictionary(change => change.Path, change => change.Contents, StringComparer.Ordinal),
             output.InputTokens,
             output.OutputTokens);
-    }
-
-    private static string BuildUserMessage(AgentRunSpec spec, IReadOnlyList<RepoFile> files)
-    {
-        // No empty-file case: a run that read nothing fails before reaching the model.
-        var sb = new StringBuilder(spec.Prompt);
-        sb.AppendLine().AppendLine();
-        sb.AppendLine($"Repository: {spec.RepoFullName} (base branch: {spec.BaseBranch})");
-
-        foreach (var file in files)
-        {
-            var truncated = file.Content.Length > MaxCharsPerFile;
-            sb.AppendLine($"<file path=\"{file.Path}\"{(truncated ? " truncated=\"true\"" : "")}>");
-            sb.AppendLine(truncated ? file.Content[..MaxCharsPerFile] : file.Content);
-            sb.AppendLine("</file>");
-        }
-
-        return sb.ToString();
     }
 }

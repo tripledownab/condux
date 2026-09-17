@@ -12,6 +12,8 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Condux.ControlPlane.Tests" />
+    <!-- So a test asserts against the real limit rather than a copy of the number. -->
+    <InternalsVisibleTo Include="Condux.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />

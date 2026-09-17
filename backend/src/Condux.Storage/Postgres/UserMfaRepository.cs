@@ -49,27 +49,15 @@ public sealed class UserMfaRepository(string connectionString)
         """;
 
     // Per-account failure counting, which the per-session counter cannot do: an attacker spreading
-    // guesses across fresh sessions and addresses looks like a series of first attempts to it. Counted
-    // and tripped in one statement so concurrent failures cannot each read a stale total.
-    // The counter is WINDOWED, not lifetime. A plain running total looks equivalent and is not: once it
-    // has ever reached the limit it stays there, so every later mistyped code re-trips the cooldown and
-    // what was described as a cooldown becomes an effectively permanent hair-trigger lock on a real
-    // user's account. A lapsed cooldown therefore starts the count again from this failure.
-    private const string RecordFailureSql = """
-        WITH next AS (
-            SELECT user_id,
-                   CASE WHEN locked_until IS NOT NULL AND locked_until <= now()
-                        THEN 1 ELSE failed_attempts + 1 END AS attempts
-            FROM user_mfa WHERE user_id = @user
-        )
-        UPDATE user_mfa m
-        SET failed_attempts = next.attempts,
-            locked_until = CASE WHEN next.attempts >= @max THEN now() + @cooldown ELSE m.locked_until END
-        FROM next WHERE m.user_id = next.user_id;
-        """;
+    // guesses across fresh sessions and addresses looks like a series of first attempts to it. The
+    // statement is built in FailureCooldown because the password throttle on users needs the same one,
+    // and the windowed-restart rule it implements is too subtle to be worth writing twice.
+    private static readonly FailureCooldown.Columns Failures =
+        new("user_mfa", "user_id", "failed_attempts", "locked_until");
 
-    private const string ClearFailuresSql =
-        "UPDATE user_mfa SET failed_attempts = 0, locked_until = NULL WHERE user_id = @user;";
+    private static readonly string RecordFailureSql = FailureCooldown.Record(Failures);
+
+    private static readonly string ClearFailuresSql = FailureCooldown.Clear(Failures);
 
     private const string DeleteSql = "DELETE FROM user_mfa WHERE user_id = @user;";
 
@@ -120,7 +108,7 @@ public sealed class UserMfaRepository(string connectionString)
     public Task RecordFailureAsync(
         long userId, int maxAttempts, TimeSpan cooldown, CancellationToken ct = default) =>
         ExecuteAsync(RecordFailureSql, ct,
-            ("user", userId), ("max", maxAttempts), ("cooldown", cooldown));
+            ("subject", userId), ("max", maxAttempts), ("cooldown", cooldown));
 
     /// <summary>
     /// Clears the failure state after any successful verification. Separate from the TOTP path's own
@@ -128,7 +116,7 @@ public sealed class UserMfaRepository(string connectionString)
     /// would punish the user for the very situation recovery codes exist to rescue.
     /// </summary>
     public Task ClearFailuresAsync(long userId, CancellationToken ct = default) =>
-        ExecuteAsync(ClearFailuresSql, ct, ("user", userId));
+        ExecuteAsync(ClearFailuresSql, ct, ("subject", userId));
 
     /// <summary>Removes the factor and its recovery codes together.</summary>
     public async Task DisableAsync(long userId, CancellationToken ct = default)

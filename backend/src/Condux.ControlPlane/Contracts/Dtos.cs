@@ -108,10 +108,26 @@ internal sealed record SetSsoConfigRequest(
     string EmailDomain, string Issuer, int Protocol,
     string? AuthorizationEndpoint, string? TokenEndpoint, string? ClientId, string? ClientSecret,
     string? SamlSsoUrl, string? SamlCertificate);
+// VerificationRecordName/Value are what the org publishes in DNS to prove it controls the domain
+// (ADR-0043), and they are readable by any member because they are public by nature: the value ends up in
+// a public TXT record. VerifiedAt is null until the claim is proved, and a claim that is not proved does
+// not route a login, which is why the response has to say so rather than leave the org guessing.
+// VerificationLostAt is set when the daily re-check stops finding the record, and it is on the wire for
+// the same reason: the org is emailed at that moment, so a dashboard still reading a plain "Verified"
+// would contradict the message in their inbox. Set with VerifiedAt still present means routing continues
+// until the grace period ends; set with VerifiedAt null is when it stopped.
+// VerificationLapsesAt is that deadline, served rather than derived in the browser, because the grace
+// period is the server's rule and a second statement of it is free to drift from the one that runs. Null
+// unless the claim is both proved and failing, which is the only state where it is a deadline at all.
 internal sealed record SsoConfigResponse(
     string EmailDomain, string Issuer, int Protocol,
     string? AuthorizationEndpoint, string? TokenEndpoint, string? ClientId,
-    string? SamlSsoUrl, string? SamlCertificate, DateTimeOffset UpdatedAt);
+    string? SamlSsoUrl, string? SamlCertificate, DateTimeOffset UpdatedAt,
+    string VerificationRecordName, string VerificationRecordValue, DateTimeOffset? VerifiedAt,
+    DateTimeOffset? VerificationLostAt, DateTimeOffset? VerificationLapsesAt);
+// The outcome of one Verify click. Verified says the claim now routes; the other two are kept apart
+// because they are facts about different parties (see DomainCheckOutcome).
+internal sealed record VerifySsoDomainResponse(string Outcome, DateTimeOffset? VerifiedAt);
 // The addresses an admin registers in their IdP. Deployment-wide rather than per-org, and served rather
 // than derived in the browser: the server is what actually sends the redirect URI and checks the SAML
 // audience, so it has to be the one that says what they are.

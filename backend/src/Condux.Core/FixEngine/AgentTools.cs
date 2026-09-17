@@ -32,7 +32,60 @@ public sealed record AgentToolCall(string Id, string Name, IReadOnlyDictionary<s
 /// <summary>What a tool produced, fed back into the conversation. A failure is reported to the model as a
 /// result with <see cref="IsError"/> set, not thrown, so the agent can correct itself (a wrong path is a
 /// normal step in exploring a repo, not a run-ending fault).</summary>
-public sealed record AgentToolResult(string Id, string Content, bool IsError = false);
+/// <remarks>
+/// <para>
+/// Results come in two kinds and the difference matters, so <b>there is no way to build one without
+/// saying which</b>. The constructor is private and the two factories are the whole surface:
+/// <see cref="Status"/> for text we wrote, <see cref="FromWorkspace"/> for anything that came out of the
+/// workspace. File contents, directory listings and command output are all authored by someone else and
+/// land straight in the model's conversation, so they are fenced.
+/// </para>
+/// <para>
+/// A public constructor plus a convention would read the same and behave differently: the next tool
+/// added to the loop would default to unfenced by simply not knowing. Here the compiler asks.
+/// </para>
+/// </remarks>
+public sealed record AgentToolResult
+{
+    private AgentToolResult(string id, string content, bool isError)
+    {
+        Id = id;
+        Content = content;
+        IsError = isError;
+    }
+
+    public string Id { get; }
+
+    public string Content { get; }
+
+    public bool IsError { get; }
+
+    /// <summary>
+    /// A result in our own words: what a tool did, or why it could not.
+    /// </summary>
+    /// <remarks>
+    /// Neutralized even so, because "our own words" almost always quote something the other side chose:
+    /// the path it asked to write, the tool name it invented, the command it was refused. That text sits
+    /// outside any fence, so without this it could open a region of its own. Done here rather than at the
+    /// call sites for the same reason as the label: five places that must remember is not a rule.
+    /// </remarks>
+    public static AgentToolResult Status(string id, string text, bool isError = false) =>
+        new(id, UntrustedText.Neutralize(text), isError);
+
+    /// <summary>
+    /// A result carrying workspace content, fenced as untrusted. This is the agentic path's equivalent of
+    /// the fencing the opening prompt gets, and the busier half: the strategy exists so the model can
+    /// read a file it was not handed, so tool results are the channel it uses most, not an edge case.
+    /// </summary>
+    /// <param name="label">
+    /// What the content is, in our words, placed outside the markers. It may quote something the other
+    /// side chose, such as a path the model asked for, so <see cref="UntrustedText.Fence"/> neutralizes
+    /// it as well.
+    /// </param>
+    public static AgentToolResult FromWorkspace(
+        string id, string label, string content, bool isError = false) =>
+        new(id, UntrustedText.Fence(label, content), isError);
+}
 
 /// <summary>The tool set offered to the model, as the neutral schema each provider adapter maps.</summary>
 public static class AgentToolCatalog

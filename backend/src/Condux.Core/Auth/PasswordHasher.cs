@@ -32,6 +32,30 @@ public static class PasswordHasher
             + $"${Base64NoPad(salt)}${Base64NoPad(hash)}";
     }
 
+    // A hash of a value nobody holds, derived once per process with the current parameters. Verifying
+    // against it always fails and always costs what a real verification costs.
+    private static readonly Lazy<string> Decoy =
+        new(() => Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
+
+    /// <summary>
+    /// Verifies against the account's hash, or against a decoy when the account has none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Verify"/> returns before deriving anything when the stored hash is absent, so an
+    /// address with no account answers measurably faster than one with a password. A status code that
+    /// says nothing while the clock says "no such account" is the same oracle, read off a stopwatch
+    /// instead of a response body. Use this wherever the caller supplies the address.
+    /// </para>
+    /// <para>
+    /// This is mitigation, not elimination. It equalises the dominant cost, the key derivation. The
+    /// database lookup either side of it still differs, and a hash stored under older parameters derives
+    /// at that older cost. Do not read it as constant time.
+    /// </para>
+    /// </remarks>
+    public static bool VerifyOrDecoy(string password, string? encoded) =>
+        Verify(password, encoded ?? Decoy.Value);
+
     /// <summary>
     /// Verifies a password against an encoded hash in constant time, using the parameters embedded
     /// in the hash. Returns false on any mismatch or malformed input (never throws).
