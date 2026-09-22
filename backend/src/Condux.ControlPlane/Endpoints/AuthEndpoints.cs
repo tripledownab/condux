@@ -56,7 +56,26 @@ internal static class AuthEndpoints
                         return TypedResults.Conflict(new ErrorResponse("email_taken"));
                     }
 
-                    var user = await users.CreateAsync(email, PasswordHasher.Hash(req.Password));
+                    // A platform-admin address is reserved, because the claim that grants the
+                    // cross-tenant console is stamped from this allowlist on every request and this
+                    // route proves nothing about the address it hands out. Whoever registers first
+                    // would simply be the admin. The other two routes that create a user do prove
+                    // it, so the rule belongs here and nowhere else: Google will not assert an
+                    // address it has not verified, and an org's IdP only speaks for a domain the org
+                    // proved by DNS. Creating this account is an operator action, not an anonymous
+                    // request: CONDUX_SEED_ADMIN_EMAIL/PASSWORD mint it at startup.
+                    if (platformAdmins.Contains(email))
+                    {
+                        return TypedResults.Conflict(new ErrorResponse("platform_admin_reserved"));
+                    }
+
+                    // Null means the address appeared between the lookup above and this insert, which
+                    // is the same answer as finding it there in the first place.
+                    if (await users.TryCreateAsync(email, PasswordHasher.Hash(req.Password)) is not { } user)
+                    {
+                        return TypedResults.Conflict(new ErrorResponse("email_taken"));
+                    }
+
                     await Sessions.IssueAsync(user, sessions, http);
                     return TypedResults.Ok(new AuthUserResponse(
                         user.Id, user.Email, platformAdmins.Contains(user.Email), Onboarded: user.OnboardedAt is not null));

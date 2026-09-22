@@ -28,7 +28,7 @@ public sealed class AdminEndpointsTest(PostgresFixture pg) : IClassFixture<Postg
 
         // A platform admin (listed email) and an ordinary tenant user, each with their own session.
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, AdminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, AdminEmail);
         var tenant = app.CreateClient();
         await ApiAuth.SignUpAsync(tenant);
 

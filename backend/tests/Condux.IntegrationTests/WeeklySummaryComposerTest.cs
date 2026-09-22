@@ -192,8 +192,10 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
         var members = new OrgMemberRepository(pg.ConnectionString);
 
         var org = await orgs.CreateAsync($"org-{Guid.NewGuid():N}", "Acme", 0);
-        var staying = await users.CreateAsync($"stay-{Guid.NewGuid():N}@x.test", "hash");
-        var leaving = await users.CreateAsync($"leave-{Guid.NewGuid():N}@x.test", "hash");
+        var staying = await users.TryCreateAsync($"stay-{Guid.NewGuid():N}@x.test", "hash")
+            ?? throw new InvalidOperationException("seed address was taken");
+        var leaving = await users.TryCreateAsync($"leave-{Guid.NewGuid():N}@x.test", "hash")
+            ?? throw new InvalidOperationException("seed address was taken");
         await members.AddAsync(org.Id, staying.Id, OrgRole.Member);
         await members.AddAsync(org.Id, leaving.Id, OrgRole.Member);
 
@@ -223,7 +225,8 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
         var members = new OrgMemberRepository(pg.ConnectionString);
 
         var org = await orgs.CreateAsync($"org-{Guid.NewGuid():N}", "Acme", 0);
-        var optedOut = await users.CreateAsync($"a-{Guid.NewGuid():N}@x.test", "hash");
+        var optedOut = await users.TryCreateAsync($"a-{Guid.NewGuid():N}@x.test", "hash")
+            ?? throw new InvalidOperationException("seed address was taken");
         await members.AddAsync(org.Id, optedOut.Id, OrgRole.Member);
         await users.SetWeeklySummaryOptOutAsync(optedOut.Id, optOut: true);
 

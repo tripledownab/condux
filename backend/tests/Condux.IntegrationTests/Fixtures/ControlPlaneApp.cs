@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
+using Condux.Core.Auth;
 using Condux.Core.CveFix;
 using Condux.Core.FixEngine;
+using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Condux.IntegrationTests.Fixtures;
@@ -60,6 +63,12 @@ public static class ControlPlaneApp
         }
     }
 
+    /// <summary>
+    /// The password the seeded platform-admin account is created with. A constant, because it
+    /// protects nothing outside an ephemeral test container and a failure has to reproduce.
+    /// </summary>
+    public const string SeededAdminPassword = "seeded-admin-password-123";
+
     /// <param name="appBaseUrl">
     /// The absolute dashboard URL this host is deployed at, when a test needs one (SAML entity ids, the
     /// GitHub connect return, reset links). It sets the client's base address to the SAME scheme, because
@@ -68,10 +77,16 @@ public static class ControlPlaneApp
     /// than on the thing it asserts. Pass it here rather than through <paramref name="configure"/>, which
     /// sets the config alone.
     /// </param>
+    /// <param name="seedPlatformAdmin">
+    /// Whether to create the allowlisted account at startup. Signup refuses an allowlisted address,
+    /// so a test that wants an authenticated platform admin cannot sign up as one and this puts the
+    /// row there instead. Pass false to get the state the refusal exists for: the address listed and
+    /// nobody holding it.
+    /// </param>
     public static WebApplicationFactory<Program> Create(
         string postgres, ClickHouseFixture? clickHouse = null, string? platformAdminEmails = null,
         string? impersonationSigningKey = null, Action<IWebHostBuilder>? configure = null,
-        string? appBaseUrl = null)
+        string? appBaseUrl = null, bool seedPlatformAdmin = true)
     {
         var app = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
@@ -104,6 +119,11 @@ public static class ControlPlaneApp
             {
                 services.AddSingleton<IFixRequestPublisher>(new NoopFixRequestPublisher());
                 services.AddSingleton<ICveFixPublisher>(new NoopCveFixPublisher());
+                if (platformAdminEmails is not null && seedPlatformAdmin)
+                {
+                    services.AddHostedService(sp => new SeededPlatformAdmin(
+                        platformAdminEmails, sp.GetRequiredService<UserRepository>()));
+                }
             });
             b.ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
 
@@ -120,6 +140,45 @@ public static class ControlPlaneApp
 
         Hosts.GetOrAdd(postgres, _ => []).Add(app);
         return app;
+    }
+
+    /// <summary>
+    /// Puts the allowlisted account in the users table at startup, because the signup route refuses
+    /// one and a test still needs an authenticated platform admin.
+    ///
+    /// <para>Deliberately NOT <c>DevAdminSeeder</c>, which also creates an org. Signup never created
+    /// one either (ADR-0018 moved that into onboarding), so every admin test builds the org it wants
+    /// and asserts on it. Borrowing the production seeder handed those tests a second org they had
+    /// not asked for, and four of them failed; the one traced to the end asserted on an org name and
+    /// got the seeded org's. Giving the production seeder a "no org" flag would have put a knob in
+    /// shipping code whose only caller is this suite.</para>
+    /// </summary>
+    private sealed class SeededPlatformAdmin(string email, UserRepository users) : IHostedService
+    {
+        public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            // One address, not the comma-separated list the allowlist accepts. Splitting here would
+            // restate EmailAllowlist's parsing rule where it is free to drift from it, and no test
+            // wants two admins; normalising a list instead would silently seed one user whose email
+            // is the whole string, and the sign-in helper would then 401 for no visible reason.
+            if (email.Contains(',', StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Seeding supports a single platform-admin address, got '{email}'. Pass one, or "
+                    + "pass seedPlatformAdmin: false and create the accounts the test needs.");
+            }
+
+            // Look up, then insert, which is the shape that races. Several hosts are built per test
+            // class against one database and each runs this, so the insert has to be the thing that
+            // settles it: TryCreateAsync returns null rather than throwing when another host won.
+            var normalized = Emails.Normalize(email);
+            if (await users.GetByEmailAsync(normalized) is null)
+            {
+                await users.TryCreateAsync(normalized, PasswordHasher.Hash(SeededAdminPassword));
+            }
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class NoopFixRequestPublisher : IFixRequestPublisher

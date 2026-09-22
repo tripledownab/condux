@@ -23,8 +23,10 @@ public sealed class WebhookNotifier(IHttpClientFactory httpClientFactory) : INot
             culprit = notification.Culprit,
             project = notification.ProjectName,
             issueId = notification.IssuePublicId.ToString(),
-            // The rendered human message (the channel's template or the default) alongside the structured fields.
-            message = AlertText.Message(notification, target.Template),
+            // The rendered human message (the channel's template or the default) alongside the structured
+            // fields. Nothing is escaped into it because this body is data rather than markup: the value
+            // is a JSON string the serializer encodes, and how it is displayed is the receiver's choice.
+            message = AlertText.Message(notification, target.Template, AlertTemplate.NoEscape),
         };
         var client = httpClientFactory.CreateClient(ClientName);
         using var response = await client.PostAsJsonAsync(target.Target, payload, cancellationToken);

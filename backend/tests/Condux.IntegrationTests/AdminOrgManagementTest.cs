@@ -47,7 +47,7 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, adminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, adminEmail);
         var tenant = app.CreateClient();
         await ApiAuth.SignUpAsync(tenant);
         var orgId = await CreateOrgAsync(tenant, tier: 1); // Team, so auto-fix is allowed
@@ -80,7 +80,7 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, adminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, adminEmail);
         var tenant = app.CreateClient();
         var owner = await ApiAuth.SignUpAsync(tenant);
         var orgId = await CreateOrgAsync(tenant);
@@ -118,7 +118,7 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
         var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: adminEmail);
 
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, adminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, adminEmail);
         var tenant = app.CreateClient();
         await ApiAuth.SignUpAsync(tenant);
         var orgId = await CreateOrgAsync(tenant, tier: 1);

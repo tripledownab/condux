@@ -16,15 +16,11 @@ public sealed class DiscordNotifier(IHttpClientFactory httpClientFactory) : INot
         AlertChannel target, AlertNotification notification, CancellationToken cancellationToken = default)
     {
         var client = httpClientFactory.CreateClient(ClientName);
+        // What keeps error text from notifying anybody is allowed_mentions, which governs the mention
+        // forms whatever the content says, so the values are substituted as written.
+        var content = AlertText.Message(notification, target.Template, AlertTemplate.NoEscape);
         using var response = await client.PostAsJsonAsync(
-            target.Target,
-            new
-            {
-                content = AlertText.Message(notification, target.Template),
-                // Never let error-derived text ping a channel; suppress @everyone/@here/role mentions.
-                allowed_mentions = new { parse = Array.Empty<string>() },
-            },
-            cancellationToken);
+            target.Target, ToPayload(content), cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
@@ -33,7 +29,16 @@ public sealed class DiscordNotifier(IHttpClientFactory httpClientFactory) : INot
     {
         var client = httpClientFactory.CreateClient(ClientName);
         using var response = await client.PostAsJsonAsync(
-            target, new { content = $"**{subject}**\n{body}" }, cancellationToken);
+            target, ToPayload($"**{subject}**\n{body}"), cancellationToken);
         response.EnsureSuccessStatusCode();
     }
+
+    /// <summary>The body of every message this notifier sends, so a send path cannot be added without the
+    /// mention guard. Both callers are pinned by NotifierTests.
+    ///
+    /// Suppressing mentions is not only about error text. An org notification names the org, and an org's
+    /// name is whatever somebody typed, so that path carries text we did not write just as an alert does.
+    /// It went without the guard for as long as it had its own copy of this body.</summary>
+    private static object ToPayload(string content) =>
+        new { content, allowed_mentions = new { parse = Array.Empty<string>() } };
 }

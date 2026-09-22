@@ -22,11 +22,12 @@ internal static class SsoSignIn
             return OidcFlow.LoginUrl(cfg, "sso_domain_mismatch");
         }
 
-        // An org chooses its own identity provider and names its own email domain, and nothing yet proves
-        // it owns that domain (ADR-0032 defers DNS verification, ADR-0042 records this rule). So an
-        // assertion from that provider is honoured for exactly two kinds of address: one nobody holds
+        // An org chooses its own identity provider and names its own email domain. It must now prove
+        // that domain by DNS before the claim routes anything, so the domain check above is backed by
+        // real evidence. Proving a domain is not consent for a particular account, though, so the rule
+        // below stands: an assertion is honoured for exactly two kinds of address, one nobody holds
         // yet, which this org provisions, and one held by a member it already has. An address belonging
-        // to anybody else is refused, because the org has shown no claim to it.
+        // to anybody else is refused, because the org has shown no claim to that person.
         //
         // The refusal has to live here rather than lean on the single-org invariant, which turns some of
         // these away as a side effect of keeping users in one org rather than by asking about consent.

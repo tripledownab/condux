@@ -64,6 +64,25 @@ public sealed class NotificationChannelsApiTest(PostgresFixture pg) : IClassFixt
     }
 
     [Fact]
+    public async Task Add_RejectsATargetThatIsNotAUrlForItsChannel()
+    {
+        // The platform opens the target from inside the deployment, so a webhook channel takes an
+        // absolute http(s) URL and nothing else. Both of these were stored before.
+        var (client, orgId) = await ProvisionAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync($"/api/orgs/{orgId}/notification-channels",
+                new { channel = 3, target = "/api/admin/orgs" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync($"/api/orgs/{orgId}/notification-channels",
+                new { channel = 3, target = "file:///etc/passwd" })).StatusCode);
+        // And an email channel takes an address, not a URL.
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync($"/api/orgs/{orgId}/notification-channels",
+                new { channel = 1, target = "https://hooks.test/w" })).StatusCode);
+    }
+
+    [Fact]
     public async Task TestSend_UnconfiguredEmailChannel_ReportsNotConfigured()
     {
         var (client, orgId) = await ProvisionAsync();

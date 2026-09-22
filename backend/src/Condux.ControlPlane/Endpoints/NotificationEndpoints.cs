@@ -29,7 +29,7 @@ internal static class NotificationEndpoints
                     long orgId, AddNotificationChannelRequest req, OrgNotificationChannelRepository channels,
                     HttpContext http) =>
                 {
-                    if (!Enum.IsDefined((NotificationChannel)req.Channel) || string.IsNullOrWhiteSpace(req.Target))
+                    if (!ChannelTargets.IsValid((NotificationChannel)req.Channel, req.Target))
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_channel"));
                     }

@@ -215,9 +215,10 @@ public class NotifierTests
     [Fact]
     public async Task Slack_NeutralizesBroadcastMentionsFromErrorText()
     {
-        // An untrusted title carrying Slack broadcast/mention syntax must not ping the channel: we escape the
-        // opening < of <!channel>/<@user> entities (the Slack analogue of Discord's allowed_mentions guard),
-        // so Slack shows them literally, while a real <url|label> link survives.
+        // An untrusted title carrying Slack broadcast or mention syntax must not ping the channel, and an
+        // incoming webhook has no flag to suppress it. Slack decodes &amp;, &lt; and &gt; back for display
+        // and nothing else, so replacing those three shows the text as written. The template's own link
+        // still renders, which is the point of escaping the value rather than the finished string.
         var handler = new CapturingHandler();
         var notifier = new SlackNotifier(new StubHttpClientFactory(handler));
         var channel = Target with
@@ -232,8 +233,73 @@ public class NotifierTests
 
         using var doc = JsonDocument.Parse(handler.Body!);
         Assert.Equal(
-            "boom &lt;!channel> &lt;@U123> <https://x|open>",
+            "boom &lt;!channel&gt; &lt;@U123&gt; <https://x|open>",
             doc.RootElement.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task Slack_ErrorTextCannotBecomeALinkWhoseLabelLies()
+    {
+        // The reported defect. Whoever can send an event picks the title, so a title spelling a Slack link
+        // used to arrive in someone else's workspace as a live link with a label claiming anything. The
+        // old guard escaped only a < followed by ! or @, which is exactly the two forms this is not.
+        var handler = new CapturingHandler();
+        var notifier = new SlackNotifier(new StubHttpClientFactory(handler));
+        var channel = Target with
+        {
+            Channel = NotificationChannel.Slack,
+            Target = "https://hooks.slack.test/s",
+        };
+        var phishing = Notification() with
+        {
+            Title = "<https://elsewhere.test/reset|Reset your Condux password>",
+        };
+
+        await notifier.SendAsync(channel, phishing);
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        var text = doc.RootElement.GetProperty("text").GetString()!;
+        Assert.Contains("&lt;https://elsewhere.test/reset|Reset your Condux password&gt;", text);
+        Assert.DoesNotContain("<https://elsewhere.test", text);
+    }
+
+    [Fact]
+    public async Task Slack_SendMessage_EscapesTheSubjectAndBody()
+    {
+        // The org notice path rather than the alert path, and it carries untrusted text too: a Conductor
+        // pause notice names the org, and an org's name is whatever someone typed. The bold marks are ours
+        // and are added after the escape, so they still render.
+        var handler = new CapturingHandler();
+        var notifier = new SlackNotifier(new StubHttpClientFactory(handler));
+
+        await notifier.SendMessageAsync(
+            "https://hooks.slack.test/s", "Paused for <!channel> & co", "Org <@U123> reached its cap");
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(
+            "*Paused for &lt;!channel&gt; &amp; co*\nOrg &lt;@U123&gt; reached its cap",
+            doc.RootElement.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task Slack_EscapesTheAmpersandBeforeTheAngleBrackets()
+    {
+        // Order is load-bearing: replacing < first and & after would rewrite the entities just produced,
+        // so &lt; would go out as &amp;lt; and Slack would display the entity instead of the character.
+        var handler = new CapturingHandler();
+        var notifier = new SlackNotifier(new StubHttpClientFactory(handler));
+        var channel = Target with
+        {
+            Channel = NotificationChannel.Slack,
+            Target = "https://hooks.slack.test/s",
+        };
+
+        await notifier.SendAsync(channel, Notification() with { Title = "a & b <c>" });
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        var text = doc.RootElement.GetProperty("text").GetString()!;
+        Assert.Contains("a &amp; b &lt;c&gt;", text);
+        Assert.DoesNotContain("&amp;lt;", text);
     }
 
     [Fact]
@@ -248,6 +314,21 @@ public class NotifierTests
         using var doc = JsonDocument.Parse(handler.Body!);
         var parse = doc.RootElement.GetProperty("allowed_mentions").GetProperty("parse");
         Assert.Equal(0, parse.GetArrayLength()); // parse: [] -> error text can't ping @everyone/@here/roles
+    }
+
+    [Fact]
+    public async Task Discord_SendMessage_SuppressesMentionsToo()
+    {
+        // The org notice path had no such guard while the alert path did, so an org name spelling a
+        // mention reached a Discord channel as one.
+        var handler = new CapturingHandler();
+        var notifier = new DiscordNotifier(new StubHttpClientFactory(handler));
+
+        await notifier.SendMessageAsync("https://discord.test/webhooks/x", "Paused", "@everyone cap reached");
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        var parse = doc.RootElement.GetProperty("allowed_mentions").GetProperty("parse");
+        Assert.Equal(0, parse.GetArrayLength());
     }
 
     [Fact]

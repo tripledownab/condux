@@ -27,7 +27,7 @@ public class CachingProjectStoreTests
         public Task<Project?> AuthenticateAsync(string projectId, string key, CancellationToken ct = default)
         {
             Calls++;
-            return Task.FromResult(key == publicKey ? new Project("1", Tier.Free) : null);
+            return Task.FromResult(key == publicKey ? new Project("1", Tier.Free, "test-salt") : null);
         }
     }
 
@@ -36,7 +36,7 @@ public class CachingProjectStoreTests
     [Fact]
     public async Task CachesPositiveResultWithinTtl()
     {
-        var inner = new CountingStore(new Project("1", Tier.Free));
+        var inner = new CountingStore(new Project("1", Tier.Free, "test-salt"));
         var now = 0.0;
         var store = new CachingProjectStore(inner, ttlSeconds: 60, clock: () => now);
 
@@ -71,7 +71,7 @@ public class CachingProjectStoreTests
     [InlineData("0123456789abcdef0123456789abcdefa")] // one long
     public async Task AKeyNobodyCouldHaveMintedNeverReachesTheStore(string publicKey)
     {
-        var inner = new CountingStore(new Project("1", Tier.Free));
+        var inner = new CountingStore(new Project("1", Tier.Free, "test-salt"));
         var store = new CachingProjectStore(inner, ttlSeconds: 60, clock: () => 0);
 
         Assert.Null(await store.AuthenticateAsync("1", publicKey));
@@ -84,7 +84,7 @@ public class CachingProjectStoreTests
     [Fact]
     public async Task AProjectIdTooLongToHaveBeenMintedNeverReachesTheStore()
     {
-        var inner = new CountingStore(new Project("1", Tier.Free));
+        var inner = new CountingStore(new Project("1", Tier.Free, "test-salt"));
         var store = new CachingProjectStore(inner, ttlSeconds: 60, clock: () => 0);
 
         Assert.Null(await store.AuthenticateAsync(new string('a', 8192), Key));

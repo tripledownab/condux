@@ -14,7 +14,8 @@ internal sealed record RelayOptions(
     string KafkaBootstrap,
     double SpikeRatePerSecond,
     long SpikeBurst,
-    long MaxIngestBytes)
+    long MaxIngestBytes,
+    long MaxOtlpRecords)
 {
     public static RelayOptions FromEnv(IConfiguration configuration) => new(
         Valkey: configuration["CONDUX_VALKEY"],
@@ -27,7 +28,16 @@ internal sealed record RelayOptions(
         // the body is read (ReadBoundedAsync). Enforcing it there rather than through
         // IHttpMaxRequestBodySizeFeature is deliberate: that feature is not present under every host, so
         // the guard silently did nothing.
-        MaxIngestBytes: ParseLong(configuration["CONDUX_MAX_INGEST_BYTES"], 20 * 1024 * 1024));
+        MaxIngestBytes: ParseLong(configuration["CONDUX_MAX_INGEST_BYTES"], 20 * 1024 * 1024),
+        // How many storable records one OTLP export may turn into. This is the one place that number and
+        // its reasoning live; everywhere else points here rather than restating them. The body cap above
+        // bounds the bytes and not the records, and a record is tiny: the smallest JSON one this endpoint
+        // will store is `{"severityNumber":17}` at 21 bytes, so a body at the 20MiB ceiling carries about
+        // 950,000 of them, each a Kafka publish and a stored row that outlive the request. 20,000 is set
+        // against what a real sender produces: the OpenTelemetry Collector's batch processor defaults
+        // sendBatchSize to 8192 and leaves send_batch_max_size at 0
+        // (processor/batchprocessor/factory.go), so a genuine batch can exceed 8192 but not by this much.
+        MaxOtlpRecords: ParseLong(configuration["CONDUX_MAX_OTLP_RECORDS"], 20_000));
 
     private static double ParseDouble(string? value, double fallback) =>
         double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)

@@ -58,8 +58,11 @@ public class IngestEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     private sealed class StubQuotaMeter(QuotaDecision decision) : IQuotaMeter
     {
         public ValueTask<QuotaDecision> TryConsumeAsync(
-            string key, long monthlyLimit, CancellationToken ct = default) =>
+            string key, long monthlyLimit, long count = 1, CancellationToken ct = default) =>
             ValueTask.FromResult(decision);
+
+        public ValueTask RefundAsync(string key, long count, CancellationToken ct = default) =>
+            ValueTask.CompletedTask;
     }
 
     [Fact]
@@ -296,7 +299,7 @@ public class IngestEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Store_MonthlyQuotaExceeded_Returns429_AndPublishesNothing()
     {
         var pub = new InMemoryEventPublisher();
-        var quota = new StubQuotaMeter(new QuotaDecision(Allowed: false, Used: 50_000, Remaining: 0));
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 0, Used: 50_000, Remaining: 0));
         var client = With(pub, quota: quota).CreateClient();
 
         var resp = await client.SendAsync(StorePost("1", """{"message":"boom","level":"error"}"""));

@@ -167,7 +167,7 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
 
         // A "sign in with Google" account has no local password (null hash), so the password login path
         // must reject any password rather than throw on the null hash.
-        await new UserRepository(pg.ConnectionString).CreateFederatedAsync(email);
+        await new UserRepository(pg.ConnectionString).TryCreateFederatedAsync(email);
 
         var resp = await CreateClient().PostAsJsonAsync("/api/auth/login",
             new { email, password = "anything-at-all" });
@@ -181,7 +181,8 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
         var users = new UserRepository(pg.ConnectionString);
         var sessions = new SessionRepository(pg.ConnectionString);
 
-        var user = await users.CreateFederatedAsync(email);
+        var user = await users.TryCreateFederatedAsync(email)
+            ?? throw new InvalidOperationException("seed address was taken");
         var (_, hash) = Condux.Core.Auth.SessionTokens.Create();
         await sessions.CreateAsync(user.Id, hash, DateTimeOffset.UtcNow.AddDays(1));
 
@@ -208,5 +209,79 @@ public sealed class AuthApiTest(PostgresFixture pg) : IClassFixture<PostgresFixt
 
         // The (now revoked) session no longer authenticates.
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_platform_admin_address_cannot_be_signed_up_for()
+    {
+        // The claim that opens the cross-tenant console is stamped from the env allowlist on every
+        // request, and signup proves nothing about the address it hands out, so an allowlisted
+        // address that nobody had registered yet was first come, first served. Found live on a
+        // deployment where the address was listed and never claimed.
+        const string reserved = "reserved-admin@condux.test";
+        // seedPlatformAdmin: false is the whole point. With the row present the earlier
+        // email_taken branch answers first, and the refusal below is never reached.
+        var app = ControlPlaneApp.Create(
+            pg.ConnectionString, platformAdminEmails: reserved, seedPlatformAdmin: false);
+        var attacker = app.CreateClient();
+
+        var taken = await attacker.PostAsJsonAsync("/api/auth/signup",
+            new { email = reserved, password = "attacker-password-123" });
+        Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+        Assert.Equal("platform_admin_reserved",
+            (await taken.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+
+        // No session was issued, so nothing downstream can be reached as that address.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await attacker.GetAsync("/api/auth/me")).StatusCode);
+
+        // Casing must not be a way round it: the allowlist normalises, and so must this.
+        var cased = await attacker.PostAsJsonAsync("/api/auth/signup",
+            new { email = "Reserved-Admin@Condux.Test", password = "attacker-password-123" });
+        Assert.Equal(HttpStatusCode.Conflict, cased.StatusCode);
+
+        // An address that is not allowlisted still signs up normally.
+        var ordinary = app.CreateClient();
+        var ok = await ordinary.PostAsJsonAsync("/api/auth/signup",
+            new { email = UniqueEmail(), password = "ordinary-password-123" });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_allowlisted_address_that_is_registered_answers_like_any_other_taken_one()
+    {
+        // The reserved check sits AFTER the taken check, so the explanatory code only appears in the
+        // state it explains. Published as a guarantee: a listed address that somebody holds reveals
+        // nothing it did not reveal before, which stops the refusal becoming a way to ask whether a
+        // given address is a platform admin.
+        const string reserved = "held-admin@condux.test";
+        var app = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: reserved);
+
+        var resp = await app.CreateClient().PostAsJsonAsync(
+            "/api/auth/signup", new { email = reserved, password = "attacker-password-123" });
+
+        Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
+        Assert.Equal("email_taken",
+            (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Racing_sign_ups_for_one_address_give_a_conflict_and_never_a_500()
+    {
+        // Every caller looks the address up and then inserts it, and the gap between the two is
+        // reachable: a double-clicked submit button is enough. Before the insert handled the conflict
+        // this returned 500 on every run, carrying a Postgres exception that the platform then filed
+        // against itself as a defect.
+        var app = ControlPlaneApp.Create(pg.ConnectionString);
+        var email = UniqueEmail();
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ =>
+            app.CreateClient().PostAsJsonAsync(
+                "/api/auth/signup", new { email, password = "racing-signups-123" })));
+
+        var codes = responses.Select(r => r.StatusCode).OrderBy(c => c).ToArray();
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], codes);
+        Assert.Equal("email_taken", (await responses
+            .First(r => r.StatusCode == HttpStatusCode.Conflict)
+            .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 }

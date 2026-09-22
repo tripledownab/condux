@@ -70,7 +70,7 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
         {
             ["jsonwebtoken"] = "8.5.1",
             ["lodash"] = "4.17.11",
-        }));
+        }), "release-module-test-salt");
         Assert.NotEqual(Scrubber.Redacted, scrubbed.Modules["jsonwebtoken"]);
 
         await WriteAsync("101", scrubbed, Monday);

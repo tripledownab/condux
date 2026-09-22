@@ -11,12 +11,24 @@
 	# ACME contact for expiry / issuance notices. Set to a real inbox.
 	email ops@condux.ai
 
-	# Per-request metrics, labelled by host. BOTH lines below are needed and neither is the default.
-	# `per_host` adds the host label: without it every series carries only Caddy's internal server
-	# name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge serves
-	# the dashboard and the relay from one process. The `metrics` directive inside each site is what
-	# makes Caddy record the requests at all: without it the endpoint below answers 200 carrying only
-	# Go runtime counters, which looks exactly like a working metrics endpoint.
+	# Per-request metrics, labelled by host. THIS is what records them, and it is the only thing that
+	# does. `per_host` adds the host label: without it every series carries only Caddy's internal
+	# server name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge
+	# serves the dashboard and the relay from one process.
+	#
+	# DO NOT PUT A BARE `metrics` INSIDE A SITE BLOCK. It reads like "record this site" and it is not:
+	# `metrics` is a terminal HANDLER that SERVES the Prometheus endpoint, and with no path matcher it
+	# matches every request. Caddy's fixed directive order runs it before `reverse_proxy`, and its
+	# ServeHTTP never calls the next handler, so the site answers metrics to everything and the proxy
+	# behind it is unreachable. It answers 200 doing it, which is what an SDK reads as delivered.
+	#
+	# 200 is what makes this expensive rather than merely wrong: a site in that state accepts events
+	# and discards them, and every check that reads a status code agrees that it is healthy.
+	#
+	# A site written with `handle` blocks does not show it, because `handle` is ordered ahead of
+	# `metrics` and answers first. That is an accident of ordering and not a protection, so do not
+	# read one working site as evidence that the other is fine. Measured against caddy:2-alpine, both
+	# shapes, before and after.
 	metrics {
 		per_host
 	}
@@ -24,7 +36,6 @@
 
 app.condux.ai {
 	encode zstd gzip
-	metrics
 
 	@backend path /api/* /openapi/*
 	handle @backend {
@@ -40,7 +51,6 @@ app.condux.ai {
 # posts to ingest.condux.ai/api/<project-uuid>/v1/logs.
 ingest.condux.ai {
 	encode zstd gzip
-	metrics
 	reverse_proxy relay:9000
 }
 

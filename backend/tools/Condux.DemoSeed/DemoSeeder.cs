@@ -66,7 +66,13 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
             return null;
         }
 
-        var user = await users.CreateAsync(Email, PasswordHasher.Hash(Password));
+        // Null means the address appeared between the lookup above and here, which is the same
+        // already-seeded answer the lookup gives, and this seeder targets a fresh database anyway.
+        if (await users.TryCreateAsync(Email, PasswordHasher.Hash(Password)) is not { } user)
+        {
+            return null;
+        }
+
         await users.MarkOnboardedAsync(user.Id);
         var org = await new OrgRepository(postgres).CreateAsync(OrgSlug, OrgName, TeamTier);
         await new OrgMemberRepository(postgres).AddAsync(org.Id, user.Id, OrgRole.Owner);

@@ -3,9 +3,13 @@ import { ConduxApiError } from "@/src/api/fetcher";
 // Maps a failed auth request to a message KEY under the "auth" namespace (the form translates it),
 // keyed first on the control-plane error code then on the HTTP status. Returns null when there is no
 // specific mapping, so the caller falls back to a generic per-mode message.
-const CODE_KEYS: Record<string, string> = {
+// Exported so the test can check every value against the real message catalogue rather than a
+// hand-copied list of them. A code the control-plane returns and this map does not know falls back to
+// the generic per-mode message, which for a refusal that will never succeed reads as "try again".
+export const CODE_KEYS: Record<string, string> = {
   email_taken: "errors.emailTaken",
   invalid_credentials: "errors.invalidCredentials",
+  platform_admin_reserved: "errors.platformAdminReserved",
 };
 
 const STATUS_KEYS: Record<number, string> = {

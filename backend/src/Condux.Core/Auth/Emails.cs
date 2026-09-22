@@ -13,8 +13,13 @@ public static class Emails
 
     /// <summary>
     /// A deliberately permissive sanity check — one <c>@</c> with non-empty local and domain parts,
-    /// no whitespace, within RFC length. Real deliverability is proven later by email verification,
-    /// not by an over-strict regex that rejects valid addresses.
+    /// no whitespace, within RFC length. Permissive on purpose: an over-strict regex rejects valid
+    /// addresses, and shape was never the interesting question about an address anyway.
+    ///
+    /// <para>What it does NOT establish is that the caller holds the address, and no local sign-up
+    /// path establishes that either. So nothing downstream may treat the address on a local account
+    /// as proof of who its owner is. An identity provider's assertion is different, and is the only
+    /// thing here that carries that proof.</para>
     /// </summary>
     public static bool IsValid(string email)
     {

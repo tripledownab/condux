@@ -43,7 +43,10 @@ public sealed class EmailNotifier(ISmtpSender sender, SmtpOptions options) : INo
     public async Task SendAsync(
         AlertChannel target, AlertNotification notification, CancellationToken cancellationToken = default)
     {
-        var body = AlertText.Message(notification, target.Template);
+        // No escaping is applied to the values here: they reach the HTML view as the heading, a paragraph
+        // or a fact, and EmailLayout HTML-encodes all three, while the plain-text alternative is plain
+        // text. Both views already show a value as written.
+        var body = AlertText.Message(notification, target.Template, AlertTemplate.NoEscape);
         var content = new EmailContent(
             Heading: notification.Title,
             Paragraphs: SplitParagraphs(body),

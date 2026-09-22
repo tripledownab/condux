@@ -28,7 +28,7 @@ public sealed class ImpersonationTest(PostgresFixture pg) : IClassFixture<Postgr
             pg.ConnectionString, platformAdminEmails: adminEmail, impersonationSigningKey: SigningKey);
 
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, adminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, adminEmail);
         var tenantA = app.CreateClient();
         await ApiAuth.SignUpAsync(tenantA);
         var targetOrg = await CreateOrgAsync(tenantA);
@@ -93,7 +93,7 @@ public sealed class ImpersonationTest(PostgresFixture pg) : IClassFixture<Postgr
         var offAdminEmail = NewAdminEmail();
         var off = ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: offAdminEmail);
         var admin = off.CreateClient();
-        await ApiAuth.SignUpAsync(admin, offAdminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, offAdminEmail);
         var adminOrg = await CreateOrgAsync(admin);
         Assert.Equal(HttpStatusCode.NotFound,
             (await admin.PostAsync($"/api/admin/impersonation/{adminOrg}", null)).StatusCode);

@@ -248,6 +248,7 @@
     },
     "errors": {
       "emailTaken": "That email already has an account. Sign in instead.",
+      "platformAdminReserved": "That address is reserved for a platform administrator and cannot be registered here. Use a different address, or create that account on the server.",
       "invalidCredentials": "Enter a valid email and a password of 8 to 200 characters.",
       "wrongCredentials": "Wrong email or password.",
       "oauthFailed": "Google sign-in failed. Try again.",
@@ -444,6 +445,7 @@
       "testSent": "Test sent",
       "testFailed": "Test failed",
       "testNotConfigured": "Channel not set up",
+      "testInvalidTarget": "Target not usable",
       "edit": "Edit",
       "save": "Save",
       "cancel": "Cancel",

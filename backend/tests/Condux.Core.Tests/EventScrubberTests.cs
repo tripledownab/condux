@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Condux.Core.Events;
 using Condux.Core.Scrub;
 using Xunit;
@@ -6,6 +8,10 @@ namespace Condux.Core.Tests;
 
 public class EventScrubberTests
 {
+    // A project's user-key salt. Any non-empty value does, since what these assert is that the salt is
+    // USED, never that it produces one particular digest.
+    private const string Salt = "0123456789abcdef0123456789abcdef";
+
     [Fact]
     public void ScrubsMessageExceptionsAndSensitiveTags()
     {
@@ -16,7 +22,7 @@ public class EventScrubberTests
             Tags = new Dictionary<string, string> { ["authorization"] = "Bearer xyz", ["env"] = "prod" },
         };
 
-        var scrubbed = EventScrubber.Scrub(e);
+        var scrubbed = EventScrubber.Scrub(e, Salt);
 
         Assert.Equal("user [redacted] failed", scrubbed.Message);
         Assert.Equal("token [redacted] leaked", scrubbed.Exceptions[0].Value);
@@ -56,7 +62,7 @@ public class EventScrubberTests
             ],
         };
 
-        var frame = EventScrubber.Scrub(e).Exceptions[0].Stacktrace!.Frames[0];
+        var frame = EventScrubber.Scrub(e, Salt).Exceptions[0].Stacktrace!.Frames[0];
 
         Assert.Equal("const key = \"[redacted]\";", frame.ContextBefore[0]);
         Assert.Equal("return receipt;", frame.ContextAfter[0]);
@@ -78,12 +84,12 @@ public class EventScrubberTests
             },
         };
 
-        var scrubbed = EventScrubber.Scrub(e);
+        var scrubbed = EventScrubber.Scrub(e, Salt);
 
         // The pseudonymous counting key is derived from the raw identifiers before they are removed,
         // and the same user always derives the same key (distinct counts work across events).
         Assert.Equal(32, scrubbed.UserKey.Length);
-        Assert.Equal(scrubbed.UserKey, EventScrubber.Scrub(e).UserKey);
+        Assert.Equal(scrubbed.UserKey, EventScrubber.Scrub(e, Salt).UserKey);
         // What reaches storage: id/username stay, the email is redacted, the IP is gone entirely.
         Assert.Equal("user-7", scrubbed.User!.Id);
         Assert.Equal("wally", scrubbed.User.Username);
@@ -92,16 +98,82 @@ public class EventScrubberTests
     }
 
     [Fact]
+    public void TwoProjectsDeriveDifferentKeysForTheSamePerson()
+    {
+        // The whole point of the salt. One address reported to two projects must not produce one key,
+        // or a table built from one project's events re-identifies the other's. Fails if Derive ignores
+        // the salt it is handed, which is the only way this regresses.
+        var user = new EventUser { Email = "wally@acme.io" };
+
+        var first = UserKeys.Derive(user, "salt-of-project-one");
+        var second = UserKeys.Derive(user, "salt-of-project-two");
+
+        Assert.NotEqual(first, second);
+        Assert.Equal(32, first.Length);
+        Assert.Equal(32, second.Length);
+        // Stable within a project, or "users affected" counts one person once per event.
+        Assert.Equal(first, UserKeys.Derive(user, "salt-of-project-one"));
+    }
+
+    [Fact]
+    public void TheKeyIsTheKeyedHashAndNotTheBareOne()
+    {
+        // Two assertions doing different jobs. The first pins the CONSTRUCTION: it recomputes what the
+        // implementation should produce, so swapping HMAC for anything else fails here rather than
+        // passing quietly. On its own an inequality would not do that, since "not the old hash" is
+        // satisfied by any change at all, good or bad. The second pins the SPECIFIC regression, which
+        // is reverting to the unkeyed hash. An IP is the identifier that makes this matter, because the
+        // whole v4 address space is small enough to work through from end to end.
+        const string ip = "203.0.113.9";
+        var expected = Convert.ToHexStringLower(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(Salt), Encoding.UTF8.GetBytes(ip)))[..32];
+        var bare = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(ip)))[..32];
+
+        var derived = UserKeys.Derive(new EventUser { IpAddress = ip }, Salt);
+
+        Assert.Equal(expected, derived);
+        Assert.NotEqual(bare, derived);
+    }
+
+    [Fact]
+    public void AnIncomingUserKeyIsOverwrittenRatherThanTrusted()
+    {
+        // No parser sets UserKey today, so this guards the day one does. The scrub must derive its own,
+        // or whoever sends the event picks the pseudonym: they could bury a project's counts under one
+        // key, claim another person's, or simply hand over the unkeyed value the salt exists to stop.
+        var e = new Event
+        {
+            UserKey = "deadbeefdeadbeefdeadbeefdeadbeef",
+            User = new EventUser { Id = "user-7" },
+        };
+
+        var scrubbed = EventScrubber.Scrub(e, Salt);
+
+        Assert.NotEqual("deadbeefdeadbeefdeadbeefdeadbeef", scrubbed.UserKey);
+        Assert.Equal(UserKeys.Derive(e.User, Salt), scrubbed.UserKey);
+    }
+
+    [Fact]
+    public void AnEmptySaltIsRefusedRatherThanDerivedWith()
+    {
+        // An empty HMAC key still hashes, so the quiet failure here is a key that looks derived and is
+        // as reversible as the one this replaced. An event carrying no user is still fine, because it
+        // needs no salt to answer.
+        Assert.Throws<ArgumentException>(() => UserKeys.Derive(new EventUser { Id = "u1" }, ""));
+        Assert.Equal("", UserKeys.Derive(null, ""));
+    }
+
+    [Fact]
     public void AnonymousUsersFallBackToTheIpForTheKeyWithoutStoringIt()
     {
         var scrubbed = EventScrubber.Scrub(new Event
         {
             User = new EventUser { IpAddress = "203.0.113.9" },
-        });
+        }, Salt);
 
         Assert.Equal(32, scrubbed.UserKey.Length); // still countable as one distinct user
         Assert.Null(scrubbed.User!.IpAddress); // but the IP itself never reaches storage
-        Assert.Equal("", EventScrubber.Scrub(new Event()).UserKey); // no user at all = no key
+        Assert.Equal("", EventScrubber.Scrub(new Event(), Salt).UserKey); // no user at all = no key
     }
 
     [Fact]
@@ -122,7 +194,7 @@ public class EventScrubberTests
             Contexts = new Dictionary<string, string> { ["browser"] = "Chrome 126.0" },
         };
 
-        var scrubbed = EventScrubber.Scrub(e);
+        var scrubbed = EventScrubber.Scrub(e, Salt);
 
         Assert.DoesNotContain("ada@example.com", scrubbed.Request!.Url);
         Assert.DoesNotContain("ada@example.com", scrubbed.Request.QueryString);
@@ -155,7 +227,7 @@ public class EventScrubberTests
             Tags = new Dictionary<string, string> { ["api_key"] = "sk-live-must-not-survive" },
         };
 
-        var scrubbed = EventScrubber.Scrub(e);
+        var scrubbed = EventScrubber.Scrub(e, Salt);
 
         Assert.Equal("9.0.0", scrubbed.Modules["jsonwebtoken"]);
         Assert.Equal("1.0.2", scrubbed.Modules["csrf-token"]);
@@ -189,7 +261,7 @@ public class EventScrubberTests
             },
         };
 
-        var scrubbed = EventScrubber.Scrub(e);
+        var scrubbed = EventScrubber.Scrub(e, Salt);
 
         Assert.Equal("[redacted]", scrubbed.Modules["some-pkg"]);
         Assert.Equal("built by [redacted]", scrubbed.Modules["other-pkg"]);

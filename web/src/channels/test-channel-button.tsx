@@ -10,15 +10,21 @@ export enum TestStatus {
   Sent = "sent",
   Failed = "failed",
   NotConfigured = "not-configured",
+  InvalidTarget = "invalid-target",
 }
 
-// Maps a TestChannelResponse (delivered + optional error) to a status. "channel_not_configured" (no notifier
-// registered, e.g. email without SMTP) is called out distinctly from a genuine delivery failure.
+// Maps a TestChannelResponse (delivered + optional error) to a status. The server answers with one of a
+// fixed set of reasons and never the underlying error, so the two a person can act on are called out and
+// everything else is a delivery failure. "channel_not_configured" means no notifier is registered, e.g.
+// email without SMTP; "invalid_target" means the saved target is not usable for its channel.
 export function testStatus(delivered: boolean, error: string | null): TestStatus {
   if (delivered) {
     return TestStatus.Sent;
   }
-  return error === "channel_not_configured" ? TestStatus.NotConfigured : TestStatus.Failed;
+  if (error === "channel_not_configured") {
+    return TestStatus.NotConfigured;
+  }
+  return error === "invalid_target" ? TestStatus.InvalidTarget : TestStatus.Failed;
 }
 
 const STATUS_KEYS: Record<TestStatus, string | null> = {
@@ -27,6 +33,7 @@ const STATUS_KEYS: Record<TestStatus, string | null> = {
   [TestStatus.Sent]: "testSent",
   [TestStatus.Failed]: "testFailed",
   [TestStatus.NotConfigured]: "testNotConfigured",
+  [TestStatus.InvalidTarget]: "testInvalidTarget",
 };
 
 // A "Send test" button plus an aria-live status label for the last attempt. Namespace: settings.channels.

@@ -44,7 +44,7 @@ public sealed class AdminSpendTest(PostgresFixture pg) : IClassFixture<PostgresF
 
         var app = ControlPlaneApp.Create(cs, platformAdminEmails: AdminEmail);
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, AdminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, AdminEmail);
 
         // Cross-org rollup: total sums only priced tokens (30 + 2.50 + 5 = 37.50); BYO tokens show, $0.
         var rollup = await admin.GetFromJsonAsync<JsonElement>("/api/admin/spend?days=30");

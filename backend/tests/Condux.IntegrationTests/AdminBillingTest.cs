@@ -86,7 +86,7 @@ public sealed class AdminBillingTest(PostgresFixture pg) : IClassFixture<Postgre
         Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> app, string adminEmail)
     {
         var admin = app.CreateClient();
-        await ApiAuth.SignUpAsync(admin, adminEmail);
+        await ApiAuth.SignInSeededAdminAsync(admin, adminEmail);
         var resp = await admin.PostAsJsonAsync("/api/orgs",
             new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
         resp.EnsureSuccessStatusCode();

@@ -24,9 +24,21 @@ public sealed partial class UserRepository(string connectionString)
     private const string Columns =
         "id, email, password_hash, created_at, onboarded_at, weekly_summary_opt_out, login_locked_until";
 
+    // DO NOTHING rather than letting the unique index throw, for the reason spelled out on the
+    // federated insert below: every caller looks the address up first, and between that read and this
+    // write the address can appear. Without this, two sign-ups racing the same address gave one caller
+    // a 500 carrying a Postgres exception, which the platform then filed against itself as a defect.
+    // Reproducible, not rare: a double-clicked submit button is enough. The INSERT is therefore what
+    // decides whether the address was new, and no row back means somebody else won.
+    //
+    // NAMING (email) IS LOAD-BEARING, and dropping it would read as a simplification. Postgres: "For
+    // ON CONFLICT DO NOTHING, it is optional to specify a conflict_target; when omitted, conflicts
+    // with all usable constraints (and unique indexes) are handled." Untargeted, this would swallow
+    // every future constraint violation on the table and report it to the caller as a taken address.
     private const string InsertSql = $"""
         INSERT INTO users (email, password_hash)
         VALUES (@email, @hash)
+        ON CONFLICT (email) DO NOTHING
         RETURNING {Columns};
         """;
 
@@ -63,8 +75,12 @@ public sealed partial class UserRepository(string connectionString)
     private const string SetWeeklySummaryOptOutSql =
         "UPDATE users SET weekly_summary_opt_out = @optOut WHERE id = @id;";
 
-    /// <summary>Creates a user. The caller passes a normalized email and an encoded password hash.</summary>
-    public async Task<User> CreateAsync(string email, string passwordHash, CancellationToken ct = default) =>
+    /// <summary>
+    /// Creates a user, or returns null when the address was taken. The caller passes a normalized
+    /// email and an encoded password hash. Named Try because the null is the point: the address can
+    /// appear between the caller's own lookup and this insert, and the insert is what settles it.
+    /// </summary>
+    public async Task<User?> TryCreateAsync(string email, string passwordHash, CancellationToken ct = default) =>
         await InsertAsync(email, passwordHash, ct);
 
     /// <summary>
@@ -72,7 +88,7 @@ public sealed partial class UserRepository(string connectionString)
     /// only authenticate through its provider until a password is set; the password login path rejects a
     /// null hash.
     /// </summary>
-    public async Task<User> CreateFederatedAsync(string email, CancellationToken ct = default) =>
+    public async Task<User?> TryCreateFederatedAsync(string email, CancellationToken ct = default) =>
         await InsertAsync(email, null, ct);
 
     /// <summary>
@@ -93,7 +109,7 @@ public sealed partial class UserRepository(string connectionString)
         return await reader.ReadAsync(ct) ? Read(reader) : null;
     }
 
-    private async Task<User> InsertAsync(string email, string? passwordHash, CancellationToken ct)
+    private async Task<User?> InsertAsync(string email, string? passwordHash, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -101,8 +117,7 @@ public sealed partial class UserRepository(string connectionString)
         cmd.Parameters.AddWithValue("email", email);
         cmd.Parameters.AddWithValue("hash", (object?)passwordHash ?? DBNull.Value);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
-        return Read(reader);
+        return await reader.ReadAsync(ct) ? Read(reader) : null;
     }
 
     public async Task<User?> GetByEmailAsync(string email, CancellationToken ct = default)

@@ -1,3 +1,4 @@
+using Condux.Core.Scrub;
 using Npgsql;
 
 namespace Condux.Storage.Postgres;
@@ -13,9 +14,14 @@ public sealed class ProjectRepository(string connectionString)
 {
     private const string Columns = "id, org_id, name, platform, created_at, public_id";
 
+    // user_key_salt is supplied here and not defaulted in the schema, because migration 0054 drops that
+    // default deliberately: a project created without a salt would derive its pseudonymous user keys
+    // with an empty HMAC key, which is the unkeyed hash the salt exists to replace. Not returned, and
+    // deliberately absent from Columns and from ProjectRecord: nothing outside the relay's ingest path
+    // has a use for it, and a field nobody reads cannot be leaked by a response that includes it.
     private const string InsertSql = """
-        INSERT INTO projects (org_id, name, platform, public_id)
-        VALUES (@org, @name, @platform, @public_id)
+        INSERT INTO projects (org_id, name, platform, public_id, user_key_salt)
+        VALUES (@org, @name, @platform, @public_id, @user_key_salt)
         RETURNING id, org_id, name, platform, created_at, public_id;
         """;
 
@@ -47,6 +53,7 @@ public sealed class ProjectRepository(string connectionString)
         cmd.Parameters.AddWithValue("platform", platform);
         // New projects get a time-ordered UUIDv7 (keeps the unique index healthy), like issues (#91).
         cmd.Parameters.AddWithValue("public_id", Guid.CreateVersion7());
+        cmd.Parameters.AddWithValue("user_key_salt", UserKeys.NewSalt());
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
         return Read(reader);

@@ -277,7 +277,7 @@ public sealed class PasswordResetApiTest(PostgresFixture pg) : IClassFixture<Pos
     {
         var (app, smtp) = CreateApp();
         var email = UniqueEmail();
-        await new UserRepository(pg.ConnectionString).CreateFederatedAsync(email);
+        await new UserRepository(pg.ConnectionString).TryCreateFederatedAsync(email);
 
         var resp = await app.CreateClient().PostAsJsonAsync("/api/auth/password/forgot", new { email });
 

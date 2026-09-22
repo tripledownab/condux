@@ -18,6 +18,20 @@ public static class ApiAuth
     public static Task<SignedUpUser> SignUpAsync(HttpClient client) =>
         SignUpAsync(client, $"u-{Guid.NewGuid():N}@condux.test");
 
+    /// <summary>
+    /// Authenticates as a platform-admin address, which cannot be signed up for: the signup route
+    /// refuses an allowlisted address, so <see cref="ControlPlaneApp.Create"/> seeds the account at
+    /// startup and this signs in to it. The seeded user OWNS AN ORG already, unlike a signed-up one.
+    /// </summary>
+    public static async Task<SignedUpUser> SignInSeededAdminAsync(HttpClient client, string email)
+    {
+        var resp = await client.PostAsJsonAsync("/api/auth/login",
+            new { email, password = ControlPlaneApp.SeededAdminPassword });
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        return new SignedUpUser(body.GetProperty("id").GetInt64(), email);
+    }
+
     public static async Task<SignedUpUser> SignUpAsync(HttpClient client, string email)
     {
         var resp = await client.PostAsJsonAsync("/api/auth/signup",

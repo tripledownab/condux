@@ -15,7 +15,10 @@ namespace Condux.Core.Scrub;
 /// </summary>
 public static class EventScrubber
 {
-    public static Event Scrub(Event e) => e with
+    /// <param name="userKeySalt">The project's salt for the pseudonymous counting key. Taken as a
+    /// parameter rather than read from configuration because it is per project, and the relay already
+    /// holds the authenticated project when it calls this.</param>
+    public static Event Scrub(Event e, string userKeySalt) => e with
     {
         Message = e.Message is null ? null : Scrubber.ScrubString(e.Message),
         Exceptions = e.Exceptions.Select(ScrubException).ToList(),
@@ -38,10 +41,16 @@ public static class EventScrubber
         // check replaces it, since a short unprefixed secret is not distinguishable from a version
         // string. Reviewed deliberately, 2026-09-03. Fuller reasoning in ADR-0041.
         Modules = ScrubMap(e.Modules, redactSensitiveKeys: false),
-        // Privacy-first user capture (#105): derive the pseudonymous counting key from the raw
-        // identifiers, then redact the email (ScrubString redacts email shapes) and drop the IP —
-        // neither ever reaches storage.
-        UserKey = e.UserKey.Length > 0 ? e.UserKey : UserKeys.Derive(e.User),
+        // Privacy-first user capture: derive the pseudonymous counting key from the raw identifiers,
+        // then redact the email (ScrubString redacts email shapes) and drop the IP, so neither ever
+        // reaches storage.
+        //
+        // Derived unconditionally. This used to keep an incoming UserKey when one was set, and no
+        // parser has ever set one, so the branch decided nothing. It is removed rather than left,
+        // because the day a parser did map a field to it a sender would be choosing the pseudonym:
+        // they could poison a project's counts, or submit another person's key, and the salt below
+        // would be bypassed entirely by the one input nobody keys.
+        UserKey = UserKeys.Derive(e.User, userKeySalt),
         User = e.User is null ? null : e.User with
         {
             Id = e.User.Id is null ? null : Scrubber.ScrubString(e.User.Id),

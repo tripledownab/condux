@@ -23,12 +23,16 @@
 	# missing redirect.
 	auto_https disable_redirects
 
-	# Per-request metrics, labelled by host. BOTH lines below are needed and neither is the default.
-	# `per_host` adds the host label: without it every series carries only Caddy's internal server
-	# name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge serves
-	# the dashboard and the relay from one process. The `metrics` directive inside each site is what
-	# makes Caddy record the requests at all: without it the endpoint below answers 200 carrying only
-	# Go runtime counters, which looks exactly like a working metrics endpoint.
+	# Per-request metrics, labelled by host. THIS is what records them, and it is the only thing that
+	# does. `per_host` adds the host label: without it every series carries only Caddy's internal
+	# server name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge
+	# serves the dashboard and the relay from one process.
+	#
+	# DO NOT PUT A BARE `metrics` INSIDE A SITE BLOCK. It is a terminal handler that serves the
+	# Prometheus endpoint, it matches every path when given no matcher, and Caddy orders it ahead of
+	# `reverse_proxy`, so the site answers metrics to everything and the proxy is unreachable. The
+	# production Caddyfile carries the full account and the measurement; this file must not drift from
+	# it, and `deploy/caddy/Caddyfile` is where to read why.
 	metrics {
 		per_host
 	}
@@ -39,7 +43,6 @@
 {$CONDUX_STAGING_HOST}:443 {
 	tls /etc/condux/tls/staging.crt /etc/condux/tls/staging.key
 	encode zstd gzip
-	metrics
 
 	@backend path /api/* /openapi/*
 	handle @backend {
@@ -56,7 +59,6 @@
 {$CONDUX_STAGING_HOST}:444 {
 	tls /etc/condux/tls/staging.crt /etc/condux/tls/staging.key
 	encode zstd gzip
-	metrics
 	reverse_proxy relay:9000
 }
 

@@ -28,17 +28,6 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
 {
     private static readonly string SecretKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    // A stub IdP token endpoint: every exchange returns an id_token for the same configured email. The
-    // signature is not checked (server-to-server over TLS), so a static header.payload.sig token is enough.
-    private sealed class StubIdp(string idToken) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent($$"""{"id_token":"{{idToken}}"}""", Encoding.UTF8, "application/json"),
-            });
-    }
-
     private WebApplicationFactory<Program> CreateApp(string idpEmail) =>
         ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
         {
@@ -52,7 +41,7 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
             // SsoOidcClient type out of the test.
             b.ConfigureTestServices(s => s
                 .AddHttpClient("SsoOidcClient")
-                .ConfigurePrimaryHttpMessageHandler(() => new StubIdp(IdToken(idpEmail))));
+                .ConfigurePrimaryHttpMessageHandler(() => new OidcStub.TokenEndpoint(IdToken(idpEmail))));
         });
 
     [Fact]
@@ -251,26 +240,8 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         return orgId;
     }
 
-    // The stub IdP's id_token: aud + iss match the config, verified email, non-expired.
-    private static string IdToken(string email) => Token(new
-    {
-        aud = "client-abc",
-        iss = "https://idp.example/",
-        exp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 3600,
-        email_verified = true,
-        email,
-        sub = "idp-" + email,
-    });
-
-    private static string Token(object payload)
-    {
-        var header = Base64Url(Encoding.UTF8.GetBytes("""{"alg":"RS256","typ":"JWT"}"""));
-        var body = Base64Url(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
-        return $"{header}.{body}.signature-not-checked";
-    }
-
-    private static string Base64Url(byte[] bytes) =>
-        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-
+    // aud + iss match this host's SSO config; the builder and the stub endpoint are shared with the
+    // Google flow, which runs the same exchange and the same validator.
+    private static string IdToken(string email) =>
+        OidcStub.IdToken("https://idp.example/", "client-abc", email);
 }

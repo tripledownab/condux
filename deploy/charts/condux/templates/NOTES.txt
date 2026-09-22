@@ -21,7 +21,8 @@ Before it works:
      Valkey/Redis via .Values.externalStores.* and provide credentials via the Secret
      (.Values.secret.* inline, or .Values.secret.existingSecret in production).
   2. Migrations run automatically as a pre-install/pre-upgrade hook Job from the `migrations` image
-     (build it from deploy/migrations.Dockerfile). It needs native-protocol (9000) access to ClickHouse.
+     (build it from deploy/migrations.Dockerfile). It needs native-protocol access to ClickHouse, on
+     9440 when externalStores.clickhouse.url is https, otherwise on 9000.
      Set .Values.migrations.enabled=false to apply them yourself.
 {{- if .Values.github.enabled }}
   3. The GitHub App (the Conductor) is enabled — ensure the App is installed on your repos and the

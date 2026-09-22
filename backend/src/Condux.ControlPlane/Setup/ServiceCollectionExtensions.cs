@@ -256,8 +256,10 @@ internal static class ServiceCollectionExtensions
         services.AddTransient<Notifications.WeeklySummaryComposer>();
         services.AddSingleton<Notifications.WeeklySummaryMailer>();
 
-        // Optional dev-only admin seed: register the hosted seeder only when both env vars are set, so
-        // a local stack gets a ready-to-use login and production (which leaves them unset) seeds nothing.
+        // Optional admin seed: registered only when both env vars are set, so a local stack gets a
+        // ready-to-use login and a deployment that leaves them unset seeds nothing. Gated on the two
+        // values and NOT on the environment, deliberately: a platform-admin address cannot be signed
+        // up for, so this is how that account is created anywhere, production included.
         var seedEmail = cfg["CONDUX_SEED_ADMIN_EMAIL"];
         var seedPassword = cfg["CONDUX_SEED_ADMIN_PASSWORD"];
         if (!string.IsNullOrEmpty(seedEmail) && !string.IsNullOrEmpty(seedPassword))

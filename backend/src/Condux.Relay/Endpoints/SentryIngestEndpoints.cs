@@ -86,7 +86,7 @@ internal static class SentryIngestEndpoints
 
         // 4. Monthly event quota (plan tier). Enterprise is unlimited and skips this. Only admitted events
         // are counted, and only after the cheaper rate + spike gates, so shed events never consume quota.
-        var quota = await quotaMeter.TryConsumeAsync(projectKey, limits.MonthlyEvents, ctx.RequestAborted);
+        var quota = await quotaMeter.TryConsumeAsync(projectKey, limits.MonthlyEvents, ct: ctx.RequestAborted);
         if (limits.MonthlyEvents > 0)
         {
             ctx.Response.Headers["X-Condux-Quota-Remaining"] = quota.Remaining.ToString(CultureInfo.InvariantCulture);
@@ -130,7 +130,7 @@ internal static class SentryIngestEndpoints
             return;
         }
 
-        var scrubbed = EventScrubber.Scrub(normalized);
+        var scrubbed = EventScrubber.Scrub(normalized, project.UserKeySalt);
         // Carry the tier's retention so the consumer can stamp it on the ClickHouse row (column-driven TTL).
         await publisher.PublishAsync(projectKey, scrubbed, limits.RetentionDays, ctx.RequestAborted);
 

@@ -103,6 +103,31 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
     }
 
     [Fact]
+    public async Task AddAndUpdateChannel_RejectATargetThatIsNotAUrlForItsChannel()
+    {
+        // Both write paths, because they were separate copies of the same "not blank" check and a fix
+        // applied to one of them would look finished.
+        var (client, projectId) = await ProvisionAsync();
+        var createResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
+            new { name = "prod errors", events = new[] { 1 }, levels = new[] { 4, 5 } });
+        var ruleId = (await createResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules/{ruleId}/channels",
+                new { channel = 2, target = "hooks.slack.test/x" })).StatusCode);
+
+        var good = await client.PostAsJsonAsync(
+            $"/api/projects/{projectId}/alert-rules/{ruleId}/channels",
+            new { channel = 2, target = "https://hooks.slack.test/x" });
+        var channelId = (await good.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PatchAsJsonAsync(
+                $"/api/projects/{projectId}/alert-rules/{ruleId}/channels/{channelId}",
+                new { channel = 3, target = "file:///etc/passwd" })).StatusCode);
+    }
+
+    [Fact]
     public async Task UpdateRule_InvalidLevel_Returns400()
     {
         var (client, projectId) = await ProvisionAsync();

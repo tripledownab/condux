@@ -7,6 +7,239 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.5.0
+**Three things want your attention before you upgrade.** Enterprise SSO now needs a DNS proof of the
+email domain it routes on, and a configuration that works today can stop routing a week after you
+deploy. If you install with Helm, the migrations Job was discarding `SSL Mode` from the connection
+string it was given, so your database credentials may have crossed your network unencrypted. And if
+your `.env.prod` began as a copy of the example file, check `CONDUX_PLATFORM_ADMIN_EMAILS` before
+anything else: the example shipped an address filled in.
+
+### Your SSO email domain must now be proved by DNS
+
+**Only affects organisations with enterprise SSO configured.**
+
+An SSO configuration claims an email domain, and nothing checked that the organisation owned it. A
+claim now routes nothing until you prove it: publish a TXT record carrying
+`condux-domain-verification=<token>`, shown in Settings, then click Verify. `_condux-challenge.<domain>`
+works too. Verifying is an owner action, as writing the configuration now is.
+
+The domain goes to whoever proves it rather than whoever saved first, and signing in never waits on a
+DNS lookup. Proofs are re-checked about daily. If the record stops resolving you get a notice through
+your organisation's notification channels and seven days before it stops routing, and restoring it
+inside that window clears itself. **After it lapses, republishing is not enough: an owner must click
+Verify again**, and until they do, anyone who only ever signed in through the provider cannot get in.
+
+**Before you upgrade.** Existing configurations are marked verified so nothing breaks on deploy, but
+they were never actually proved, so publish the record now or they lapse in a week. If you run Condux
+on an internal domain, set `CONDUX_SSO_SKIP_DOMAIN_VERIFICATION=1` instead.
+
+Over the API, `POST /api/orgs/{orgId}/sso-config/verify` runs the check, and the SSO configuration
+gains `verificationRecordName`, `verificationRecordValue`, `verifiedAt`, `verificationLostAt` and
+`verificationLapsesAt`.
+
+### Writing an SSO configuration is now an owner action
+
+It was open to an administrator. Whoever writes that row names the identity provider whose assertion
+becomes a session for any member, including an owner, with no password and no second factor. Granting a
+role that high was already owner-only, so this closes a second route to it. Deleting moved with it.
+Reading stays open to any member. If your administrators managed SSO, an owner has to make the next
+change.
+
+### A notification channel's target is checked, and error text cannot format a Slack message
+
+**Two of these change answers you may be reading from the API.**
+
+**A target is checked against its transport when you save it.** Slack, Discord and webhook channels take
+an absolute `http://` or `https://` URL; email takes an address. Any non-blank text used to be accepted,
+so a typo saved cleanly and then never delivered. Saving one that does not fit its channel answers
+`400`. Existing channels are untouched, but **Send test** now says `Target not usable` for one that was
+never valid.
+
+**Send test no longer reports the underlying error.** Its `error` field is `null` on success and
+otherwise one of `channel_not_configured`, `invalid_target` or `delivery_failed`, rather than whatever
+the send threw. The reply otherwise described what happened when Condux connected to an address someone
+typed. The detail goes to the server log. If you read that field directly, match on those three values.
+
+**Error text in a Slack alert is escaped.** An issue title comes from whatever sent the event, and Slack
+reads `&`, `<` and `>` as formatting, so a title spelling a link or a channel broadcast arrived as the
+real thing. Those three characters are now sent as entities in the values Condux substitutes. **Your own
+message template is untouched.**
+
+**A Discord org notice can no longer mention anyone.** Alerts already suppressed mentions; organisation
+notices went out through a different path that did not.
+
+### One OpenTelemetry export is now one quota check
+
+Condux counted an OTLP export against your monthly allowance one record at a time, so a single request
+cost as much counting as the sender asked for. An export is now counted once for the whole batch, and
+large exports should be noticeably quicker to accept. What gets stored is unchanged, and a batch that
+reaches your limit part way through still stores what fits.
+
+An export now carries at most 20,000 storable records, adjustable with `CONDUX_MAX_OTLP_RECORDS`. The
+body size limit bounds bytes, not records, so a 20MiB body could otherwise ask Condux to store close to
+a million events. Rejected records never count against your allowance.
+
+The message beside `partialSuccess.rejectedLogRecords` is now English prose saying which limit was hit,
+where it used to be the token `quota_exceeded`. If you match on that token, match on the count instead.
+
+### The Helm migrations Job now keeps the connection settings you gave it
+
+**Only Kubernetes installs are affected.** Docker Compose applies migrations a different way.
+
+The Job runs `psql` and `clickhouse-client`, which do not read connection settings in the form the
+services use, so it rewrites them. That rewrite matched five keys and discarded the rest, `SSL Mode`
+among them, falling back to libpq's default of `prefer`, which tries an encrypted connection and then
+continues without one. **If your Postgres accepts unencrypted connections, treat the credentials in that
+Secret as having been exposed to whatever network sits between the Job and your database, and rotate
+them.**
+
+`SSL Mode` is now carried across in all six values, as are `Root Certificate`, `SSL Certificate`, `SSL
+Key`, `SSL Password`, `Channel Binding` and `Kerberos Service Name`, plus `Passfile` and `Search Path`.
+Settings that only shape a long-lived pooled client are still ignored.
+
+**A setting the Job cannot translate now fails the install instead of being dropped**, which is the one
+change here that can interrupt an upgrade. Your connection string is affected only if it carries `Check
+Certificate Revocation`, an `Options` value, a quoted value such as `Password="a;b"`, or an `SSL Mode`
+or `Channel Binding` value that is not one of the documented ones. `Trust Server Certificate` is not
+one of these: Npgsql ignores it, so the Job does too.
+
+If the hook stops, it stops **before applying anything**, so a refusal cannot leave one store migrated
+and the other not. The failed Job is kept, so `kubectl logs job/<release>-migrations` names the setting.
+
+The ClickHouse half had the same gap: the scheme was thrown away, so an `https://` URL was applied over
+the plaintext port. The scheme is honoured now and selects the port with it. A URL with no scheme is
+refused. A Job that finds no migration files now fails rather than exiting successfully.
+
+### Running a second environment on one host
+
+**Additive. A deployment that owns its host renders exactly as it did.**
+
+The production overlay named its published ports and its ingest scheme and host as literals, and Compose
+can only add a published port across files, never remove one. Each is a variable now, defaulting to what
+it replaced. The ingest pair matters most: both are baked into every minted DSN, so a second environment
+built from the old literals handed out DSNs naming the production relay.
+
+`deploy/docker-compose.staging.yml` and `deploy/caddy-staging/` are a worked example, layered on top of
+the production overlay, with `deploy/.env.staging.example` listing what it needs. Every value there is
+required with no default, because a second environment falling back to a production default is the
+problem it exists to prevent.
+
+### Wrong passwords are now counted
+
+Nothing counted a failed sign-in. Five wrong passwords against one account now start a 15 minute
+cooldown, during which even the correct password is refused. Attempts during it are not counted, so it
+cannot be extended by guessing, and counting restarts afterwards rather than resuming at the limit.
+
+**Somebody locked out is not told why**, and that is deliberate: naming the cooldown would confirm the
+address is real. The cost is worth knowing before the support ticket, since a user who mistypes five
+times is told their password is wrong for a quarter of an hour. An emailed reset clears it at once.
+
+The count is shared by every surface that checks a password, so mistyping it five times while enrolling
+a second factor also cools down your sign-in. Two-factor codes were already counted, with a limit of ten
+per account; that counter under-counted simultaneous attempts, and both now count under a row lock.
+
+### A platform-admin address is reserved at signup
+
+**Only affects deployments that set `CONDUX_PLATFORM_ADMIN_EMAILS`.**
+
+The console it opens is cross-tenant, and the claim is stamped from that list on every request, while
+signup proves nothing about the address it hands out. An allowlisted address nobody had registered went
+to whoever registered it first.
+
+Signup now refuses one with `409 platform_admin_reserved`. An address already registered still answers
+`409 email_taken`, so a listed address someone holds reveals nothing new. **If your platform-admin
+account exists, do nothing.** To make a new one, use `CONDUX_SEED_ADMIN_EMAIL` and
+`CONDUX_SEED_ADMIN_PASSWORD`, which mint it at startup. Signing in through Google or your IdP is
+unaffected, because both prove the address before creating anything.
+
+One thing this cannot change: **adding an address to the list gives the console to whoever holds that
+account already.** That is how you promote someone, so check whether an address is registered first.
+
+### Check `CONDUX_PLATFORM_ADMIN_EMAILS` in your own `.env.prod`
+
+**Only affects a self-hosted deployment whose `.env.prod` began as a copy of
+`deploy/.env.prod.example`.**
+
+That file shipped `CONDUX_PLATFORM_ADMIN_EMAILS` with an address filled in, at a domain anyone can
+register. An operator who copied it and left that line alone granted the cross-tenant console to whoever
+controls mail there. **Open your own `.env.prod` and read that variable.** If it carries an address you
+did not choose, clear it and restart the control-plane.
+
+**Separately, a `?next=` redirect could leave the site.** The check for an internal path tested the raw
+value, but a browser's URL parser strips tab, line feed and carriage return before resolving, so a value
+carrying a tab passed and then pointed at another origin. Control characters are rejected first now.
+
+### A double-clicked sign-up no longer produces a 500
+
+Sign-up looked the address up and then inserted it, and the gap between was reachable. The insert now
+settles it, so racing sign-ups get `409 email_taken`. "Sign in with Google" uses the same insert.
+
+### The pseudonym behind "users affected" is now keyed per project
+
+Condux counts how many distinct people an error reached without storing who they are, by deriving a key
+from the strongest identifier an SDK sent and then redacting the email and dropping the IP.
+
+That key was a plain SHA-256, which does not survive its inputs: an email comes from a list, and an IPv4
+address from a space small enough to work through end to end. So the keys could be reversed, and
+dropping the IP had not dropped it. They were not only in the database either: they ride the stored
+event payload the dashboard reads.
+
+The key is now an HMAC keyed on a salt belonging to the project, created with it and served nowhere.
+
+**One visible consequence, and it passes on its own.** Events stored before you upgrade keep their old
+keys and cannot be recalculated, so a person appearing on both sides counts as two while both rows
+exist. Your retention window ends it: 30 days on Free, 90 on the paid plans. Nothing to do.
+
+### A health gate you can run after your own deploy
+
+New file, `deploy/health-gate.sh`. Point it at every public host and it tells you whether the deployment
+is actually serving:
+
+```
+bash deploy/health-gate.sh "dashboard=https://app.example.com/api/readyz" \
+                           "ingest=https://ingest.example.com/readyz"
+```
+
+It exits non-zero unless every URL answered with the readiness token, and prints what it got when one
+did not. Two details are worth copying even if you write your own. **It reads the body, not the status
+code**, because an edge misconfigured to answer from the wrong handler returns `200` while the service
+behind it is unreachable. **And it wants every public host**, because a dashboard that answers says
+nothing about an ingest endpoint on a different name.
+
+### A warning if you write your own Caddy config
+
+**Nothing to do if you run a tagged release.** This was introduced and fixed between 0.4.0 and this
+release, so no published version carried it.
+
+A bare `metrics` directive inside a site block reads like "record this site" and does not. It serves the
+Prometheus endpoint, matches every path when given no matcher, and Caddy orders it ahead of
+`reverse_proxy`, so the site answers metrics to everything and the proxy behind it is unreachable. It
+answers `200` doing so, which SDKs read as delivered. A site built from `handle` blocks does not show
+the problem, but that is luck rather than protection.
+
+What records requests is the global `metrics { per_host }` block, with a separate `:2020` site serving
+them. Neither needs a directive inside the sites that proxy.
+
+### Work a sender can ask Condux to do is bounded by what it sent
+
+Five places let a request's contents decide how much work Condux did for it. The two worth reading are
+both about source maps.
+
+**A source map whose `mappings` string is unusually large is refused at upload** with `400`, rather than
+stored and then skipped whenever a frame needs it. The limits are 100,000 generated lines and 500,000
+segments, and a real build sits well inside both. Note the reply is the same one a malformed map gets
+and does not yet say size was the reason.
+
+**De-minification reads an event's maps in at most two queries**, covering at most 32 distinct debug ids
+and 32 file names, where it used to make one round trip per stack frame. A stack touching more than 32
+built files leaves the oldest of them minified.
+
+Also: an event whose timestamp falls outside the storable range is stored with the time it arrived,
+where it used to be dropped; the relay's DSN authentication cache is bounded; and `conduxTunnelRoute`
+counts bytes as it reads instead of buffering the whole body first, which ships in the `@condux/nextjs`
+SDK.
+
 ## 0.4.0
 
 **Three things want your attention before you upgrade.** Two configuration values if you have connected

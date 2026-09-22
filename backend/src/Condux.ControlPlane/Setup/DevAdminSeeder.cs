@@ -38,7 +38,14 @@ internal sealed class DevAdminSeeder(
                 return;
             }
 
-            var user = await users.CreateAsync(normalized, PasswordHasher.Hash(password));
+            // Null means another replica seeded it between the lookup above and here, which is the
+            // same outcome as finding it already there: nothing to do.
+            if (await users.TryCreateAsync(normalized, PasswordHasher.Hash(password)) is not { } user)
+            {
+                logger.LogInformation("Admin {Email} was seeded concurrently; not reseeding.", normalized);
+                return;
+            }
+
             var org = await orgs.CreateAsync(
                 $"personal-{user.Id}", $"{normalized.Split('@')[0]}'s org", (int)Tier.Free);
             await members.AddAsync(org.Id, user.Id, OrgRole.Owner);

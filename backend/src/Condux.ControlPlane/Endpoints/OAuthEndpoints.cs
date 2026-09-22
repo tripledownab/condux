@@ -82,9 +82,25 @@ internal static class OAuthEndpoints
                     // Link by Google-verified email: an existing (password or federated) account with that
                     // email signs in, otherwise a new federated account is created. ADR-0018: no org here —
                     // a new user picks up their tenant in onboarding or by accepting an invite.
+                    //
+                    // Read, create, read again. The second read is not belt and braces: two callbacks
+                    // racing a new address both find nothing, and the insert is what settles which one
+                    // wins. Losing that race is a SUCCESS here, unlike sign-up, because the account the
+                    // winner made is the account this caller is signing in to. Only a row deleted in
+                    // between leaves nothing, which is why the null below is refused rather than
+                    // dereferenced.
+                    //
+                    // REASONED FROM THE CODE, NOT MEASURED: this endpoint has no test at all, so the
+                    // release notes deliberately promise nothing about the race here. Writing one is
+                    // in the backlog and needs a stub token endpoint rather than new product code.
                     var email = Emails.Normalize(identity.Email);
                     var user = await users.GetByEmailAsync(email, http.RequestAborted)
-                        ?? await users.CreateFederatedAsync(email, http.RequestAborted);
+                        ?? await users.TryCreateFederatedAsync(email, http.RequestAborted)
+                        ?? await users.GetByEmailAsync(email, http.RequestAborted);
+                    if (user is null)
+                    {
+                        return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "oauth_failed"));
+                    }
                     // Google is challenged, unlike enterprise SSO. Accounts link by verified email, so
                     // without this a user who enrolled a second factor could skip it entirely by
                     // clicking "Sign in with Google" instead of typing their password (ADR-0039).

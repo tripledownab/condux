@@ -73,8 +73,8 @@ internal static class AlertEndpoints
                 async Task<Results<Created<AlertChannelResponse>, NotFound, BadRequest<ErrorResponse>>> (
                     long projectId, Guid ruleId, AddAlertChannelRequest req, AlertRuleRepository alerts) =>
                 {
-                    if (!Enum.IsDefined((NotificationChannel)req.Channel)
-                        || string.IsNullOrWhiteSpace(req.Target) || !ValidTemplate(req.Template))
+                    if (!ChannelTargets.IsValid((NotificationChannel)req.Channel, req.Target)
+                        || !ValidTemplate(req.Template))
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_alert_channel"));
                     }
@@ -98,8 +98,8 @@ internal static class AlertEndpoints
                     long projectId, Guid ruleId, Guid channelId, UpdateAlertChannelRequest req,
                     AlertRuleRepository alerts) =>
                 {
-                    if (!Enum.IsDefined((NotificationChannel)req.Channel)
-                        || string.IsNullOrWhiteSpace(req.Target) || !ValidTemplate(req.Template))
+                    if (!ChannelTargets.IsValid((NotificationChannel)req.Channel, req.Target)
+                        || !ValidTemplate(req.Template))
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_alert_channel"));
                     }
