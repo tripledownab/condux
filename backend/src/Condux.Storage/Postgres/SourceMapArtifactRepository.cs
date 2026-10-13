@@ -19,7 +19,7 @@ public sealed class SourceMapArtifactRepository(string connectionString)
         VALUES (@id, @project, @release, @dist, @debug, @filename, @key, @size)
         ON CONFLICT (project_id, object_key) DO UPDATE
           SET release = EXCLUDED.release, dist = EXCLUDED.dist, debug_id = EXCLUDED.debug_id,
-              filename = EXCLUDED.filename, byte_size = EXCLUDED.byte_size
+              filename = EXCLUDED.filename, byte_size = EXCLUDED.byte_size, created_at = now()
         RETURNING {Columns};
         """;
 
@@ -48,7 +48,9 @@ public sealed class SourceMapArtifactRepository(string connectionString)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(RecordSql, conn);
+        await using var tx = await conn.BeginTransactionAsync(cancellationToken);
+        await ObjectKeyLocks.LockAsync(conn, tx, objectKey, cancellationToken);
+        await using var cmd = new NpgsqlCommand(RecordSql, conn, tx);
         cmd.Parameters.AddWithValue("id", Guid.CreateVersion7());
         cmd.Parameters.AddWithValue("project", projectId);
         cmd.Parameters.AddWithValue("release", release);
@@ -57,9 +59,14 @@ public sealed class SourceMapArtifactRepository(string connectionString)
         cmd.Parameters.AddWithValue("filename", filename);
         cmd.Parameters.AddWithValue("key", objectKey);
         cmd.Parameters.AddWithValue("size", byteSize);
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        await reader.ReadAsync(cancellationToken);
-        return Map(reader);
+        SourceMapArtifact artifact;
+        await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
+        {
+            await reader.ReadAsync(cancellationToken);
+            artifact = Map(reader);
+        }
+        await tx.CommitAsync(cancellationToken);
+        return artifact;
     }
 
     /// <summary>The newest artifact for each of <paramref name="debugIds"/> that has one, keyed by debug id.</summary>

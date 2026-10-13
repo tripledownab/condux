@@ -4,6 +4,7 @@ Services (in-cluster):
   - control-plane (API):  {{ .Release.Name }}-controlplane:{{ .Values.controlplane.port }}
   - relay (ingest):       {{ .Release.Name }}-relay:{{ .Values.relay.port }}
   - dashboard (web):      {{ .Release.Name }}-web:{{ .Values.web.port }}
+  - symbolizer:           {{ .Release.Name }}-symbolizer:{{ .Values.symbolizer.port }} (control-plane and consumer only)
   - consumer + conductor: workers (no Service)
 
 {{- if .Values.ingress.enabled }}

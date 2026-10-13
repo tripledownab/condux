@@ -79,5 +79,9 @@ public static class PackageEcosystems
         ["nuget"] = "NuGet",
         ["rubygems"] = "RubyGems",
         ["pub"] = "Pub",
+        // OSV's own names for the three that differ, so they fold from any case too.
+        ["pypi"] = "PyPI",
+        ["packagist"] = "Packagist",
+        ["crates.io"] = "crates.io",
     };
 }

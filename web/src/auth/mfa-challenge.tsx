@@ -3,9 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type FormEvent, useId, useState } from "react";
-import { ConduxApiError } from "@/src/api/fetcher";
 import { getMeQueryKey, useVerifyMfa } from "@/src/api/generated/condux";
 import { FIELD_CLASS, PRIMARY_BUTTON_CLASS } from "@/src/components/form";
+import { readErrorCode } from "@/src/lib/api-errors";
 
 /**
  * The second-factor step, shown in place of the password form once the password has been accepted.
@@ -44,7 +44,7 @@ export function MfaChallenge({ onVerified }: { onVerified: () => void }) {
   // keep typing. Everything else is one message on purpose: separating "wrong code" from "already used"
   // would confirm to an attacker that a value they tried was real.
   const errorMessage = verify.isError
-    ? verify.error instanceof ConduxApiError && verify.error.code === "too_many_attempts"
+    ? readErrorCode(verify.error) === "too_many_attempts"
       ? translate("errors.tooManyAttempts")
       : translate("errors.invalidCode")
     : null;

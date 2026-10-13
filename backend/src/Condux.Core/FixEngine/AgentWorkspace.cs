@@ -5,8 +5,9 @@ namespace Condux.Core.FixEngine;
 /// <summary>
 /// The checkout an agentic run reads and edits. Isolation is the workspace's problem, never the loop's:
 /// the in-memory workspace holds fetched files and cannot execute anything, while a sandboxed workspace
-/// backs the same operations with an ephemeral container. A workspace never holds a source-host token,
-/// so an agent cannot push, and every write is staged for the host to commit as a draft pull request.
+/// backs the same operations with an ephemeral container. No workspace operation writes to the source host
+/// (<see cref="RepositoryWorkspace"/> reads from it through a function that captures the host's token), so
+/// an agent cannot push, and every write is staged for the host to commit as a draft pull request.
 /// </summary>
 public interface IAgentWorkspace
 {

@@ -64,7 +64,7 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
     /// the real scrubber runs, and the real version has to survive all the way back out of ClickHouse.
     /// </summary>
     [Fact]
-    public async Task Scrubbed_event_modules_survive_the_round_trip_and_classify_as_running()
+    public async Task Scrubbed_event_modules_survive_the_round_trip_and_classify_as_exposed()
     {
         var scrubbed = EventScrubber.Scrub(EventWith(new Dictionary<string, string>
         {
@@ -83,9 +83,10 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
         Assert.Equal("1.4.2", jwt.Release);
         Assert.Equal(Monday, jwt.LastSeen);
 
-        // And the finding a scanner would report for it now reads as running rather than unknown.
+        // And the finding a scanner would report for it now reads as exposed rather than unknown, since
+        // 8.5.1 sits inside the fixture's range.
         var exposure = ModuleExposures.For(Finding("jsonwebtoken", "npm"), observed);
-        Assert.Equal(ModuleExposureState.Running, exposure.State);
+        Assert.Equal(ModuleExposureState.Exposed, exposure.State);
         Assert.Equal("8.5.1", Assert.Single(exposure.Observed).Version);
     }
 
@@ -143,7 +144,22 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
     }
 
     /// <summary>
-    /// The query filters on lower(package), so a scanner's spelling finds a runtime's. PyPI and NuGet
+    /// The query also folds separators, as PyPI does, so an advisory's "zope.interface" finds the
+    /// "Zope_Interface" a runtime reported. Neither spelling is the folded one, so both the stored
+    /// name and the asked-for one have to be folded for the row to come back.
+    /// </summary>
+    [Fact]
+    public async Task A_package_stored_with_one_separator_is_found_by_another()
+    {
+        await WriteAsync("110", EventWith(new Dictionary<string, string> { ["Zope_Interface"] = "5.4.0" }), Monday);
+
+        var observed = Assert.Single(await ReadAsync("110", "zope.interface"));
+
+        Assert.Equal("Zope_Interface", observed.Package);
+    }
+
+    /// <summary>
+    /// The query filters on the lowered name, so a scanner's spelling finds a runtime's. PyPI and NuGet
     /// both treat names case insensitively, so the two genuinely disagree; matching exactly would turn
     /// that into a false "not observed", which is the one direction this feature must not get wrong.
     /// </summary>
@@ -193,7 +209,8 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
     /// <summary>
     /// Dependabot is the only scanner wired to the findings surface and it says "pip", while we record
     /// what the platform maps to, which is OSV's "PyPI". This is the join the whole feature rests on,
-    /// proven against real stored rows rather than only in the pure matcher's unit tests.
+    /// proven against real stored rows rather than only in the pure matcher's unit tests. 2.19.0 is
+    /// inside the finding's range, so the stored row confirms as well as matches.
     /// </summary>
     [Fact]
     public async Task A_dependabot_ecosystem_matches_the_osv_one_we_recorded()
@@ -213,7 +230,7 @@ public sealed class ReleaseModuleFlowTest(ClickHouseFixture ch) : IClassFixture<
         Assert.Equal("PyPI", Assert.Single(observed).Ecosystem);
 
         var exposure = ModuleExposures.For(Finding("requests", "pip"), observed);
-        Assert.Equal(ModuleExposureState.Running, exposure.State);
+        Assert.Equal(ModuleExposureState.Exposed, exposure.State);
     }
 
     private static CveFinding Finding(string package, string ecosystem) =>

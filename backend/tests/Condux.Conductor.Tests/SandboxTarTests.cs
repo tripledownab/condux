@@ -52,6 +52,18 @@ public class SandboxTarTests
         Assert.Equal(source, SandboxTar.FirstFileContents(tar));
     }
 
+    // A file saved with a byte order mark keeps it. The repository's text has it, so a read from the
+    // container that dropped it would differ from the file and never count as having read it.
+    [Fact]
+    public void A_byte_order_mark_survives_the_round_trip()
+    {
+        const string source = "\uFEFFnamespace Shop;";
+
+        var tar = SandboxTar.FromFiles(new Dictionary<string, string> { ["src/Shop.cs"] = source });
+
+        Assert.Equal(source, SandboxTar.FirstFileContents(tar));
+    }
+
     [Fact]
     public void An_archive_with_no_regular_file_reads_as_nothing()
     {

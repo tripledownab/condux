@@ -67,14 +67,13 @@ internal sealed class OpenAiToolConversation(
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"OpenAI-compatible API returned {(int)response.StatusCode}: {ModelApiError.Describe(payload)}");
+            throw ModelApiError.ToFailure("OpenAI-compatible API", response.StatusCode, payload);
         }
 
         var root = JsonNode.Parse(payload)?.AsObject()
-            ?? throw new InvalidOperationException("OpenAI-compatible API returned an unreadable response.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "OpenAI-compatible API returned an unreadable response.");
         var message = root["choices"]?.AsArray().FirstOrDefault()?["message"]?.AsObject()
-            ?? throw new InvalidOperationException("OpenAI-compatible API returned no message.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "OpenAI-compatible API returned no message.");
 
         // Echo the assistant turn back verbatim next time: the tool_call ids have to match the tool
         // messages we send, or the model cannot correlate them.

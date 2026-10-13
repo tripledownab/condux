@@ -21,7 +21,9 @@ internal static class AgentPrompts
         + "Address the root cause, change only what the fix requires, and keep the existing code style. "
         + "Add or update a test that fails without your change and passes with it. If you conclude the "
         + "code is already correct and no such test can be written, say so in the summary and change "
-        + "nothing. Every entry in files must contain the full file, not a diff. "
+        + "nothing. Every entry in files must contain the full file, not a diff. You can change only the "
+        + "files shown below in full, not one marked truncated; any other path must be a new file, so put "
+        + "a test you cannot add to a shown file in a new one. "
         + UntrustedText.Guidance;
 
     internal const string AgentSystemPrompt =
@@ -31,6 +33,12 @@ internal static class AgentPrompts
         + "that fails without your change and passes with it. If you conclude the code is already correct "
         + "and no such test can be written, say so in the summary and change nothing. Call finish with a "
         + "short summary once the fix is complete. " + UntrustedText.Guidance;
+
+    /// <summary>
+    /// Whether the opening message carries this file whole. One cut short at <see cref="MaxCharsPerFile"/>
+    /// was not seen in full, so a fix that rewrote it from that view would drop the rest of it.
+    /// </summary>
+    internal static bool ShowsWhole(RepoFile file) => file.Content is { } content && content.Length <= MaxCharsPerFile;
 
     internal static string BuildUserMessage(AgentRunSpec spec, IReadOnlyList<RepoFile> files)
     {
@@ -49,12 +57,13 @@ internal static class AgentPrompts
         // absolute paths, drive letters and traversal but permits a quote in a filename.
         foreach (var file in files)
         {
-            var truncated = file.Content.Length > MaxCharsPerFile;
+            var content = file.Content ?? throw new ArgumentException($"{file.Path} has no contents to show.");
+            var truncated = content.Length > MaxCharsPerFile;
             var label = $"contents of {file.Path}" + (truncated ? " (truncated)" : "");
             // Fence, not AppendFenced: every file here exists, so an EMPTY one must still appear. Omitted
             // instead, the model cannot tell an empty file from one that was never fetched.
             sb.AppendLine(UntrustedText.Fence(
-                label, truncated ? file.Content[..MaxCharsPerFile] : file.Content));
+                label, truncated ? content[..MaxCharsPerFile] : content));
         }
 
         return sb.ToString();

@@ -8,22 +8,6 @@ using Condux.Core.SourceControl;
 
 namespace Condux.GitHub;
 
-/// <summary>An open Dependabot alert (CVE) on a repo (#117): the advisory ids + severity, the vulnerable
-/// package and range, the first patched version to bump to (null when none is published yet), and the
-/// repo-relative manifest the dependency is declared in (null when GitHub omits it) — what lets a bump
-/// target a monorepo workspace member instead of assuming the repo root (#41).</summary>
-public sealed record DependabotAlert(
-    string GhsaId,
-    string? CveId,
-    string Severity,
-    string Summary,
-    string Package,
-    string Ecosystem,
-    string VulnerableRange,
-    string? FixedVersion,
-    string HtmlUrl,
-    string? ManifestPath = null);
-
 /// <summary>
 /// The GitHub implementation of <see cref="ISourceHostClient"/> (#145): the repo operations a fix run
 /// needs, over the GitHub REST API with an installation token per call — read a file, resolve a branch
@@ -32,7 +16,7 @@ public sealed record DependabotAlert(
 /// stored; like the rest of Condux.GitHub this is a thin HttpClient layer with no external NuGet deps.
 /// Also exposes GitHub-specific reads not on the neutral interface (Dependabot alerts, #117).
 /// </summary>
-public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https://api.github.com")
+public sealed partial class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https://api.github.com")
     : ISourceHostClient
 {
     private static readonly JsonSerializerOptions Json = new()
@@ -60,26 +44,6 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
     /// </summary>
     private static string ToFilePath(string path) => RepoPaths.ToUrlPath(path);
 
-    /// <summary>Read a file at a ref. Null when the path does not exist there.</summary>
-    public async Task<RepoFile?> GetFileAsync(
-        string token, string repoFullName, string path, string gitRef, CancellationToken ct = default)
-    {
-        using var resp = await SendAsync(
-            token, HttpMethod.Get,
-            $"/repos/{ToRepoSegment(repoFullName)}/contents/{ToFilePath(path)}?ref={Uri.EscapeDataString(gitRef)}",
-            body: null, ct);
-        if (resp.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
-        resp.EnsureSuccessStatusCode();
-        var file = await resp.Content.ReadFromJsonAsync<ContentResponse>(ct)
-            ?? throw new InvalidOperationException($"GitHub returned an empty contents response for {path}.");
-        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(file.Content.Replace("\n", "")));
-        return new RepoFile(path, decoded, file.Sha);
-    }
-
     /// <summary>The commit sha a branch currently points at.</summary>
     public async Task<string> GetBranchHeadShaAsync(
         string token, string repoFullName, string branch, CancellationToken ct = default)
@@ -99,24 +63,6 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         using var resp = await SendAsync(
             token, HttpMethod.Post, $"/repos/{ToRepoSegment(repoFullName)}/git/refs",
             new { @ref = $"refs/heads/{branch}", sha = fromSha }, ct);
-        resp.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>Create or update one file on a branch. <paramref name="existingSha"/> is the blob sha when
-    /// the file already exists (required by GitHub for updates); null creates it.</summary>
-    public async Task PutFileAsync(
-        string token, string repoFullName, string path, string branch, string message, string content,
-        string? existingSha, CancellationToken ct = default)
-    {
-        using var resp = await SendAsync(
-            token, HttpMethod.Put, $"/repos/{ToRepoSegment(repoFullName)}/contents/{ToFilePath(path)}",
-            new
-            {
-                message,
-                branch,
-                content = Convert.ToBase64String(Encoding.UTF8.GetBytes(content)),
-                sha = existingSha,
-            }, ct);
         resp.EnsureSuccessStatusCode();
     }
 
@@ -141,33 +87,6 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         resp.EnsureSuccessStatusCode();
         var page = await resp.Content.ReadFromJsonAsync<InstallationRepositoriesResponse>(ct);
         return [.. (page?.Repositories ?? []).Select(r => r.FullName)];
-    }
-
-    /// <summary>Open Dependabot alerts (CVEs) for a repo (#117): the vulnerable package, its severity,
-    /// the vulnerable range and the first patched version. Needs the App's "Dependabot alerts: read"
-    /// permission; without it GitHub 403s. First page (100), open alerts only.</summary>
-    public async Task<IReadOnlyList<DependabotAlert>> ListDependabotAlertsAsync(
-        string token, string repoFullName, CancellationToken ct = default)
-    {
-        using var resp = await SendAsync(
-            token, HttpMethod.Get, $"/repos/{ToRepoSegment(repoFullName)}/dependabot/alerts?state=open&per_page=100",
-            body: null, ct);
-        resp.EnsureSuccessStatusCode();
-        var alerts = await resp.Content.ReadFromJsonAsync<List<AlertResponse>>(ct) ?? [];
-        return
-        [
-            .. alerts.Select(alert => new DependabotAlert(
-                alert.SecurityAdvisory.GhsaId,
-                alert.SecurityAdvisory.CveId,
-                alert.SecurityAdvisory.Severity,
-                alert.SecurityAdvisory.Summary,
-                alert.SecurityVulnerability.Package.Name,
-                alert.SecurityVulnerability.Package.Ecosystem,
-                alert.SecurityVulnerability.VulnerableVersionRange,
-                alert.SecurityVulnerability.FirstPatchedVersion?.Identifier,
-                alert.HtmlUrl,
-                alert.Dependency?.ManifestPath)),
-        ];
     }
 
     /// <summary>The repo-relative paths of every file (blob) at a ref, via the recursive git-tree API
@@ -210,20 +129,6 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         return new SuspectCommit(commit.Sha, subject, commit.Author?.Login, commit.HtmlUrl);
     }
 
-    /// <summary>Open a draft pull request and return its URL.</summary>
-    public async Task<string> OpenDraftPullRequestAsync(
-        string token, string repoFullName, string headBranch, string baseBranch, string title, string body,
-        CancellationToken ct = default)
-    {
-        using var resp = await SendAsync(
-            token, HttpMethod.Post, $"/repos/{ToRepoSegment(repoFullName)}/pulls",
-            new { title, body, head = headBranch, @base = baseBranch, draft = true }, ct);
-        resp.EnsureSuccessStatusCode();
-        var pr = await resp.Content.ReadFromJsonAsync<PullResponse>(ct)
-            ?? throw new InvalidOperationException("GitHub returned an empty pull-request response.");
-        return pr.HtmlUrl;
-    }
-
     private async Task<HttpResponseMessage> SendAsync(
         string token, HttpMethod method, string path, object? body, CancellationToken ct)
     {
@@ -239,15 +144,9 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
         return await http.SendAsync(req, ct);
     }
 
-    private sealed record ContentResponse(
-        [property: JsonPropertyName("content")] string Content,
-        [property: JsonPropertyName("sha")] string Sha);
-
     private sealed record RefResponse([property: JsonPropertyName("object")] RefObject Object);
 
     private sealed record RefObject([property: JsonPropertyName("sha")] string Sha);
-
-    private sealed record PullResponse([property: JsonPropertyName("html_url")] string HtmlUrl);
 
     private sealed record BranchResponse([property: JsonPropertyName("name")] string Name);
 
@@ -274,33 +173,4 @@ public sealed class GitHubRepoClient(HttpClient http, string apiBaseUrl = "https
     private sealed record CommitDetail([property: JsonPropertyName("message")] string Message);
 
     private sealed record CommitAuthor([property: JsonPropertyName("login")] string? Login);
-
-    // The Dependabot alert JSON: advisory ids/severity/summary, plus the alert-specific vulnerability
-    // (its package + range + first patched version). See https://docs.github.com/rest/dependabot/alerts.
-    private sealed record AlertResponse(
-        [property: JsonPropertyName("security_advisory")] AdvisoryJson SecurityAdvisory,
-        [property: JsonPropertyName("security_vulnerability")] VulnerabilityJson SecurityVulnerability,
-        [property: JsonPropertyName("html_url")] string HtmlUrl,
-        // The schema marks dependency.manifest_path optional, so both levels stay nullable.
-        [property: JsonPropertyName("dependency")] DependencyJson? Dependency = null);
-
-    private sealed record DependencyJson(
-        [property: JsonPropertyName("manifest_path")] string? ManifestPath);
-
-    private sealed record AdvisoryJson(
-        [property: JsonPropertyName("ghsa_id")] string GhsaId,
-        [property: JsonPropertyName("cve_id")] string? CveId,
-        [property: JsonPropertyName("severity")] string Severity,
-        [property: JsonPropertyName("summary")] string Summary);
-
-    private sealed record VulnerabilityJson(
-        [property: JsonPropertyName("package")] PackageJson Package,
-        [property: JsonPropertyName("vulnerable_version_range")] string VulnerableVersionRange,
-        [property: JsonPropertyName("first_patched_version")] PatchedVersionJson? FirstPatchedVersion);
-
-    private sealed record PackageJson(
-        [property: JsonPropertyName("ecosystem")] string Ecosystem,
-        [property: JsonPropertyName("name")] string Name);
-
-    private sealed record PatchedVersionJson([property: JsonPropertyName("identifier")] string Identifier);
 }

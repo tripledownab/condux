@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Condux.Core.FixEngine;
 
 namespace Condux.Agent;
 
@@ -47,18 +48,17 @@ public sealed class AnthropicMessagesClient(HttpClient http, AnthropicOptions op
         if (!resp.IsSuccessStatusCode)
         {
             var detail = await resp.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException(
-                $"Anthropic API returned {(int)resp.StatusCode}: {ModelApiError.Describe(detail)}");
+            throw ModelApiError.ToFailure("Anthropic API", resp.StatusCode, detail);
         }
 
         var parsed = await resp.Content.ReadFromJsonAsync<Response>(ct)
-            ?? throw new InvalidOperationException("Anthropic API returned an empty response.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "Anthropic API returned an empty response.");
         var text = string.Concat(
             parsed.Content.Where(b => b.Type == "text").Select(b => b.Text));
         return text.Length > 0
             ? new ModelOutput(text, parsed.Usage?.InputTokens ?? 0, parsed.Usage?.OutputTokens ?? 0)
-            : throw new InvalidOperationException(
-                $"Anthropic API returned no text output (stop_reason: {parsed.StopReason}).");
+            : throw new FixFailedException(
+                FixFailureReason.NoUsableFix, $"Anthropic API returned no text output (stop_reason: {parsed.StopReason}).");
     }
 
 

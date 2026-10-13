@@ -29,10 +29,23 @@ public sealed class RoutingAgentGateway(
         return new AgentRun((useByo ? ByoPrefix : ManagedPrefix) + run.RunId);
     }
 
-    public Task<AgentRunProgress> PollAsync(string runId, CancellationToken ct = default) =>
+    public Task<AgentRunProgress> PollAsync(string runId, CancellationToken ct = default)
+    {
+        var (inner, id) = Resolve(runId);
+        return inner.PollAsync(id, ct);
+    }
+
+    public Task<AgentRunProgress> CancelAsync(string runId, CancellationToken ct = default, bool publishFinished = false)
+    {
+        var (inner, id) = Resolve(runId);
+        return inner.CancelAsync(id, ct, publishFinished);
+    }
+
+    // The backend a run id names, and the id that backend knows it by.
+    private (IAgentGateway Inner, string RunId) Resolve(string runId) =>
         runId.StartsWith(ByoPrefix, StringComparison.Ordinal)
-            ? byo.PollAsync(runId[ByoPrefix.Length..], ct)
+            ? (byo, runId[ByoPrefix.Length..])
             : runId.StartsWith(ManagedPrefix, StringComparison.Ordinal)
-                ? managed.PollAsync(runId[ManagedPrefix.Length..], ct)
+                ? (managed, runId[ManagedPrefix.Length..])
                 : throw new KeyNotFoundException($"Unknown agent run '{runId}' (no backend prefix).");
 }

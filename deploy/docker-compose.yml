@@ -1,7 +1,7 @@
 name: condux
 
 # Local dev + small self-host stack: data stores + the three Condux services.
-# Host ports are chosen to avoid collisions (MinIO owns 9000; relay is on 9010).
+# Host ports are chosen to avoid collisions (the dev object store owns 9000; relay is on 9010).
 #
 # HARD RULE: every published port binds to 127.0.0.1 (loopback), NEVER 0.0.0.0. These ports carry into
 # the prod overlay (Compose concatenates published ports and cannot un-publish them), so a public bind
@@ -14,6 +14,19 @@ name: condux
 # Credentials are supplied via deploy/.env (NOT hardcoded here). Before first run:
 #   cp deploy/.env.example deploy/.env
 #   docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+
+# Object storage (S3) for source-map artifacts (ADR-0028), merged into the control-plane, which stores
+# uploads and symbolicates the events it shows, and the consumer, whose auto-fix builds its context from a
+# symbolicated event. One block, so the two cannot point at different buckets. Dev points at the bundled
+# object-store service, which pre-creates the bucket, so source-map upload works out of the box; prod sets
+# these to a BYO S3 bucket via deploy/.env.prod. Opt-in in code: with the creds unset the /api/sourcemaps
+# routes 404 and nothing symbolicates, so prod (which has no DEV_S3_*) defaults to off until configured.
+x-object-store-env: &object-store-env
+  CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-http://object-store:9000}
+  CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-condux-sourcemaps}
+  CONDUX_S3_ACCESS_KEY: ${DEV_S3_ACCESS_KEY}
+  CONDUX_S3_SECRET_KEY: ${DEV_S3_SECRET_KEY}
+  CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
 
 services:
   postgres:
@@ -79,45 +92,34 @@ services:
     image: valkey/valkey:8-alpine
     ports: ["127.0.0.1:6379:6379"]
 
-  # MinIO is AGPL-3.0 — LOCAL DEV ONLY (S3-compatible target). Not bundled or
-  # redistributed in the product, which is why its licence does not reach it;
-  # production targets the S3 API instead (your own bucket, or cloud S3).
+  # S3-compatible object store for LOCAL DEV ONLY (source maps, ADR-0028). Production targets the S3 API
+  # instead (your own bucket, or cloud S3), so nothing here is bundled or redistributed.
   #
-  # Pulled from quay.io, not Docker Hub, and PINNED rather than :latest. Both this image and minio/mc
-  # stopped being anonymously pullable from Docker Hub, which turned CI's integration job red with
-  # "pull access denied" and would have broken a fresh `pnpm dev` on the bucket step below. WHY is not
-  # established and is not guessed at here; what was measured is that the Hub registry answers 401, that
-  # quay serves both, and that the GitHub repository is archived with its licence still reading AGPL-3.0.
+  # RustFS (Apache-2.0) replaced MinIO once no registry would serve MinIO to an anonymous pull: Docker
+  # Hub stopped first, then quay.io, and the MinIO repository is archived. RustFS verifies SigV4, which
+  # is why it was chosen over the lighter mocks; S3ObjectStoreTest holds that with a wrong-secret case.
+  # Pulled from ghcr.io, since Docker Hub rate-limits anonymous pulls, and PINNED: a floating tag on
+  # someone else's image turns their publishing decisions into our outage. The integration fixture
+  # (S3Fixture) pins the same image, and S3FixtureImageTest fails if the two drift apart.
   #
-  # A floating tag on someone else's image turns their publishing decisions into our outage, silently, so
-  # both tags name a release. Each is the digest quay's :latest resolved to when it was pinned. The Hub
-  # original can no longer be fetched, so whether it served the same build is unknown.
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ":9001"
+  # The bucket directory is created before the server starts, which RustFS treats as an existing bucket,
+  # so no second client container is needed. A named volume rather than a bind mount because the image
+  # runs as a non-root uid, and a host directory Docker creates on Linux is root-owned.
+  object-store:
+    image: ghcr.io/rustfs/rustfs:1.0.0
+    entrypoint: ["sh", "-c", "mkdir -p \"/data/$$CONDUX_S3_BUCKET\" && exec /entrypoint.sh rustfs"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
-    volumes: ["./.data/minio:/data"]
-
-  # One-shot: create the source-map bucket in the dev MinIO so uploads work out of the box (ADR-0028).
-  # Dev-only, like minio itself; prod uses a pre-provisioned BYO bucket and parks this behind a profile.
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      minio: { condition: service_started }
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      RUSTFS_ACCESS_KEY: ${DEV_S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${DEV_S3_SECRET_KEY}
+      RUSTFS_OBS_LOG_DIRECTORY: ""
       CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-condux-sourcemaps}
-    entrypoint: >
-      /bin/sh -c "until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do sleep 1; done; mc mb --ignore-existing \"local/$${CONDUX_S3_BUCKET}\""
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["object-store-data:/data"]
 
   # Mailpit (MIT) — a local SMTP catcher for email alerts (#56) + Conductor-pause org notices (#130). The
   # consumer and control-plane point their CONDUX_SMTP_* at it by default in dev (see below), so email
   # delivery works with no config; read the caught mail in the web inbox at http://localhost:8025. Dev-only:
-  # the prod override parks it behind a profile so it never starts there (same pattern as minio).
+  # the prod override parks it behind a profile so it never starts there (same pattern as object-store).
   mailpit:
     image: axllent/mailpit:latest
     ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
@@ -180,6 +182,12 @@ services:
   controlplane:
     build: { context: .., dockerfile: backend/Dockerfile, target: controlplane }
     init: true
+    # Room to finish in-flight requests and then flush both job producers (issue fix and CVE bump), each
+    # bounded at 5s, before SIGKILL. A job still queued there has already reserved its run, so dropping
+    # it costs the org that run. Live-update streams end as shutdown starts, so they do not hold it. A
+    # request that hangs longer (the host waits up to 30s for it) is killed before the flush runs. Stated
+    # for the same reason as the consumer's below: the daemon default is not portable.
+    stop_grace_period: 20s
     environment:
       ASPNETCORE_URLS: "http://0.0.0.0:8080"
       ASPNETCORE_ENVIRONMENT: Development
@@ -216,9 +224,9 @@ services:
       # points the TXT lookup at a different DNS-over-HTTPS resolver.
       CONDUX_SSO_SKIP_DOMAIN_VERIFICATION: ${CONDUX_SSO_SKIP_DOMAIN_VERIFICATION:-}
       CONDUX_DOH_ENDPOINT: ${CONDUX_DOH_ENDPOINT:-}
-      # The dashboard runs on a different origin in dev (web :3000 → API :8080); allow it to send the
+      # The dashboard runs on a different origin in dev (web :3200 → API :8080); allow it to send the
       # session cookie. Prod serves both same-origin, so this stays unset there (no CORS emitted).
-      CONDUX_CORS_ORIGINS: "http://localhost:3000"
+      CONDUX_CORS_ORIGINS: "http://localhost:3200"
       # Host + scheme baked into the DSNs / ingest URLs the control-plane hands to users. Dev defaults to
       # the relay's host port (localhost:9010, so an SDK on the host reaches it); prod MUST override this to
       # the public ingest host (docker-compose.prod.yml sets https + ingest.condux.ai), else minted DSNs
@@ -258,15 +266,12 @@ services:
       # Dashboard's absolute base URL for links inside emails (invite accept links). Split-origin dev falls
       # back to the first CORS origin, so it can stay unset locally; prod sets https://app.condux.ai.
       CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-}
-      # Object storage (S3/MinIO) for source-map artifacts (ADR-0028). Dev points at the bundled MinIO so
-      # source-map upload works out of the box (minio-init creates the bucket); prod sets these to a BYO S3
-      # bucket via deploy/.env.prod. Opt-in in code: with the creds unset the /api/sourcemaps routes 404, so
-      # prod (which has no MINIO_ROOT_*) defaults to off until configured.
-      CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-http://minio:9000}
-      CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-condux-sourcemaps}
-      CONDUX_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      CONDUX_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
+      # Native frames resolve through the symbolizer (ADR-0049), reached over its own network below.
+      CONDUX_SYMBOLIZER_URL: "http://symbolizer:9100"
+      <<: *object-store-env
+    # default for the stores and the edge, symbolizer for the native pass. Naming one network replaces
+    # the implied default, so both are listed.
+    networks: [default, symbolizer]
     volumes:
       # Mount the GitHub App private key (your host .pem) read-only at the path above. Defaults to a
       # committed placeholder so the stack still starts when GitHub is off; set
@@ -284,8 +289,8 @@ services:
       # adds a ClickHouse migration races it, and the loser writes to a table that does not
       # exist yet.
       clickhouse-init: { condition: service_completed_successfully }
-      # Note: no minio dependency — the S3 client connects lazily on first upload, and minio is a dev-only
-      # (profile-gated) service, so a hard dependency would make the prod overlay an invalid compose project.
+      # Note: no object-store dependency. The S3 client connects lazily on first upload, and object-store
+      # is a dev-only (profile-gated) service, so a hard dependency would make the prod overlay invalid.
 
   web:
     # Repo root as context (not ../web) so the workspace dep @condux/brand resolves. The dashboard
@@ -310,7 +315,7 @@ services:
       # Condux on Condux: the dashboard server reports its own errors to the relay when a DSN is
       # set. Inside compose the DSN host is the relay service (http://<key>@relay:9000/<projectId>).
       CONDUX_DSN: ${CONDUX_WEB_DSN:-}
-    ports: ["127.0.0.1:3000:3000"]
+    ports: ["127.0.0.1:3200:3000"]
     depends_on: [controlplane]
 
   consumer:
@@ -318,9 +323,10 @@ services:
     init: true
     # Give the drain loop time to write what it has buffered before SIGKILL. It flushes ClickHouse on
     # shutdown, bounded at 5s, and Kafka offsets are auto-committed regardless, so rows killed in the
-    # buffer are lost rather than replayed. This must be stated rather than inherited: the daemon default
-    # is not portable (measured at 1s on a local Docker Desktop, where the flush would rarely finish),
-    # and the process cannot read its own grace period to adapt.
+    # buffer are lost rather than replayed. After that the fix-request producer flushes, also bounded at
+    # 5s, or an auto-fix job still queued is lost with its run kept. This must be stated rather than
+    # inherited: the daemon default is not portable (measured at 1s on a local Docker Desktop, where the
+    # flush would rarely finish), and the process cannot read its own grace period to adapt.
     stop_grace_period: 20s
     environment:
       CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
@@ -350,7 +356,11 @@ services:
       # Weekly summary email (ADR-0031): the digest's CTA links to the dashboard. Same base-URL resolution as
       # the control-plane (CONDUX_APP_BASE_URL, else the first CORS origin); prod sets CONDUX_APP_BASE_URL.
       CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-}
-      CONDUX_CORS_ORIGINS: "http://localhost:3000"
+      CONDUX_CORS_ORIGINS: "http://localhost:3200"
+      # Native frames resolve through the symbolizer (ADR-0049), reached over its own network below.
+      CONDUX_SYMBOLIZER_URL: "http://symbolizer:9100"
+      <<: *object-store-env
+    networks: [default, symbolizer]
     depends_on:
       postgres: { condition: service_healthy }
       # Wait for migrations to finish (postgres healthy != schema applied); this worker writes to Postgres.
@@ -379,13 +389,23 @@ services:
       CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CONDUX_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       # Fix provider: "fake" (default; fabricates a result, no LLM/PR), "simulated-agent" (full start->poll
-      # orchestration against a simulated backend, still no LLM/PR) or "anthropic" (the real thing: Claude
-      # proposes the fix and the Conductor opens a draft PR — needs the Anthropic key + the GitHub App
-      # credentials below). Set CONDUX_CONDUCTOR_PROVIDER in deploy/.env.
+      # orchestration against a simulated backend, still no LLM/PR), "anthropic" (the real thing: Claude
+      # proposes the fix and the Conductor opens a draft PR, which needs the Anthropic key + the GitHub App
+      # credentials below) or "managed-agents" (the same, on sessions the vendor hosts). Set
+      # CONDUX_CONDUCTOR_PROVIDER in deploy/.env.
       CONDUX_CONDUCTOR_PROVIDER: ${CONDUX_CONDUCTOR_PROVIDER:-fake}
       # The agentic loop (ADR-0033) on the anthropic provider: on, the model explores and edits the scoped
       # checkout over several turns; off (the default), it makes the single ADR-0016 patch-proposal call.
       CONDUX_CONDUCTOR_AGENTIC: ${CONDUX_CONDUCTOR_AGENTIC:-false}
+      # Poll cadence (read under every provider, and by the sweep for stale runs), and the session budget
+      # and pins for managed-agents. Each one left unset keeps the conductor's own default. A pinned
+      # environment or agent is used exactly as configured, so give a pinned environment limited networking
+      # with no allowed hosts, and switch read, web_fetch and web_search off on a pinned agent.
+      CONDUX_CONDUCTOR_POLL_SECONDS: ${CONDUX_CONDUCTOR_POLL_SECONDS:-}
+      CONDUX_CONDUCTOR_MAX_POLLS: ${CONDUX_CONDUCTOR_MAX_POLLS:-}
+      CONDUX_CMA_MAX_SESSION_USD: ${CONDUX_CMA_MAX_SESSION_USD:-}
+      CONDUX_CMA_AGENT_ID: ${CONDUX_CMA_AGENT_ID:-}
+      CONDUX_CMA_ENVIRONMENT_ID: ${CONDUX_CMA_ENVIRONMENT_ID:-}
       # The sandbox the agent runs build/test/scan commands in (ADR-0033 slice 2). Off unless an image is
       # set, in which case the workspace reports it cannot execute and the loop drops the command tool.
       # The endpoint decides WHERE containers run, so a deployment can keep the container runtime on
@@ -416,6 +436,27 @@ services:
       # adds a ClickHouse migration races it, and the loser writes to a table that does not
       # exist yet.
       clickhouse-init: { condition: service_completed_successfully }
+
+  # The native symbolizer (ADR-0049): resolves native frame addresses with llvm-symbolizer, against debug
+  # files a stranger uploaded. So it gets nothing worth taking: no credential, no store, no published port,
+  # a read-only root, and an isolated internal network (below). The control-plane and the consumer reach it
+  # by joining that network, which also lets it reach their ports: compose has no one-way rule, and the
+  # control-plane's API is public through the edge anyway, while the consumer listens on nothing.
+  symbolizer:
+    build: { context: .., dockerfile: backend/Dockerfile, target: symbolizer }
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - symbolizer-cache:/cache
+    networks: [symbolizer]
+    # A ceiling, so a debug file that makes the parser misbehave costs this container rather than the
+    # host every other service shares.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
 
   # One-shot: apply the ClickHouse schema once the server is up.
   clickhouse-init:
@@ -457,3 +498,18 @@ services:
       PG_PASSWORD: ${POSTGRES_PASSWORD}
       PG_DB: ${POSTGRES_DB}
     restart: "no"
+
+volumes:
+  object-store-data:
+  # The symbolizer's debug file cache. Only a cache: a caller reads each file from object storage.
+  symbolizer-cache:
+
+networks:
+  # internal takes away the route out. It leaves the host reachable on the bridge's own address, which
+  # Docker assigns even to an internal network, so a host service listening on every address answers.
+  # The isolated gateway mode assigns the bridge no address at all, so the symbolizer can reach only what
+  # shares it. It needs Docker Engine 28.0 or later: check the engine before trusting this fence.
+  symbolizer:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated

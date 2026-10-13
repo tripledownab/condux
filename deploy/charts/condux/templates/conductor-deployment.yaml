@@ -29,6 +29,24 @@ spec:
             {{- include "condux.clickhouseEnv" . | nindent 12 }}
             - name: CONDUX_CONDUCTOR_PROVIDER
               value: {{ .Values.conductor.provider | quote }}
+            {{- $tuning := dict
+                  "CONDUX_CONDUCTOR_POLL_SECONDS" .Values.conductor.pollSeconds
+                  "CONDUX_CONDUCTOR_MAX_POLLS" .Values.conductor.maxPolls
+                  "CONDUX_CMA_MAX_SESSION_USD" .Values.conductor.maxSessionUsd
+                  "CONDUX_CMA_AGENT_ID" .Values.conductor.agentId
+                  "CONDUX_CMA_ENVIRONMENT_ID" .Values.conductor.environmentId }}
+            {{- range $name, $value := $tuning }}
+            {{- /* Compared as text, so a 0 reaches the conductor and is refused rather than read as unset. YAML
+                   reads an unquoted number as a float, so a whole one is written as an integer, not 1e+06. */}}
+            {{- if and (not (kindIs "invalid" $value)) (ne (toString $value) "") }}
+            {{- $text := toString $value }}
+            {{- if and (kindIs "float64" $value) (eq $value (float64 (int64 $value))) }}
+            {{- $text = toString (int64 $value) }}
+            {{- end }}
+            - name: {{ $name }}
+              value: {{ $text | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.secret.anthropicApiKey }}
             - name: CONDUX_ANTHROPIC_API_KEY
               valueFrom:

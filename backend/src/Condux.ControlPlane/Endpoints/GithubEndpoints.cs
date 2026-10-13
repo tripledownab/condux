@@ -25,7 +25,8 @@ internal static class GithubEndpoints
         app.MapPost("/api/github/webhook",
                 async Task<Results<NoContent, UnauthorizedHttpResult, NotFound>> (
                     HttpContext http, GitHubAppConfig config, GithubInstallationRepository installations,
-                    PostgresFixVerification fixVerification, IFixStore fixes) =>
+                    PostgresFixVerification fixVerification, PostgresCveFixVerification cveVerification,
+                    IFixStore fixes, ProjectEventNotifier projectEvents, ILoggerFactory loggerFactory) =>
                 {
                     if (!config.Enabled)
                     {
@@ -45,7 +46,15 @@ internal static class GithubEndpoints
                             await HandleInstallationEventAsync(body, installations, http.RequestAborted);
                             break;
                         case "pull_request":
-                            await HandlePullRequestEventAsync(body, fixVerification, fixes, http.RequestAborted);
+                            // A bump now watching changes its run on the API; ping the project so an open
+                            // dashboard refetches it (ADR-0030).
+                            foreach (var projectId in await HandlePullRequestEventAsync(
+                                         body, fixVerification, cveVerification, fixes, http.RequestAborted))
+                            {
+                                await ProjectEventNudge.TrySendAsync(
+                                    projectEvents, loggerFactory.CreateLogger(nameof(GithubEndpoints)), projectId,
+                                    http.RequestAborted);
+                            }
                             break;
                     }
                     return TypedResults.NoContent();
@@ -117,12 +126,13 @@ internal static class GithubEndpoints
         }
     }
 
-    // A merged Conductor draft PR starts the verification watch (ADR-0019): match the PR's repo +
-    // head branch to the fix run that opened it, stamp merged_at and audit the merge. Non-Conductor
-    // PRs simply match nothing.
-    private static async Task HandlePullRequestEventAsync(
-        byte[] body, PostgresFixVerification fixVerification, IFixStore fixes,
-        CancellationToken ct)
+    // A merged Conductor draft PR starts the verification watch: match the PR's repo + head branch to the
+    // run that opened it and stamp merged_at, an issue fix (ADR-0019, audited fix_merged) or a CVE bump
+    // (ADR-0051, which writes no audit). Non-Conductor PRs simply match nothing. Returns the projects whose
+    // bumps it marked, for the caller to nudge.
+    private static async Task<IReadOnlyList<long>> HandlePullRequestEventAsync(
+        byte[] body, PostgresFixVerification fixVerification, PostgresCveFixVerification cveVerification,
+        IFixStore fixes, CancellationToken ct)
     {
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
@@ -135,7 +145,7 @@ internal static class GithubEndpoints
             || !pr.TryGetProperty("head", out var head)
             || !head.TryGetProperty("ref", out var headRef) || headRef.GetString() is not { } branch)
         {
-            return;
+            return [];
         }
 
         var mergedAt = pr.TryGetProperty("merged_at", out var m) && m.ValueKind == JsonValueKind.String
@@ -150,6 +160,7 @@ internal static class GithubEndpoints
             var detail = JsonSerializer.Serialize(new { prUrl, mergedAt });
             await fixes.AppendAuditAsync(fixId, "github", "fix_merged", detail, ct);
         }
+        return [.. (await cveVerification.MarkMergedAsync(repo, branch, mergedAt, ct)).Select(run => run.ProjectId).Distinct()];
     }
 
 }

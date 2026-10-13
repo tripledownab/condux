@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { findChunkPairs, findSourceMaps, mapDebugId, sourceMappingRef, uploadOneMap } from "./sourcemaps.ts";
+import { findChunkPairs, findSourceMaps, mapDebugId, sourceMappingRef, uploadOneMap } from "./map-files.ts";
 
 /** Where uploads go, resolved by the config wrapper. Absent means "do not upload". */
 export interface UploadTarget {
@@ -27,9 +27,19 @@ export interface ProcessResult {
   kept: number;
 }
 
-// The stamp's own marker doubles as the idempotence guard: a chunk containing it was already processed,
-// and re-stamping would derive a different id from the now-changed bytes.
+// The global the snippet registers in. Not an idempotence marker: @condux/core reads the same name, so a
+// chunk that bundles the SDK contains it without ever having been stamped.
 const REGISTRY_MARKER = "_conduxDebugIds";
+
+// What stampChunk leaves at the end of a chunk: the debugId comment, then the map pointer when one stays.
+const STAMPED_TAIL = /\n\/\/# debugId=[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\n(?:\/\/# sourceMappingURL=\S+\n)?$/;
+
+/** Whether a chunk was already stamped by an earlier pass, which re-stamping would give a different id,
+ * derived from the bytes the first stamp changed. Read from the end of the chunk, where only the stamp
+ * writes. */
+export function isStamped(js: string): boolean {
+  return STAMPED_TAIL.test(js);
+}
 
 /**
  * A deterministic, UUID-shaped debugId from the chunk's own bytes: the same build output always yields
@@ -96,7 +106,10 @@ export async function processClientBuild(options: {
   for (const { jsPath, mapPath } of pairs) {
     try {
       const js = await readFile(jsPath, "utf8");
-      if (js.includes(REGISTRY_MARKER)) {
+      if (isStamped(js)) {
+        // Stamped by an earlier pass that kept its map. Said out loud, because the map is in the public
+        // output until something uploads and removes it.
+        result.kept++;
         continue;
       }
       const debugId = debugIdFromContent(js);
@@ -175,7 +188,7 @@ export async function processClientBuild(options: {
     }
   }
 
-  if (result.stamped > 0 || result.uploaded > 0 || result.failed > 0) {
+  if (result.stamped > 0 || result.uploaded > 0 || result.failed > 0 || result.kept > 0) {
     log(
       `condux: stamped ${result.stamped} chunks with debugIds` +
         (options.upload

@@ -73,10 +73,6 @@ public sealed class SourceMapDecodeTests
     [Fact]
     public void An_out_of_range_line_has_no_mapping() => Assert.Null(Map().OriginalPositionFor(2, 0));
 
-    [Fact]
-    public void An_index_map_is_not_supported_yet() =>
-        Assert.Null(SourceMap.Parse(Encoding.UTF8.GetBytes("""{"version":3,"sections":[]}""")));
-
     // The separator counts come from a string a caller uploaded, so without a bound a map that is
     // almost all separators costs orders of magnitude more memory than it took to send. Refusing reads
     // to the symbolicator as a map it cannot use, which is a frame left alone rather than an error.

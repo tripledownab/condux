@@ -27,7 +27,7 @@ public sealed class ManagedAgentsClientTests
     public async Task Every_call_carries_the_beta_and_key_headers()
     {
         var (client, http) = Create();
-        http.Routes["GET /v1/agents"] = (HttpStatusCode.OK, """{"data":[]}""");
+        http.Routes["GET /v1/agents?limit=100&include_archived=true"] = (HttpStatusCode.OK, """{"data":[]}""");
 
         await client.ListAgentsAsync();
 
@@ -43,7 +43,7 @@ public sealed class ManagedAgentsClientTests
         http.Routes["POST /v1/sessions"] = (HttpStatusCode.OK, """{"id":"sesn_1","status":"running"}""");
 
         var session = await client.CreateSessionAsync(new WireSessionCreate(
-            "agent_1", "env_1", "condux fix",
+            new WireAgentOverrides("agent_1", "be careful", [WireToolRef.AgentToolset]), "env_1", "condux fix",
             [new WireRepositoryResource(
                 "https://github.com/acme/app", "ghs_token", new WireCheckout("branch", "main"))],
             [new WireUserMessage([new WireTextContent("fix it")])],
@@ -52,7 +52,14 @@ public sealed class ManagedAgentsClientTests
         Assert.Equal("sesn_1", session.Id);
 
         var body = JsonDocument.Parse(http.Requests.Single().Body).RootElement;
-        Assert.Equal("agent_1", body.GetProperty("agent").GetString());
+        var agent = body.GetProperty("agent");
+        Assert.Equal("agent_with_overrides", agent.GetProperty("type").GetString());
+        Assert.Equal("agent_1", agent.GetProperty("id").GetString());
+        Assert.Equal("be careful", agent.GetProperty("system").GetString());
+        var toolset = agent.GetProperty("tools")[0];
+        Assert.Equal("agent_toolset_20260401", toolset.GetProperty("type").GetString());
+        // A toolset with no configs sends no configs field at all.
+        Assert.False(toolset.TryGetProperty("configs", out _));
         var resource = body.GetProperty("resources")[0];
         Assert.Equal("github_repository", resource.GetProperty("type").GetString());
         Assert.Equal("ghs_token", resource.GetProperty("authorization_token").GetString());
@@ -128,6 +135,24 @@ public sealed class ManagedAgentsClientTests
         var options = ManagedAgentsOptions.FromEnv(good);
         Assert.Equal(2.50m, options.MaxSessionUsd);
         Assert.Equal("agent_pin", options.AgentId);
+        Assert.Null(options.EnvironmentId);
+    }
+
+    [Fact]
+    public void Options_read_an_empty_setting_as_unset()
+    {
+        // Compose passes each of these as ${VAR:-}, so an operator who sets none of them hands the
+        // conductor empty strings, which must keep the defaults rather than fail startup.
+        var empty = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CONDUX_ANTHROPIC_API_KEY"] = "k",
+            ["CONDUX_CMA_MAX_SESSION_USD"] = "",
+            ["CONDUX_CMA_AGENT_ID"] = "",
+            ["CONDUX_CMA_ENVIRONMENT_ID"] = "",
+        }).Build();
+        var options = ManagedAgentsOptions.FromEnv(empty);
+        Assert.Equal(5.00m, options.MaxSessionUsd);
+        Assert.Null(options.AgentId);
         Assert.Null(options.EnvironmentId);
     }
 }

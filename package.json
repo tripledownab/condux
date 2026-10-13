@@ -4,13 +4,13 @@
   "packageManager": "pnpm@9.12.3",
   "scripts": {
     "dev": "bash scripts/dev-up.sh",
-    "dev:stack": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build",
-    "dev:down": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml down",
-    "dev:logs": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs -f",
+    "dev:stack": "bash scripts/compose.sh up -d --build",
+    "dev:down": "bash scripts/compose.sh down",
+    "dev:logs": "bash scripts/compose.sh logs -f",
     "dev:runner": "bash scripts/runner-dev.sh",
     "dev:smee": "bash scripts/smee.sh",
-    "dev:web": "docker compose --env-file deploy/.env -f deploy/docker-compose.yml stop web && cd web && NEXT_PUBLIC_CONDUX_API_URL=http://localhost:8080 NEXT_PUBLIC_CONDUX_INGEST_URL=http://localhost:9010 pnpm dev",
-    "dev:landing": "cd landing && NEXT_PUBLIC_CONDUX_APP_URL=http://localhost:3000 pnpm dev --port 3002",
+    "dev:web": "bash scripts/compose.sh stop web && H=$(bash scripts/compose.sh --app-host) && cd web && NEXT_PUBLIC_CONDUX_API_URL=http://$H:8080 NEXT_PUBLIC_CONDUX_INGEST_URL=http://$H:9010 pnpm dev --port 3200",
+    "dev:landing": "cd landing && NEXT_PUBLIC_CONDUX_APP_URL=http://localhost:3200 pnpm dev --port 3002",
     "check:style": "bash scripts/check-style.sh",
     "check:docs": "python3 scripts/check-doc-refs.py",
     "check:sdk-chain": "python3 scripts/check-sdk-chain.py",
@@ -24,9 +24,10 @@
   },
   "pnpm": {
     "overrides": {
-      "sharp": "^0.35.4",
+      "sharp": "^0.35.5",
       "postcss": "^8.5.18",
-      "nanoid": "^3.3.17"
+      "nanoid": "^3.3.17",
+      "source-map-js": "^1.2.2"
     }
   }
 }

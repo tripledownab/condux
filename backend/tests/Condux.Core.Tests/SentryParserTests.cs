@@ -134,6 +134,95 @@ public class SentryParserTests
         Assert.Equal(Level.Error, e!.Level);
     }
 
+    // Sentry's protocol docs send image_size as a number for elf and macho and as a decimal string for pe.
+    [Theory]
+    [InlineData("8192", 8192L)]
+    [InlineData("\"1331200\"", 1331200L)]
+    [InlineData("0", null)]
+    [InlineData("-5", null)]
+    [InlineData("1.5", null)]
+    [InlineData("\"0x10\"", null)]
+    [InlineData("\"\"", null)]
+    public void ReadsAnImageSize_AsANumberOrADecimalString(string size, long? expected)
+    {
+        var payload = $$"""
+            { "debug_meta": { "images": [ { "type": "pe", "image_addr": "0x1000", "image_size": {{size}} } ] } }
+            """;
+
+        Assert.Equal(expected, Assert.Single(SentryParser.ParseStore(payload).Event!.DebugImages).ImageSize);
+    }
+
+    // The level as the event sends it, or null for no level key at all.
+    [Theory]
+    [InlineData(null, Level.Error)]
+    [InlineData("\"verbose\"", Level.Error)]
+    [InlineData("42", Level.Error)]
+    [InlineData("20", Level.Info)]
+    [InlineData("30", Level.Warning)]
+    [InlineData("\"log\"", Level.Info)]
+    [InlineData("\"critical\"", Level.Fatal)]
+    [InlineData("\"Warning\"", Level.Warning)]
+    [InlineData("\"debug\"", Level.Debug)]
+    public void ReadsTheEventLevel_DefaultingToError(string? level, Level expected)
+    {
+        var levelField = level is null ? "" : $"\"level\": {level},";
+        var payload = $$"""{ {{levelField}} "event_id": "e1", "message": "m" }""";
+
+        Assert.Equal(expected, SentryParser.ParseStore(payload).Event!.Level);
+    }
+
+    [Theory]
+    [InlineData("transaction")]
+    [InlineData("feedback")]
+    [InlineData("csp")]
+    public void ANonErrorTypePostedToStore_CarriesNoEvent(string type)
+    {
+        // A transaction, feedback or a CSP report is not a failure, so it must not become an issue or page anyone.
+        var payload = $$"""{ "type": "{{type}}", "event_id": "t1", "transaction": "GET /", "level": "error" }""";
+
+        var result = SentryParser.ParseStore(payload);
+
+        Assert.Equal(ParseOutcome.NoEvent, result.Outcome);
+        Assert.Null(result.Event);
+    }
+
+    [Fact]
+    public void ATransactionInAnEventItem_CarriesNoEvent()
+    {
+        // The envelope reader keeps only "event" items, but the payload inside one still says what it is.
+        var body = "{}\n{\"type\":\"event\"}\n{\"type\":\"transaction\",\"event_id\":\"t1\"}\n";
+
+        Assert.Equal(ParseOutcome.NoEvent, SentryParser.ParseEnvelope(body).Outcome);
+    }
+
+    [Theory]
+    [InlineData("\"error\"")]
+    [InlineData("\"default\"")]
+    [InlineData("null")]
+    public void AnEventOfAnotherType_StillParses(string type)
+    {
+        var payload = $$"""{ "type": {{type}}, "event_id": "e1", "message": "m" }""";
+
+        Assert.Equal(ParseOutcome.Parsed, SentryParser.ParseStore(payload).Outcome);
+    }
+
+    [Theory]
+    [InlineData(null, Level.Info)]
+    [InlineData("\"verbose\"", Level.Info)]
+    [InlineData("\"error\"", Level.Error)]
+    [InlineData("\"critical\"", Level.Fatal)]
+    [InlineData("30", Level.Warning)]
+    public void ReadsABreadcrumbLevel_DefaultingToInfo(string? level, Level expected)
+    {
+        // The protocol gives a breadcrumb a different default from the event it rides on.
+        var levelField = level is null ? "" : $"\"level\": {level},";
+        var payload = $$"""
+            { "level": "error", "breadcrumbs": { "values": [ { {{levelField}} "message": "b" } ] } }
+            """;
+
+        Assert.Equal(expected, Assert.Single(SentryParser.ParseStore(payload).Event!.Breadcrumbs).Level);
+    }
+
     // What Sentry SDKs send beyond the exception itself (#105) — asserted field by field, since the
     // transport suites cannot catch a wire-shape drift.
     private const string MetadataEvent = """

@@ -4,6 +4,7 @@ using System.Text;
 using Condux.Core.Events;
 using Condux.Core.Messaging;
 using Condux.Core.Plans;
+using Condux.Core.Projects;
 using Condux.Core.Quotas;
 using Condux.Core.RateLimiting;
 using Microsoft.AspNetCore.Hosting;
@@ -37,13 +38,14 @@ public class IngestEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     // rate limiter / spike guard so we can exercise the 429 paths deterministically.
     private WebApplicationFactory<Program> With(
         IEventPublisher? publisher = null, IRateLimiter? limiter = null, SpikeGuard? spike = null,
-        IQuotaMeter? quota = null) =>
+        IQuotaMeter? quota = null, IProjectStore? projects = null) =>
         _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
         {
             if (publisher is not null) s.AddSingleton(publisher);
             if (limiter is not null) s.AddSingleton(limiter);
             if (spike is not null) s.AddSingleton(spike);
             if (quota is not null) s.AddSingleton(quota);
+            if (projects is not null) s.AddSingleton(projects);
         }));
 
     // A rate limiter with a fixed verdict, to drive the handler's 429 branch.
@@ -54,15 +56,26 @@ public class IngestEndpointTests : IClassFixture<WebApplicationFactory<Program>>
             ValueTask.FromResult(decision);
     }
 
-    // A quota meter with a fixed verdict, to drive the handler's monthly-quota 429 branch.
+    // A quota meter with a fixed verdict, to drive the handler's monthly-quota 429 branch. It records the
+    // key it was asked about, since which allowance an event spends is the handler's decision, and what it
+    // was given back.
     private sealed class StubQuotaMeter(QuotaDecision decision) : IQuotaMeter
     {
-        public ValueTask<QuotaDecision> TryConsumeAsync(
-            string key, long monthlyLimit, long count = 1, CancellationToken ct = default) =>
-            ValueTask.FromResult(decision);
+        public List<string> Keys { get; } = [];
+        public List<(string Key, long Count)> Refunds { get; } = [];
 
-        public ValueTask RefundAsync(string key, long count, CancellationToken ct = default) =>
-            ValueTask.CompletedTask;
+        public ValueTask<QuotaDecision> TryConsumeAsync(
+            string key, long monthlyLimit, long count = 1, CancellationToken ct = default)
+        {
+            Keys.Add(key);
+            return ValueTask.FromResult(decision);
+        }
+
+        public ValueTask RefundAsync(string key, long count, CancellationToken ct = default)
+        {
+            Refunds.Add((key, count));
+            return ValueTask.CompletedTask;
+        }
     }
 
     [Fact]
@@ -293,6 +306,87 @@ public class IngestEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var client = With(new InMemoryEventPublisher()).CreateClient();
         var resp = await client.SendAsync(EnvelopePost("1", "{}\n{\"type\":\"event\"}\n{}", key: "wrong"));
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Store_ProjectsOfOneOrg_SpendOneAllowance()
+    {
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(new InMemoryEventPublisher(), quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        foreach (var project in new[] { "11", "12", "13" })
+        {
+            var resp = await client.SendAsync(StorePost(project, """{"message":"boom","level":"error"}"""));
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        }
+
+        Assert.Equal(["org:900", "org:900", "org:901"], quota.Keys);
+    }
+
+    [Fact]
+    public async Task Store_Transaction_IsAccepted_PublishesNothing_AndGivesItsQuotaBack()
+    {
+        var pub = new InMemoryEventPublisher();
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(pub, quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        var resp = await client.SendAsync(
+            StorePost("11", """{"type":"transaction","transaction":"GET /","level":"error"}"""));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Empty(pub.Published);
+        Assert.Equal([("org:900", 1L)], quota.Refunds);
+    }
+
+    [Fact]
+    public async Task Envelope_OfOnlyATransaction_GivesItsQuotaBack()
+    {
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(new InMemoryEventPublisher(), quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        var resp = await client.SendAsync(
+            EnvelopePost("11", "{\"event_id\":\"abc123\"}\n{\"type\":\"transaction\"}\n{\"spans\":[]}"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal([("org:900", 1L)], quota.Refunds);
+    }
+
+    [Fact]
+    public async Task Envelope_OfOnlyATransaction_OnAnUnlimitedTier_RefundsNothing()
+    {
+        // An unlimited tier counted nothing, so there is nothing to give back.
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 0, Remaining: long.MaxValue));
+        var client = With(new InMemoryEventPublisher(), quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        var resp = await client.SendAsync(
+            EnvelopePost("14", "{\"event_id\":\"abc123\"}\n{\"type\":\"transaction\"}\n{\"spans\":[]}"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Empty(quota.Refunds);
+    }
+
+    [Fact]
+    public async Task Store_Malformed_RefundsNothing()
+    {
+        // A body that will not parse is the sender's error, answered 400, and keeps the quota it was counted.
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(new InMemoryEventPublisher(), quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        var resp = await client.SendAsync(StorePost("11", "not json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Empty(quota.Refunds);
+    }
+
+    [Fact]
+    public async Task Store_AnEvent_KeepsItsQuota()
+    {
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(new InMemoryEventPublisher(), quota: quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        await client.SendAsync(StorePost("11", """{"message":"boom","level":"error"}"""));
+
+        Assert.Empty(quota.Refunds);
     }
 
     [Fact]

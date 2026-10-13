@@ -25,14 +25,20 @@ internal static class SourceMapMappings
     /// <summary>Whether a mappings string decodes to as many lines and segments as a real build
     /// produces. Counted rather than split, because the separators bound everything the decode would
     /// then allocate and reading them costs two passes and no objects.</summary>
-    public static bool IsDecodable(string mappings)
+    public static bool IsDecodable(string mappings) => Fits(Measure(mappings));
+
+    /// <summary>What a mappings string would decode to: its generated lines, and an upper bound on its
+    /// segments, since every segment is followed by a separator or the end. An index map sums these
+    /// across its sections, so the bound holds for the whole map rather than per section.</summary>
+    public static (long Lines, long Segments) Measure(string mappings)
     {
         var span = mappings.AsSpan();
-        var lines = span.Count(';') + 1;
-        // An upper bound, not the exact figure: every segment is followed by a separator or the end.
-        var segments = lines + span.Count(',');
-        return lines <= MaxGeneratedLines && segments <= MaxSegments;
+        long lines = span.Count(';') + 1;
+        return (lines, lines + span.Count(','));
     }
+
+    public static bool Fits((long Lines, long Segments) size) =>
+        size.Lines <= MaxGeneratedLines && size.Segments <= MaxSegments;
 
     /// <summary>One segment table per generated line, or null for a line that carries no segments,
     /// which is most of them in a real map: an empty list per line costs several times the line it

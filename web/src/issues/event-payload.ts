@@ -4,9 +4,13 @@
 
 export type ParsedFrame = {
   filename?: string;
+  absPath?: string;
   function?: string;
+  instructionAddr?: string;
   lineno: number;
   inApp: boolean;
+  // Native symbolication marks a frame the compiler inlined into the one that called it.
+  inlined: boolean;
   contextLine?: string;
   contextBefore: string[];
   contextAfter: string[];
@@ -73,9 +77,12 @@ export function parseEventPayload(payload: string): ParsedEvent | null {
       handled: typeof ex?.Handled === "boolean" ? ex.Handled : undefined,
       frames: asArray(ex?.Stacktrace?.Frames).map((frame) => ({
         filename: asString(frame?.Filename),
+        absPath: asString(frame?.AbsPath),
         function: asString(frame?.Function),
+        instructionAddr: asString(frame?.InstructionAddr),
         lineno: typeof frame?.Lineno === "number" ? frame.Lineno : 0,
         inApp: frame?.InApp === true,
+        inlined: frame?.Inlined === true,
         contextLine: asString(frame?.ContextLine),
         contextBefore: asArray(frame?.ContextBefore).filter(
           (line): line is string => typeof line === "string",
@@ -114,6 +121,19 @@ export function parseEventPayload(payload: string): ParsedEvent | null {
     sdkName: asString(root.SdkName),
     sdkVersion: asString(root.SdkVersion),
   };
+}
+
+// What a stack row shows for a frame: the parts it has, with "?" only when it has neither. An
+// unsymbolicated native frame (an obfuscated Flutter build, for one) has no function or filename but
+// does have the address it was executing, and a frame marking an async gap has just an abs_path. The
+// line number rides on the location, since beside a bare function it would read as that function's line.
+// The address is shown as the SDK sent it: placing it inside its image is the server's grouping rule, and
+// is not restated here.
+export function toFrameLabels(frame: ParsedFrame): { name?: string; location?: string } {
+  const name = frame.function ?? frame.instructionAddr;
+  const place = frame.filename ?? frame.absPath;
+  const location = place && frame.lineno > 0 ? `${place}:${frame.lineno}` : place;
+  return name === undefined && location === undefined ? { name: "?" } : { name, location };
 }
 
 function asString(value: unknown): string | undefined {

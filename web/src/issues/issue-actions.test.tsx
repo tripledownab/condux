@@ -41,13 +41,28 @@ describe("IssueActions", () => {
     expect(mutate).toHaveBeenCalledWith({ projectId: 7, issueId: "i-1", data: { status: 1 } });
   });
 
-  it("ignores and unignores, and assigns a member from the menu", async () => {
-    renderWithIntl(
+  it("ignores an unresolved issue and offers unignore when ignored", async () => {
+    const first = renderWithIntl(
       <IssueActions projectId={7} issueId="i-1" status={1} orgId={1} assigneeUserId={null} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Ignore" }));
     expect(mutate).toHaveBeenCalledWith({ projectId: 7, issueId: "i-1", data: { status: 3 } });
+
+    first.unmount();
+    renderWithIntl(
+      <IssueActions projectId={7} issueId="i-1" status={3} orgId={1} assigneeUserId={null} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Unignore" }));
+    expect(mutate).toHaveBeenCalledWith({ projectId: 7, issueId: "i-1", data: { status: 1 } });
+  });
+
+  // Its own test: the first menu open in the file costs seconds of CPU under load, so sharing a
+  // test with other clicks can push the total past vitest's per-test limit.
+  it("assigns a member from the menu", async () => {
+    renderWithIntl(
+      <IssueActions projectId={7} issueId="i-1" status={1} orgId={1} assigneeUserId={null} />,
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Assign" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "kim@acme.dev" }));

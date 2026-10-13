@@ -32,27 +32,71 @@ public sealed class ClickHouseReleaseModuleReader(HttpClient http)
     // where" rather than listing every release that ever carried it. It is merge-invariant for the
     // same reason max is: the newest sighting is in the group whether or not the parts have merged.
     //
-    // Package names are matched case insensitively, and the caller passes them already lowered. A
-    // scanner spells a name as its registry does and an SDK reports what the runtime says, and those
-    // disagree on case in real ecosystems: PyPI treats names case insensitively, so does NuGet. A
-    // missed row here would render as "not observed", which is the one direction this feature must not
-    // get wrong. lower() is ASCII only, which matches every registry name in practice.
+    // Package names are matched on PackageNames.ToFilterKey, lowered with each run of '-', '_' and '.'
+    // read as one '-', and the caller passes them already keyed. A scanner spells a name as its
+    // registry does and an SDK reports what the runtime says, and those disagree in real ecosystems:
+    // PyPI folds case and separators, and one project's own releases report both "jupyter-server"
+    // and "jupyter_server". A missed row here would render as "not observed", which is the one
+    // direction this feature must not get wrong, so this filter over-fetches for every ecosystem and
+    // the caller's exact rule picks among the rows. lower() is ASCII only, so ToFilterKey lowercases
+    // ASCII only too: a key lowercasing more would miss a stored name holding a non-ASCII capital.
     private const string ObservedSql = """
         SELECT ecosystem, package, version, environment,
                argMax(release, last_seen) AS latest_release,
                toUnixTimestamp(max(last_seen)) AS seen
         FROM condux.release_modules
-        WHERE project_id = {pid:String} AND lower(package) IN {packages:Array(String)}
+        WHERE project_id = {pid:String}
+          AND replaceRegexpAll(lower(package), '[-_.]+', '-') IN {packages:Array(String)}
         GROUP BY ecosystem, package, version, environment
         ORDER BY seen DESC, package ASC, version ASC
         LIMIT {per:UInt32} BY ecosystem, package
         FORMAT JSON
         """;
 
+    // A CVE bump's verification (ADR-0051) reads one package's sightings since its merge, which are all its
+    // verdict ever uses, with no per-package cap: a cap that dropped a vulnerable sighting behind newer
+    // rows from other environments would let a still exposed bump conclude held. A ceiling still bounds a
+    // hostile inventory, and reaching it is reported so the caller can refuse to conclude held.
+    private const string SinceSql = """
+        SELECT ecosystem, package, version, environment,
+               argMax(release, last_seen) AS latest_release,
+               toUnixTimestamp(max(last_seen)) AS seen
+        FROM condux.release_modules
+        WHERE project_id = {pid:String}
+          AND replaceRegexpAll(lower(package), '[-_.]+', '-') = {package:String}
+        GROUP BY ecosystem, package, version, environment
+        HAVING max(last_seen) > toDateTime({since:Int64}, 'UTC')
+        ORDER BY seen DESC, package ASC, version ASC
+        LIMIT {limit:UInt32}
+        FORMAT JSON
+        """;
+
+    /// <summary>The most sightings <see cref="ReadSightingsSinceAsync"/> returns before it reports itself
+    /// incomplete.</summary>
+    public const int MaxSightings = 1000;
+
+    /// <summary>
+    /// Every version of <paramref name="package"/> (by <see cref="PackageNames.ToFilterKey"/>) seen running
+    /// in the project after <paramref name="since"/>, per version and environment, newest first. Complete
+    /// is false when there were more than <see cref="MaxSightings"/>, and then only the newest are
+    /// returned.
+    /// </summary>
+    public async Task<(IReadOnlyList<ObservedModule> Sightings, bool Complete)> ReadSightingsSinceAsync(
+        string projectId, string package, DateTimeOffset since, CancellationToken cancellationToken = default)
+    {
+        var url = $"/?param_pid={Uri.EscapeDataString(projectId)}" +
+                  $"&param_package={Uri.EscapeDataString(PackageNames.ToFilterKey(package.Trim()))}" +
+                  $"&param_since={since.ToUnixTimeSeconds()}&param_limit={MaxSightings + 1}" +
+                  $"&query={Uri.EscapeDataString(SinceSql)}";
+        var rows = await QueryAsync(url, cancellationToken);
+        return rows.Count > MaxSightings ? ([.. rows.Take(MaxSightings)], false) : (rows, true);
+    }
+
     /// <summary>
     /// Every version of <paramref name="packages"/> seen running in the project, newest sighting
-    /// first. Names are matched case insensitively; each row carries the package back spelled as it
-    /// was reported, so the caller displays the real name rather than the lowered one.
+    /// first. Names are matched on <see cref="PackageNames.ToFilterKey"/>, a superset of every
+    /// ecosystem's own rule, so the caller must apply that rule; each row carries the package back
+    /// spelled as it was reported, so the caller displays the real name rather than the keyed one.
     ///
     /// <para>An empty result means nothing was observed. Per ADR-0041 that reads as unknown and never
     /// as not affected, because an SDK that sends no modules and a genuinely absent package are
@@ -61,10 +105,10 @@ public sealed class ClickHouseReleaseModuleReader(HttpClient http)
     public async Task<IReadOnlyList<ObservedModule>> ObservedAsync(
         string projectId, IReadOnlyCollection<string> packages, CancellationToken cancellationToken = default)
     {
-        // Lowered to match the query, and de-duplicated because a findings list routinely carries
+        // Keyed to match the query, and de-duplicated because a findings list routinely carries
         // several advisories for one package and each repeat would only lengthen the URL.
         var names = packages
-            .Select(package => package.Trim().ToLowerInvariant())
+            .Select(package => PackageNames.ToFilterKey(package.Trim()))
             .Where(package => package.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -78,6 +122,11 @@ public sealed class ClickHouseReleaseModuleReader(HttpClient http)
         var url = $"/?param_pid={Uri.EscapeDataString(projectId)}" +
                   $"&param_packages={Uri.EscapeDataString(ToArrayLiteral(names))}" +
                   $"&param_per={MaxPerPackage}&query={Uri.EscapeDataString(ObservedSql)}";
+        return await QueryAsync(url, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ObservedModule>> QueryAsync(string url, CancellationToken cancellationToken)
+    {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
 
         using var resp = await http.SendAsync(req, cancellationToken);

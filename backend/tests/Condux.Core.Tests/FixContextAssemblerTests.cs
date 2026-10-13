@@ -168,6 +168,28 @@ public class FixContextAssemblerTests
     }
 
     [Fact]
+    public void A_culprit_path_no_mapping_brings_inside_the_repository_is_not_blamed()
+    {
+        // A resolved native frame names the absolute path the app was built from; with no mapping for it
+        // there is no repository file to ask about.
+        var built = new Event
+        {
+            Exceptions =
+            [
+                new ExceptionValue
+                {
+                    Stacktrace = new Stacktrace
+                    {
+                        Frames = [new Frame { Filename = "/home/runner/work/shop/shop/lib/cart.dart", InApp = true }],
+                    },
+                },
+            ],
+        };
+
+        Assert.Null(FixContextAssembler.CulpritPath(built, []));
+    }
+
+    [Fact]
     public void Names_the_suspect_commit_when_known()
     {
         var context = FixContextAssembler.Assemble(

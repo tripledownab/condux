@@ -41,9 +41,16 @@ public static partial class SentryParser
         try
         {
             using var doc = JsonDocument.Parse(payload);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                ? ParseResult.Parsed(FromRoot(doc.RootElement))
-                : ParseResult.Malformed;
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return ParseResult.Malformed;
+            }
+            // A transaction, user feedback or a CSP report is not an error, so it carries nothing to store,
+            // as an envelope carrying only such an item already does. Sentry's own ingest routes only the
+            // default and error types to its error pipeline.
+            return GetString(doc.RootElement, "type") is "transaction" or "feedback" or "csp"
+                ? ParseResult.NoEvent
+                : ParseResult.Parsed(FromRoot(doc.RootElement));
         }
         catch (JsonException)
         {
@@ -66,7 +73,10 @@ public static partial class SentryParser
             EventId = GetString(root, "event_id") ?? "",
             TimestampUnixMs = ParseTimestamp(root),
             Platform = GetString(root, "platform"),
-            Level = ParseLevel(GetString(root, "level")),
+            // The protocol defaults an event's level to error, and stock SDKs rely on it: a captured
+            // Android exception carries no level at all. Sentry's ingest applies the default to an
+            // unrecognised value too.
+            Level = ParseLevel(root) ?? Level.Error,
             Logger = GetString(root, "logger"),
             ServerName = GetString(root, "server_name"),
             Release = GetString(root, "release"),
@@ -185,7 +195,8 @@ public static partial class SentryParser
                 Type = GetString(item, "type"),
                 Category = GetString(item, "category"),
                 Message = GetString(item, "message"),
-                Level = ParseLevel(GetString(item, "level")),
+                // The protocol's breadcrumb default is info, not the event's error.
+                Level = ParseLevel(item) ?? Level.Info,
                 Data = ParseStringMap(item, "data"),
             });
         }

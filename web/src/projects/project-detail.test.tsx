@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrgStatus } from "@/src/orgs/current-org";
@@ -27,8 +27,12 @@ vi.mock("@/src/api/generated/condux", () => ({
 // The embedded Repositories + Releases sections have their own tests; stub them here so this test stays
 // focused on the project overview + the tab shell and does not need their repo/release hooks.
 vi.mock("@/src/settings/repositories", () => ({ Repositories: () => null }));
-vi.mock("@/src/settings/releases", () => ({ Releases: () => null }));
-vi.mock("@/src/settings/release-tokens", () => ({ ReleaseTokens: () => null }));
+vi.mock("@/src/settings/releases", () => ({
+  Releases: ({ needsGithub }: { needsGithub?: boolean }) => (
+    <p>{needsGithub ? "releases: needs GitHub" : "releases: ready"}</p>
+  ),
+}));
+vi.mock("@/src/settings/release-tokens", () => ({ ReleaseTokens: () => <p>release tokens</p> }));
 
 // The Releases tab reads the org's GitHub connection to decide between the record form and a connect
 // prompt; drive that state directly rather than the installations query.
@@ -115,7 +119,8 @@ describe("ProjectDetail", () => {
     expect(screen.getByRole("tab", { name: "DSN keys" })).toBeInTheDocument();
   });
 
-  it("prompts to connect GitHub on the Releases tab when GitHub is not connected", async () => {
+  // The section and the tokens always show; only the record form learns GitHub is missing.
+  it("keeps the releases and the tokens on the Releases tab when GitHub is not connected", async () => {
     useGithubConnectionMock.mockReturnValue({
       orgId: 1,
       loading: false,
@@ -127,16 +132,15 @@ describe("ProjectDetail", () => {
     renderWithIntl(<ProjectDetail publicId="uuid-backend" />);
 
     await userEvent.click(screen.getByRole("tab", { name: "Releases" }));
-    expect(await screen.findByText(/Connect GitHub to record releases/)).toBeInTheDocument();
+    expect(await screen.findByText("releases: needs GitHub")).toBeInTheDocument();
+    expect(screen.getByText("release tokens")).toBeInTheDocument();
   });
 
   it("shows the release view on the Releases tab once GitHub is connected", async () => {
     renderWithIntl(<ProjectDetail publicId="uuid-backend" />);
 
     await userEvent.click(screen.getByRole("tab", { name: "Releases" }));
-    // Releases is stubbed, so the point is only that the connect prompt is not shown once connected.
-    await waitFor(() =>
-      expect(screen.queryByText(/Connect GitHub to record releases/)).not.toBeInTheDocument(),
-    );
+    expect(await screen.findByText("releases: ready")).toBeInTheDocument();
+    expect(screen.getByText("release tokens")).toBeInTheDocument();
   });
 });

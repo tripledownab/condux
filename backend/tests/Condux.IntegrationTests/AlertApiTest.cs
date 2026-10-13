@@ -153,6 +153,32 @@ public sealed class AlertApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
+    [Theory]
+    [InlineData(new[] { 0 })]
+    [InlineData(new[] { 0, 4 })]
+    public async Task CreateRule_LevelUnspecified_Returns400(int[] levels)
+    {
+        // No event or issue is stored at level 0 any longer, so a rule on it would match nothing.
+        var (client, projectId) = await ProvisionAsync();
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
+            new { name = "unspecified", events = new[] { 1 }, levels });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRule_Debug_IsAccepted()
+    {
+        // The lowest real severity stays allowed: only Unspecified is refused.
+        var (client, projectId) = await ProvisionAsync();
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/alert-rules",
+            new { name = "debug", events = new[] { 1 }, levels = new[] { 1 } });
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+    }
+
     [Fact]
     public async Task CreateRule_NoEvents_Returns400()
     {

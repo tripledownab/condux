@@ -1,25 +1,25 @@
 using Condux.ControlPlane.Auth;
+using Condux.ControlPlane.Endpoints;
 using Condux.ControlPlane.Llm;
+using Condux.ControlPlane.Uploads;
 using Condux.Core.Auth;
-using Condux.Core.CveFix;
-using Condux.Core.CveScanning;
-using Condux.Core.FixEngine;
 using Condux.Core.Http;
 using Condux.Core.Secrets;
-using Condux.Core.SourceControl;
-using Condux.GitHub;
-using Condux.Core.Quotas;
-using Condux.Messaging;
 using Condux.Notifications;
-using Condux.Storage.ClickHouse;
-using Condux.Storage.ObjectStore;
 using Condux.Storage.Postgres;
 using Condux.Telemetry;
 using Microsoft.AspNetCore.Authentication;
 
 namespace Condux.ControlPlane.Setup;
 
-/// <summary>Service registration for the control-plane: data stores + auth.</summary>
+/// <summary>
+/// Service registration for the control-plane: <see cref="AddControlPlaneServices"/> registers the data
+/// stores and the services built on them, calling the registrations kept beside their domain (the
+/// third-party integrations, the Conductor, the event reads, the admin seed). Those calls keep the order
+/// the configuration checks ran in before the split, so a misconfigured startup reports the same error
+/// first. <see cref="AddControlPlaneAuth"/> and <see cref="AddControlPlaneCors"/> are the two other
+/// registrations Program calls.
+/// </summary>
 internal static class ServiceCollectionExtensions
 {
     /// <summary>CORS policy name for the credentialed dashboard origin(s).</summary>
@@ -56,6 +56,9 @@ internal static class ServiceCollectionExtensions
         // consumer fires the same channel for issue events; the listener below fans both out over SSE.
         services.AddSingleton(new ProjectEventNotifier(postgres));
         services.AddSingleton(new SourceMapArtifactRepository(postgres));
+        services.AddSingleton(new DebugFileRepository(postgres));
+        services.AddSingleton<DebugFileUploadGate>();
+        services.AddUploadStorage(cfg, postgres);
         services.AddSingleton(new AlertRuleRepository(postgres));
         services.AddSingleton(new OrgNotificationChannelRepository(postgres));
         services.AddSingleton(new AdminRepository(postgres));
@@ -88,48 +91,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Condux.ControlPlane.Invites.InviteMailer>();
         services.AddSingleton<Condux.ControlPlane.Auth.PasswordResetMailer>();
 
-        // GitHub App (the Conductor, #61). Opt-in: enabled only when CONDUX_GITHUB_* are set; a partial
-        // config fails fast here. When unset the /api/github/* routes return 404. The token minter + repo
-        // client (behind the branch-picker proxy) are only registered when enabled — endpoints that need
-        // them resolve lazily after checking config.Enabled.
-        var githubConfig = GitHubAppConfig.FromEnv(cfg);
-        services.AddSingleton(githubConfig);
-        // The user-authorization leg of connect (relinking an already-installed app). Inert without the
-        // client secret, so it registers unconditionally and the endpoints check the config.
-        services.AddHttpClient<GitHubUserOAuth>();
-        if (githubConfig.Enabled)
-        {
-            // GitHub is registered under both the concrete type (its GitHub-only Dependabot read) and the
-            // neutral source-host seam (#145) that the fix flow + branch picker resolve: token minter + client.
-            var githubTokens = new GitHubInstallationTokens(
-                new HttpClient(), githubConfig.Options!, () => DateTimeOffset.UtcNow);
-            services.AddSingleton(githubTokens);
-            services.AddSingleton<ISourceHostTokens>(githubTokens);
-            var githubRepoClient = new GitHubRepoClient(new HttpClient());
-            services.AddSingleton(githubRepoClient);
-            services.AddSingleton<ISourceHostClient>(githubRepoClient);
-            // GitHub's CVE fast path (ADR-0022): Dependabot has already scanned, so findings are a read.
-            // The neutral scanner runs a container and queries an advisory database, which is too slow for
-            // a page load and belongs behind a job — so it is not the one registered here.
-            services.AddSingleton<ICveScanner>(new DependabotCveScanner(githubRepoClient));
-        }
-
-        // "Sign in with Google" (OIDC, #71). Opt-in: enabled only when CONDUX_GOOGLE_* are set; a partial
-        // config fails fast here. When unset the /api/auth/oauth/google/* routes 404 and the login page hides
-        // the button. The typed OIDC client is inert without config, so it's always registered for injection.
-        services.AddSingleton(GoogleOAuthConfig.FromEnv(cfg));
-        services.AddHttpClient<GoogleOidcClient>();
-
-        // Enterprise SSO (per-org OIDC, #72). The exchange client is always registered (inert without a
-        // config; it's only reached after the per-org sso_config is found); the per-org config STORE needs
-        // the secret box, so it registers with the secrets block below and endpoints resolve it lazily.
-        services.AddHttpClient<SsoOidcClient>();
-
-        // Stripe billing (#billing). Opt-in: enabled only when CONDUX_STRIPE_* are set; a partial config
-        // fails fast. When unset the /api/orgs/{id}/billing/* + /api/stripe/webhook routes 404. The typed
-        // Stripe client is inert without config, so it's always registered for injection.
-        services.AddSingleton(StripeConfig.FromEnv(cfg));
-        services.AddHttpClient<Billing.StripeClient>();
+        // Third-party providers: the GitHub App, Google sign-in and Stripe, opt-in from the environment, and
+        // enterprise SSO's OIDC client.
+        services.AddThirdPartyIntegrations(cfg);
 
         // Platform super-admins: an env allowlist (CONDUX_PLATFORM_ADMIN_EMAILS, comma-separated) that
         // the auth handler resolves to a claim per request. Empty by default, so no one is a platform
@@ -140,17 +104,6 @@ internal static class ServiceCollectionExtensions
         // (its own key, not coupled to Stripe/GitHub/secrets). When unset the start/stop routes 404 and the
         // scope grant is inert, so the capability is fully off unless an operator enables it.
         services.AddSingleton(ImpersonationConfig.FromEnv(cfg));
-
-        // The Conductor: read fix suggestions, and publish fix requests to the topic its worker drains.
-        // Kafka bootstrap is optional (defaults to the compose broker); the producer connects lazily.
-        // Registered under the concrete type too — the weekly digest composer reads its org-scoped fix
-        // aggregate (ADR-0031); IFixStore resolves to the same instance.
-        services.AddSingleton(new PostgresFixStore(postgres));
-        services.AddSingleton<IFixStore>(sp => sp.GetRequiredService<PostgresFixStore>());
-        // Fix verification (ADR-0019): the webhook marks a merged Conductor PR as watching here.
-        services.AddSingleton(new PostgresFixVerification(postgres));
-        // The Fixes section read/write model (#118): project-wide list, detail + audit, view + archive.
-        services.AddSingleton(new PostgresFixCatalog(postgres));
 
         // BYO-key registry (#65). Opt-in: the /api/orgs/{id}/llm-config routes activate only when
         // CONDUX_SECRET_KEY (the base64 AES-256 master key) is set, so keys are never stored without
@@ -184,54 +137,12 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<UserMfaRepository>(),
             sp.GetRequiredService<SessionRepository>(),
             sp.GetService<SecretBox>()));
-        // The per-org AI-fix allowance counter RequestFix reserves against (#100, ADR-0017).
-        services.AddSingleton<IAiFixQuota>(new PostgresAiFixQuota(postgres));
-        // The per-org month-to-date Conductor spend, for the cost cap + the usage meter (#120).
-        services.AddSingleton<IAiFixSpend>(new PostgresAiFixSpend(postgres));
-        // Registered as a factory (not an eager instance) so the Confluent producer — and its background
-        // broker connection — is only built when a fix is first requested, not at startup. This is what
-        // lets tests override it with a no-op fake without a real librdkafka producer ever spinning up
-        // (an eager `new` would run before any override and flood the log with connection-refused errors).
-        services.AddSingleton<IFixRequestPublisher>(
-            _ => new KafkaFixRequestPublisher(cfg["CONDUX_KAFKA_BOOTSTRAP"] ?? "localhost:9092"));
 
-        // Supply-chain CVE-bump runs (#117 slice 2): read the per-repo runs, and publish a bump request
-        // to the topic the Conductor's CVE worker drains. A separate domain from the issue fixes above.
-        services.AddSingleton<ICveFixStore>(new PostgresCveFixStore(postgres));
-        services.AddSingleton<ICveFixPublisher>(
-            _ => new KafkaCveFixPublisher(cfg["CONDUX_KAFKA_BOOTSTRAP"] ?? "localhost:9092"));
+        // The Conductor's run stores, allowance, spend and job publishers.
+        services.AddConductorServices(cfg, postgres);
 
-        // Event store (ClickHouse) for the issue-detail view — a resilient typed HttpClient
-        // (retry/timeout/circuit-breaker via IHttpClientFactory + the standard resilience handler).
-        services.AddClickHouseReader<ClickHouseEventReader>(
-            cfg.Require("CONDUX_CLICKHOUSE_URL"),
-            cfg.Require("CONDUX_CLICKHOUSE_USER"),
-            cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));
-        // The exact per-issue histogram (issue_stats_1h rollup, #102), same resilient client shape.
-        services.AddClickHouseReader<ClickHouseIssueStatsReader>(
-            cfg.Require("CONDUX_CLICKHOUSE_URL"),
-            cfg.Require("CONDUX_CLICKHOUSE_USER"),
-            cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));
-        // The runtime dependency inventory (ADR-0041), which tells the CVE findings surface whether a
-        // vulnerable package was actually seen running.
-        services.AddClickHouseReader<ClickHouseReleaseModuleReader>(
-            cfg.Require("CONDUX_CLICKHOUSE_URL"),
-            cfg.Require("CONDUX_CLICKHOUSE_USER"),
-            cfg.Require("CONDUX_CLICKHOUSE_PASSWORD"));
-
-        // Object storage (S3/MinIO) for source-map artifacts (ADR-0028). Opt-in: the IObjectStore client
-        // registers only when CONDUX_S3_* are set, so the /api/sourcemaps routes 404 until configured. The
-        // read-time symbolicator needs the store, so it too registers only when the store is configured.
-        services.AddObjectStore(cfg);
-        if (ObjectStoreConfig.FromEnv(cfg).Enabled)
-        {
-            services.AddSingleton<SourceMaps.FrameSymbolicator>();
-        }
-        // The shared read-time symbolication service (issue detail/events + MCP tools). Always registered
-        // with an optional symbolicator, so it no-ops when object storage is off and callers never branch.
-        services.AddSingleton(sp => new SourceMaps.EventSymbolication(
-            sp.GetService<SourceMaps.FrameSymbolicator>(),
-            sp.GetRequiredService<ILogger<SourceMaps.EventSymbolication>>()));
+        // Reads of the event store, and the symbolication applied as events are read.
+        services.AddEventReads(cfg, postgres);
 
         // The MCP tool handlers and the per-token write budget behind them (ADR-0029, ADR-0046). The
         // limiter holds the buckets, so it has to be the same instance across requests. The handlers must
@@ -256,21 +167,8 @@ internal static class ServiceCollectionExtensions
         services.AddTransient<Notifications.WeeklySummaryComposer>();
         services.AddSingleton<Notifications.WeeklySummaryMailer>();
 
-        // Optional admin seed: registered only when both env vars are set, so a local stack gets a
-        // ready-to-use login and a deployment that leaves them unset seeds nothing. Gated on the two
-        // values and NOT on the environment, deliberately: a platform-admin address cannot be signed
-        // up for, so this is how that account is created anywhere, production included.
-        var seedEmail = cfg["CONDUX_SEED_ADMIN_EMAIL"];
-        var seedPassword = cfg["CONDUX_SEED_ADMIN_PASSWORD"];
-        if (!string.IsNullOrEmpty(seedEmail) && !string.IsNullOrEmpty(seedPassword))
-        {
-            services.AddHostedService(sp => new DevAdminSeeder(
-                seedEmail, seedPassword,
-                sp.GetRequiredService<UserRepository>(),
-                sp.GetRequiredService<OrgRepository>(),
-                sp.GetRequiredService<OrgMemberRepository>(),
-                sp.GetRequiredService<ILogger<DevAdminSeeder>>()));
-        }
+        // The optional admin seed, which runs only when both seed variables are set.
+        services.AddAdminSeed(cfg);
 
         return services;
     }
@@ -288,7 +186,7 @@ internal static class ServiceCollectionExtensions
 
     // Cross-origin access for the dashboard. In production the dashboard is served same-origin
     // (app.condux.ai fronts both), so this stays unset and no CORS headers are emitted. In split-origin
-    // setups (compose/local dev: web on :3000, API on :8080) set CONDUX_CORS_ORIGINS to a comma list of
+    // setups (compose/local dev: web on :3200, API on :8080) set CONDUX_CORS_ORIGINS to a comma list of
     // allowed origins; credentialed requests (the session cookie) require explicit origins, never "*".
     public static IServiceCollection AddControlPlaneCors(this IServiceCollection services, IConfiguration cfg)
     {

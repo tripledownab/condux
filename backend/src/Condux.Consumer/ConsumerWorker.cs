@@ -1,11 +1,8 @@
 using System.Globalization;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.Grouping;
-using Condux.Core.Messaging;
-using Condux.Core.Plans;
 using Condux.Core.Sampling;
 using Condux.Notifications;
 using Condux.Storage.ClickHouse;
@@ -91,9 +88,9 @@ public sealed class ConsumerWorker(
                     if (long.TryParse(projectKey, NumberStyles.None, CultureInfo.InvariantCulture, out var projectId))
                     {
                         var grouping = Fingerprinter.Compute(e);
-                        var seenAt = e.TimestampUnixMs > 0
-                            ? DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampUnixMs)
-                            : DateTimeOffset.UtcNow;
+                        // The sender's time, bounded to its receipt, before anything reads it.
+                        e = EventMessages.ToFiledEvent(e, result.Message);
+                        var seenAt = DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampUnixMs);
 
                         var upsert = await issues.UpsertAsync(projectId, grouping, e.Level, seenAt, e.Release, stoppingToken);
                         await FireAlertsAsync(projectId, upsert, grouping, e.Level, stoppingToken);
@@ -110,7 +107,7 @@ public sealed class ConsumerWorker(
                         // Count EVERY event in the hourly rollup (exact time series, #102); only the raw
                         // payload row below is subject to sampling.
                         batch.AddStats(ClickHouseIssueStatsWriter.ToRow(projectKey, (ulong)upsert.Id, seenAt));
-                        var retentionDays = ReadRetentionDays(result.Message.Headers);
+                        var retentionDays = EventMessages.ReadRetentionDays(result.Message.Headers);
                         // Record the dependency inventory before the sampling decision. Sampling sheds
                         // redundant copies of the same payload, and the inventory is deduplicated on its
                         // own terms, so tying it to a sampled event would drop a release's only chance
@@ -138,7 +135,7 @@ public sealed class ConsumerWorker(
                     await batch.FlushAsync(stoppingToken);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -150,7 +147,7 @@ public sealed class ConsumerWorker(
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -161,20 +158,6 @@ public sealed class ConsumerWorker(
         // owns both the fresh token and the never-throw contract (see FlushOnShutdownAsync).
         await batch.FlushOnShutdownAsync();
         consumer.Close();
-    }
-
-    // The relay stamps the project's plan-tier retention as a Kafka header. Fall back to the single
-    // PlanCatalog default when it is absent (an older message) or malformed, so an event is never written
-    // with a zero/invalid TTL.
-    private static int ReadRetentionDays(Headers headers)
-    {
-        if (headers.TryGetLastBytes(EventHeaders.RetentionDays, out var bytes)
-            && int.TryParse(Encoding.UTF8.GetString(bytes), NumberStyles.None, CultureInfo.InvariantCulture, out var days)
-            && days > 0)
-        {
-            return days;
-        }
-        return PlanCatalog.DefaultRetentionDays;
     }
 
     // Fire the project's alert rules when this event created a new issue (occurrence 1) or reopened a

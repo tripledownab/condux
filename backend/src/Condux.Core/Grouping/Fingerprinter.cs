@@ -32,16 +32,17 @@ public static class Fingerprinter
             }
 
             var frames = ex.Stacktrace?.Frames ?? [];
+            var images = NativeImages.From(e.DebugImages);
             var appFrames = frames.Where(f => f.InApp).ToList();
             var used = appFrames.Count > 0 ? appFrames : [.. frames];
             foreach (var f in used)
             {
-                components.Add(FrameComponent(f));
+                components.Add(FrameComponent(f, images));
             }
             if (used.Count > 0)
             {
                 var top = used[^1];
-                culprit = top.Function ?? top.Filename ?? NativeLocation(top) ?? "";
+                culprit = top.Function ?? top.Filename ?? NativeLocation(top, images) ?? "";
             }
         }
         else
@@ -59,42 +60,17 @@ public static class Fingerprinter
     /// its offset within its binary image instead. Without that every native frame reduces to the same
     /// placeholder and every crash sharing a signal collapses into one issue.
     /// </summary>
-    private static string FrameComponent(Frame frame)
+    private static string FrameComponent(Frame frame, NativeImages images)
     {
-        var source = frame.Module ?? frame.Filename;
-        if (!string.IsNullOrEmpty(source) || !string.IsNullOrEmpty(frame.Function))
-        {
-            return $"{source ?? "?"}:{frame.Function ?? "?"}";
-        }
-        return NativeLocation(frame) ?? "?:?";
+        return NativeImages.IsAddressOnly(frame)
+            ? NativeLocation(frame, images) ?? "?:?"
+            : $"{frame.Module ?? frame.Filename ?? "?"}:{frame.Function ?? "?"}";
     }
 
-    private static string? NativeLocation(Frame frame) =>
-        ImageOffset(frame) is { } offset ? $"{frame.Package ?? "?"}+{offset}" : null;
-
-    /// <summary>The frame's offset inside its loaded image. Absolute addresses move between runs under
-    /// ASLR, so only the offset is stable enough to group on.</summary>
-    private static string? ImageOffset(Frame frame) =>
-        TryParseAddress(frame.InstructionAddr, out var instruction)
-        && TryParseAddress(frame.ImageAddr, out var image)
-        && instruction >= image
-            ? (instruction - image).ToString("x", CultureInfo.InvariantCulture)
+    private static string? NativeLocation(Frame frame, NativeImages images) =>
+        images.Place(frame) is { } placed
+            ? $"{frame.Package ?? "?"}+{placed.Offset.ToString("x", CultureInfo.InvariantCulture)}"
             : null;
-
-    private static bool TryParseAddress(string? value, out ulong address)
-    {
-        address = 0;
-        if (string.IsNullOrEmpty(value))
-        {
-            return false;
-        }
-        var digits = value.AsSpan();
-        if (digits.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        {
-            digits = digits[2..];
-        }
-        return ulong.TryParse(digits, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out address);
-    }
 
     private static string TitleOf(Event e)
     {

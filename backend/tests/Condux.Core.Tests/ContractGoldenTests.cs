@@ -68,6 +68,20 @@ public class ContractGoldenTests
     }
 
     [Fact]
+    public void AndroidEnvelope_WithNoLevel_IsAnError()
+    {
+        // sentry-android 8.58.0's Sentry.captureException, captured from a device and trimmed of its
+        // device contexts. The event carries no level key at all, and the protocol defaults it to error.
+        var e = SentryParser.ParseEnvelope(Load("android-exception-envelope.txt")).Event!;
+
+        Assert.Equal(Level.Error, e.Level);
+        Assert.Equal("java", e.Platform);
+        Assert.Equal("IllegalStateException", Assert.Single(e.Exceptions).Type);
+        // Its breadcrumb names its own level, which still reads as given.
+        Assert.Equal(Level.Info, Assert.Single(e.Breadcrumbs).Level);
+    }
+
+    [Fact]
     public void Envelope_SkipsNonEventItems_ToFindTheEvent()
     {
         var e = SentryParser.ParseEnvelope(Load("session-then-event-envelope.txt")).Event!;

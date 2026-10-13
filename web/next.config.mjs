@@ -9,7 +9,8 @@ const nextConfig = {
 // Wires the next-intl request config (i18n/request.ts) so server and client components share the catalog.
 const withNextIntl = createNextIntlPlugin();
 
-// Condux on Condux (#75): the dashboard's own client chunks get debugIds + stripped maps (ADR-0028).
+// Condux on Condux (#75): the dashboard's own chunks get debugIds and their maps uploaded (ADR-0028), the
+// client's then removed from the output and the server's kept.
 // Uploads happen only where CONDUX_URL + CONDUX_RELEASE + CONDUX_RELEASE_TOKEN are set (the deploy);
 // a local or CI build just stamps the chunks.
 export default withConduxConfig(withNextIntl(nextConfig));

@@ -44,10 +44,10 @@ public class ClickHouseBatchTests
         ClickHouseIssueStatsWriter.ToRow("7", 1, DateTimeOffset.UnixEpoch);
 
     private static ReleaseModuleRow Module() =>
-        new("7", "1.4.2", "production", "npm", "lodash", "4.17.11", "2026-09-03 12:00:00", 90);
+        new("7", "1.4.2", "production", "npm", "lodash", "4.17.11", 1788436800, 90);
 
     private static EventRow EventRow() =>
-        new("7", 1, "abc", "2026-09-03 12:00:00.000", "error", "javascript", "production", "1.4.2",
+        new("7", 1, "abc", 1788436800000, "error", "javascript", "production", "1.4.2",
             "", "", "boom", "Error", "boom", "fp", [], "{}", 90, "");
 
     /// <summary>

@@ -1,12 +1,13 @@
-using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.FixEngine;
 using Condux.Core.OrgNotifications;
 using Condux.Core.Plans;
 using Condux.Core.Quotas;
+using Condux.Core.Repos;
 using Condux.Notifications;
 using Condux.Storage.Postgres;
 using Microsoft.Extensions.Logging;
+using Condux.Storage.SourceMaps;
 
 namespace Condux.Consumer;
 
@@ -22,7 +23,7 @@ public sealed class AutoFixDispatcher(
     ProjectRepository projects, OrgRepository orgs, RepoLinkRepository repos, ReleaseRepository releases,
     GithubInstallationRepository installations, IAiFixQuota quota, IAiFixSpend spend,
     IFixRequestPublisher publisher, PostgresJobLeaseStore leases, IFixStore fixes,
-    ConductorPauseNotifier pauseNotifier, ILogger<AutoFixDispatcher> logger)
+    ConductorPauseNotifier pauseNotifier, EventSymbolication symbolication, ILogger<AutoFixDispatcher> logger)
 {
     private const string AutoActor = "auto"; // distinguishes an auto-requested run from a user id in the audit
 
@@ -68,8 +69,9 @@ public sealed class AutoFixDispatcher(
             }
 
             // Atomically reserve one run from the org's monthly allowance (#100). Out of allowance is a
-            // silent skip — auto-fix is best-effort and a user can still request manually.
-            if (!await quota.TryConsumeAsync(org.Id, limits.AiFixesPerMonth, DateTimeOffset.UtcNow, cancellationToken))
+            // silent skip: auto-fix is best-effort and a user can still request manually.
+            var reservedAt = DateTimeOffset.UtcNow;
+            if (!await quota.TryConsumeAsync(org.Id, limits.AiFixesPerMonth, reservedAt, cancellationToken))
             {
                 logger.LogInformation(
                     "auto-fix skipped: allowance exhausted org={OrgId} issue={IssueId}", org.Id, upsert.Id);
@@ -78,81 +80,87 @@ public sealed class AutoFixDispatcher(
                 return;
             }
 
+            // The run is reserved before the context is built, so an org with none left costs no source-map
+            // fetch. No job is sent while the context is built, so any failure there hands the run back.
             var repo = linked[0];
-            var mappings = await repos.ListCodeMappingsAsync(repo.Id, cancellationToken);
-            // Release attribution (#144): the release this event carries is a bisect hint for the fix. On a
-            // brand-new issue that is exactly the issue's first_release; on a regression it is the release the
-            // bug returned in — both are the right point in history to reason from. Resolve it to its commit.
-            var release = await ResolveReleaseAsync(projectId, sampleEvent.Release, cancellationToken);
-            var context = FixContextAssembler.Assemble(sampleEvent, mappings, release);
-            var installs = await installations.GetByOrgAsync(org.Id, cancellationToken);
-            var job = new FixJob(upsert.Id, repo.RepoFullName, repo.DefaultBranch, AutoActor, ModelDefaults.Fix)
-            {
-                Prompt = context.Prompt,
-                ScopedPaths = context.ScopedPaths,
-                InstallationId = installs.Count > 0 ? installs[0].InstallationId : 0,
-                OrgId = org.Id,
-            };
-
+            (FixContext Context, FixJob Job) built;
             try
             {
-                // Routed by the org's execution setting, exactly as the manual request is (ADR-0033 slice
-                // 4c): a self-hosting org's auto-fix must land on its runner too, or turning auto on would
-                // quietly send the work somewhere the customer chose not to use.
-                if ((FixExecution)org.FixExecution == FixExecution.Runner)
-                {
-                    var fixId = Guid.CreateVersion7();
-                    await leases.EnqueueAsync(
-                        fixId, upsert.Id, repo.RepoFullName,
-                        new RunnerJobContext(repo.DefaultBranch, context.Prompt, context.ScopedPaths),
-                        DateTimeOffset.UtcNow, cancellationToken);
-
-                    // The hosted orchestrator writes this when it starts the run. A run handed to a runner
-                    // never reaches it, so without this nothing records that the platform asked for the
-                    // fix — fix_suggestions has no actor column.
-                    //
-                    // Caught here rather than left to the enclosing handler: the row is already committed,
-                    // and that handler refunds the allowance. An audit failure would hand back a run that
-                    // is still going to happen, so the counter would drift every time the write failed.
-                    try
-                    {
-                        await fixes.AppendAuditAsync(
-                            fixId, AutoActor, "requested",
-                            JsonSerializer.Serialize(new
-                            {
-                                repo = repo.RepoFullName,
-                                model = "",
-                                provider = PostgresJobLeaseStore.RunnerProvider,
-                                promptHash = FixOrchestrator.PromptHash(context.Prompt),
-                            }),
-                            cancellationToken);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        logger.LogWarning(ex, "auto-fix audit failed org={OrgId} fix={FixId}", org.Id, fixId);
-                    }
-                }
-                else
-                {
-                    await publisher.PublishAsync(job, cancellationToken);
-                }
-
-                logger.LogInformation(
-                    "auto-fix requested org={OrgId} issue={IssueId} repo={Repo}",
-                    org.Id, upsert.Id, repo.RepoFullName);
+                built = await BuildJobAsync(projectId, upsert, sampleEvent, org.Id, reservedAt, repo, cancellationToken);
             }
-            catch (Exception ex)
+            catch
             {
-                // The reservation is taken; if the job never reached the topic the run won't happen, so
-                // refund it (the orchestrator only refunds runs it actually started).
-                logger.LogWarning(ex, "auto-fix enqueue failed org={OrgId} issue={IssueId}", org.Id, upsert.Id);
-                await quota.RefundAsync(org.Id, DateTimeOffset.UtcNow, cancellationToken);
+                await quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+                throw;
+            }
+
+            var (context, job) = built;
+            // Routed by the org's execution setting, exactly as the manual request is (ADR-0033 slice 4c): a
+            // self-hosting org's auto-fix must land on its runner too, or turning auto on would quietly send
+            // the work somewhere the customer chose not to use. Either way the run is written first, so an
+            // issue with a run in progress gets no second one.
+            var enqueued = await FixEnqueue.EnqueueAsync(
+                (FixExecution)org.FixExecution, job, context, leases, fixes, publisher, logger, cancellationToken);
+            if (enqueued.Failure is not null)
+            {
+                // Logged even when the run went ahead: a publish can fail after the job arrived.
+                logger.LogWarning(
+                    enqueued.Failure, "auto-fix enqueue failed org={OrgId} issue={IssueId} outcome={Outcome}",
+                    org.Id, upsert.Id, enqueued.Outcome);
+            }
+            switch (enqueued.Outcome)
+            {
+                case FixQueueOutcome.Queued:
+                    logger.LogInformation(
+                        "auto-fix requested org={OrgId} issue={IssueId} repo={Repo}",
+                        org.Id, upsert.Id, repo.RepoFullName);
+                    break;
+                case FixQueueOutcome.InProgress:
+                    // A run is already queued or running for this issue, as when it regresses again before
+                    // the first fix concludes. Not a pause: the work is already in hand.
+                    logger.LogInformation(
+                        "auto-fix skipped: a run is in progress org={OrgId} issue={IssueId}", org.Id, upsert.Id);
+                    await quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+                    break;
+                case FixQueueOutcome.Withdrawn:
+                    await quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+                    break;
+                default:
+                    // An unsettled reservation is kept; FixQueueOutcome.Unsettled says how it is settled.
+                    break;
             }
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "auto-fix dispatch error project={ProjectId} issue={IssueId}", projectId, upsert.Id);
         }
+    }
+
+    // The job for one issue: its repo's code mappings, the release the event carries and the event itself,
+    // symbolicated so a bundled frame names the source file and not the minified chunk no repository holds.
+    private async Task<(FixContext Context, FixJob Job)> BuildJobAsync(
+        long projectId, UpsertResult upsert, Event sampleEvent, long orgId, DateTimeOffset reservedAt, RepoLink repo,
+        CancellationToken cancellationToken)
+    {
+        var mappings = await repos.ListCodeMappingsAsync(repo.Id, cancellationToken);
+        // Release attribution (#144): the release this event carries is a bisect hint for the fix. On a
+        // brand-new issue that is exactly the issue's first_release; on a regression it is the release the
+        // bug returned in, and both are the right point in history to reason from.
+        var release = await ResolveReleaseAsync(projectId, sampleEvent.Release, cancellationToken);
+        var symbolicated = await symbolication.SymbolicateAsync(
+            projectId, sampleEvent, cancellationToken: cancellationToken);
+        var context = FixContextAssembler.Assemble(symbolicated, mappings, release);
+        var installs = await installations.GetByOrgAsync(orgId, cancellationToken);
+        var job = new FixJob(upsert.Id, repo.RepoFullName, repo.DefaultBranch, AutoActor, ModelDefaults.Fix)
+        {
+            Prompt = context.Prompt,
+            ScopedPaths = context.ScopedPaths,
+            InstallationId = installs.Count > 0 ? installs[0].InstallationId : 0,
+            OrgId = orgId,
+            JobId = Guid.CreateVersion7(),
+            ReservedAt = reservedAt,
+        };
+        return (context, job);
     }
 
     // The release the event carries, resolved to its recorded commit (#144). Null when the event has no

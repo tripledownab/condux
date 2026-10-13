@@ -88,14 +88,37 @@ public sealed class RunnerCveLeaseTest(PostgresFixture pg) : IClassFixture<Postg
 
         // The caller needs the kind to know there is no fix_audit trail to append to, and the project
         // for the live-badge nudge.
-        Assert.Equal(new ReportedJob(projectId, JobKind.CveFix), reported);
         var run = Assert.Single(await new PostgresCveFixStore(pg.ConnectionString).ListByRepoAsync(repoLinkId));
+        Assert.Equal(new ReportedJob(projectId, JobKind.CveFix), reported);
         Assert.Equal(FixStatus.Succeeded, run.Status);
         Assert.Equal("https://example.invalid/p/1", run.PrUrl);
         Assert.Equal("llama-3.3-70b", run.Model);
         Assert.Equal(10, run.InputTokens);
         // Terminal: long past any lease expiry, only the status keeps it out of the queue.
         Assert.Null(await leases.TryClaimAsync(orgId, Now.AddHours(2)));
+    }
+
+    [Fact]
+    public async Task A_failed_bump_records_why_whichever_way_it_failed()
+    {
+        var (orgId, _, repoLinkId) = await SeedRepoAsync();
+        var leases = Leases();
+        await leases.EnqueueCveAsync(BumpRun(repoLinkId), Context);
+        var job = await leases.TryClaimAsync(orgId, Now);
+
+        // A runner's report.
+        await leases.TryReportAsync(
+            job!.FixId, job.LeaseId, FixStatus.Failed, "", "", "No manifest found.", "", 0, 0, Now.AddMinutes(1),
+            failureReason: FixFailureReason.NoSourceFiles);
+        var store = new PostgresCveFixStore(pg.ConnectionString);
+        Assert.Equal(FixFailureReason.NoSourceFiles, Assert.Single(await store.ListByRepoAsync(repoLinkId)).FailureReason);
+
+        // The hosted orchestrator's write goes through the store instead.
+        var hosted = BumpRun(repoLinkId) with { Status = FixStatus.Failed, FailureReason = FixFailureReason.TimedOut };
+        await store.InsertAsync(hosted);
+        await store.UpdateAsync(hosted);
+        Assert.Equal(FixFailureReason.TimedOut,
+            (await store.ListByRepoAsync(repoLinkId)).Single(r => r.Id == hosted.Id).FailureReason);
     }
 
     [Fact]

@@ -185,6 +185,95 @@ public class OtlpEventMapperTests
         Assert.Equal(Level.Error, Assert.Single(FromJson(json)).Level);
     }
 
+    // A record carrying an exception but no severity reads as an error, as a Sentry event with no level
+    // does, so no stored event is left at a level no alert rule can name.
+    [Fact]
+    public void AnExceptionWithNoSeverity_IsAnError()
+    {
+        var json = """
+            {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"boom"},"attributes":[
+                {"key":"exception.type","value":{"stringValue":"TypeError"}}
+            ]}]}]}]}
+            """;
+
+        Assert.Equal(Level.Error, Assert.Single(FromJson(json)).Level);
+    }
+
+    [Fact]
+    public void ARecordWithNoSeverityAndNoException_StaysUnspecified()
+    {
+        var json = """
+            {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"just text"}}]}]}]}
+            """;
+
+        Assert.Equal(Level.Unspecified, Assert.Single(FromJson(json)).Level);
+    }
+
+    private static Event WithAttributes(string attributes) => Assert.Single(FromJson($$"""
+        {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"severityNumber":17,"attributes":[{{attributes}}]}]}]}]}
+        """));
+
+    private static string Attribute(string key, string value) =>
+        "{\"key\":\"" + key + "\",\"value\":{\"stringValue\":\"" + value + "\"}}";
+
+    /// <summary>
+    /// The OpenTelemetry user attributes fill the event's user, which is what "users affected" counts,
+    /// and leave the tags, so the identifier is not stored a second time beside it.
+    /// </summary>
+    [Fact]
+    public void UserAttributes_FillTheUser_AndLeaveTheTags()
+    {
+        var e = WithAttributes(string.Join(",",
+            Attribute("enduser.id", "u-42"), Attribute("user.email", "ada@example.com"),
+            Attribute("user.name", "ada"), Attribute("http.route", "/checkout")));
+
+        Assert.Equal(("u-42", "ada@example.com", "ada"), (e.User?.Id, e.User?.Email, e.User?.Username));
+        Assert.Equal(["http.route"], e.Tags.Keys);
+    }
+
+    /// <summary>An end user's id first, then a plain user id, then the pseudonymous forms.</summary>
+    [Theory]
+    [InlineData("enduser.id", "user.id")]
+    [InlineData("user.id", "enduser.pseudo.id")]
+    [InlineData("enduser.pseudo.id", "user.hash")]
+    public void UserId_PrefersTheStrongerAttribute(string stronger, string weaker)
+    {
+        var e = WithAttributes(string.Join(",", Attribute(weaker, "weak"), Attribute(stronger, "strong")));
+
+        Assert.Equal("strong", e.User?.Id);
+        Assert.Empty(e.Tags);
+    }
+
+    /// <summary>An empty stronger attribute does not hide a real weaker one.</summary>
+    [Fact]
+    public void AnEmptyEndUserId_FallsThroughToTheUserId() =>
+        Assert.Equal(
+            "u-7",
+            WithAttributes(string.Join(",", Attribute("enduser.id", ""), Attribute("user.id", "u-7"))).User?.Id);
+
+    /// <summary>An empty email or name names nobody, so on its own it gives no user.</summary>
+    [Theory]
+    [InlineData("user.email")]
+    [InlineData("user.name")]
+    public void AnEmptyEmailOrName_GivesNoUser(string key) =>
+        Assert.Null(WithAttributes(Attribute(key, "")).User);
+
+    [Fact]
+    public void ARecordNamingNobody_HasNoUser() =>
+        Assert.Null(WithAttributes(Attribute("http.route", "/checkout")).User);
+
+    /// <summary>
+    /// Through the scrub the relay runs next, the user becomes the pseudonymous key "users affected"
+    /// counts. Before, an OTLP event never had one, so the count read zero for an OTLP-only project.
+    /// </summary>
+    [Fact]
+    public void AUserAttribute_GivesTheScrubbedEventAUserKey()
+    {
+        var scrubbed = Condux.Core.Scrub.EventScrubber.Scrub(WithAttributes(Attribute("enduser.id", "u-42")), "salt");
+
+        Assert.NotEqual("", scrubbed.UserKey);
+    }
+
     /// <summary>
     /// A composite attribute has no plain text form, so it is stored as JSON rather than dropped.
     /// </summary>

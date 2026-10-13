@@ -1,4 +1,5 @@
 using System.Text;
+using Condux.Core.SourceMaps;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.ObjectStore;
 using Xunit;
@@ -6,16 +7,18 @@ using Xunit;
 namespace Condux.IntegrationTests;
 
 /// <summary>
-/// Exercises the real <c>S3ObjectStore</c> (AWSSDK.S3) against a MinIO container over the S3 API (ADR-0028):
-/// a Put/Get round-trip returns the exact bytes, a re-Put of the same key overwrites (upload idempotence),
-/// and a missing key returns null rather than throwing. This is the coverage the endpoint test's in-memory
-/// fake cannot give — the actual S3 client, signing, and not-found handling.
+/// Exercises the real <c>S3ObjectStore</c> (AWSSDK.S3) against an S3-compatible container over the S3 API
+/// (ADR-0028): a Put/Get round-trip returns the exact bytes, a re-Put of the same key overwrites (upload
+/// idempotence), a missing key returns null rather than throwing, and a wrong secret is refused. This is
+/// the coverage the endpoint test's in-memory fake cannot give: the actual S3 client, signing, and
+/// not-found handling. The refusal case also holds the fixture to a server that checks signatures, since
+/// every other case here passes against one that does not.
 /// </summary>
 [Trait("Category", "Integration")]
-public sealed class S3ObjectStoreTest(MinioFixture minio) : IClassFixture<MinioFixture>
+public sealed class S3ObjectStoreTest(S3Fixture s3) : IClassFixture<S3Fixture>
 {
-    private S3ObjectStore Store() => new(new ObjectStoreConfig(
-        minio.Endpoint, MinioFixture.Bucket, minio.AccessKey, minio.SecretKey, Region: null));
+    private S3ObjectStore Store(string? secretKey = null) => new(new ObjectStoreConfig(
+        s3.Endpoint, S3Fixture.Bucket, s3.AccessKey, secretKey ?? s3.SecretKey, Region: null));
 
     [Fact]
     public async Task Put_then_Get_round_trips_the_exact_bytes()
@@ -47,5 +50,59 @@ public sealed class S3ObjectStoreTest(MinioFixture minio) : IClassFixture<MinioF
     {
         using var store = Store();
         Assert.Null(await store.GetAsync("sourcemaps/1/by-debug-id/does-not-exist"));
+    }
+
+    [Fact]
+    public async Task A_wrong_secret_is_refused()
+    {
+        using var store = Store(secretKey: "not-the-secret");
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => store.PutAsync("sourcemaps/1/by-debug-id/forged", Encoding.UTF8.GetBytes("x"), "application/json"));
+    }
+
+    [Fact]
+    public async Task Listing_and_prefix_delete_go_past_the_first_page()
+    {
+        // S3 answers a listing 1000 keys at a time, so one more than that is the smallest case that needs
+        // the continuation token.
+        using var store = Store();
+        var prefix = $"debug-files/{Guid.NewGuid():N}/";
+        var keys = Enumerable.Range(0, 1001).Select(i => $"{prefix}{i:D4}").ToList();
+        await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            async (key, ct) => await store.PutAsync(key, [1], "application/octet-stream", ct));
+
+        var listed = new List<string>();
+        var pages = 0;
+        await foreach (var page in store.ListAsync(prefix))
+        {
+            pages++;
+            listed.AddRange(page.Select(o => o.Key));
+        }
+
+        Assert.True(pages >= 2);
+        Assert.Equal(keys, listed.Order(StringComparer.Ordinal));
+        Assert.Equal(1001, await store.DeletePrefixAsync(prefix));
+        Assert.Null(await store.GetAsync(keys[^1]));
+    }
+
+    [Fact]
+    public async Task A_listed_object_says_when_it_was_written()
+    {
+        // The sweep judges age by this. The SDK parses the time as UTC, so the conversion is a no-op; on a
+        // host whose clock is UTC this cannot tell a zone mistake apart, and pins only that the time is
+        // there and current.
+        using var store = Store();
+        var key = $"sourcemaps/{Guid.NewGuid():N}/written";
+        await store.PutAsync(key, [1], "application/json");
+
+        var listed = new List<StoredObject>();
+        await foreach (var page in store.ListAsync(key))
+        {
+            listed.AddRange(page);
+        }
+
+        var written = Assert.Single(listed).LastModified;
+        Assert.NotNull(written);
+        Assert.InRange(written.Value, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(1));
     }
 }

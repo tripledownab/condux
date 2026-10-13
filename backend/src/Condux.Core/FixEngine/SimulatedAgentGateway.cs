@@ -43,5 +43,13 @@ public sealed class SimulatedAgentGateway(int pollsWhileRunning = 2) : IAgentGat
         return Task.FromResult(AgentRunProgress.Done(branch, prUrl, summary));
     }
 
+    // Nothing runs between polls here, so stopping a run is only forgetting it.
+    public Task<AgentRunProgress> CancelAsync(
+        string runId, CancellationToken cancellationToken = default, bool publishFinished = false)
+    {
+        runs.TryRemove(runId, out _);
+        return Task.FromResult(AgentRunProgress.Failed("The run was stopped before it finished."));
+    }
+
     private sealed record Run(AgentRunSpec Spec, int PollsRemaining);
 }

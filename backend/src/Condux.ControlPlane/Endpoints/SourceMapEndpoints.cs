@@ -1,5 +1,5 @@
 using Condux.ControlPlane.Auth;
-using Condux.Core.Auth;
+using Condux.Core.Http;
 using Condux.Core.SourceMaps;
 using Condux.Storage.ObjectStore;
 using Condux.Storage.Postgres;
@@ -35,7 +35,7 @@ internal static class SourceMapEndpoints
                     {
                         return TypedResults.NotFound();
                     }
-                    if (await ResolveProject(http, tokens) is not { } projectId)
+                    if (await ReleaseTokenAuth.ResolveProjectAsync(http, tokens) is not { } projectId)
                     {
                         return TypedResults.Unauthorized();
                     }
@@ -62,31 +62,22 @@ internal static class SourceMapEndpoints
 
                     var objectStore = http.RequestServices.GetRequiredService<IObjectStore>();
                     var key = SourceMapKeys.ForArtifact(projectId, release.Trim(), dist, debugId, filename.Trim());
-                    await objectStore.PutAsync(key, content, "application/json", http.RequestAborted);
+                    // The row first, so every stored object has a row the quota counts and expiry reaches.
+                    // A store write that then fails leaves a row with no object, which reads as a missing map.
                     var artifact = await artifacts.RecordAsync(
                         projectId, release.Trim(), Trim(dist), Trim(debugId), filename.Trim(), key,
                         content.Length, http.RequestAborted);
+                    await objectStore.PutAsync(key, content, "application/json", http.RequestAborted);
+                    await Uploads.UploadEviction.TryEvictAsync(http, projectId);
                     return TypedResults.Created($"/api/sourcemaps/{artifact.Id}", ToResponse(artifact));
                 })
             .WithName("uploadSourceMap").WithTags("SourceMaps");
     }
 
-    private static async Task<long?> ResolveProject(HttpContext http, ReleaseTokenRepository tokens)
-    {
-        if (BearerToken.From(http) is not { } raw)
-        {
-            return null;
-        }
-
-        return await tokens.ResolveProjectAsync(ReleaseTokens.HashToken(raw));
-    }
-
-    private static async Task<byte[]?> ReadBodyAsync(HttpContext http)
-    {
-        using var buffer = new MemoryStream();
-        await http.Request.Body.CopyToAsync(buffer, http.RequestAborted);
-        return buffer.Length is > 0 and <= MaxBytes ? buffer.ToArray() : null;
-    }
+    private static async Task<byte[]?> ReadBodyAsync(HttpContext http) =>
+        await RequestBodies.ReadBoundedAsync(http.Request.Body, MaxBytes, http.RequestAborted) is { Length: > 0 } body
+            ? body
+            : null;
 
     private static bool TooLong(string? value) => value is { Length: > MaxFieldLength };
 

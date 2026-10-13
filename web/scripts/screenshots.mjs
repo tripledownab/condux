@@ -1,5 +1,5 @@
 // Marketing screenshots of the running dashboard via headless Chromium (Playwright).
-// The dashboard must already be running (localhost:3000 + control-plane :8080); this script never starts it.
+// The dashboard must already be running (localhost:3200 + control-plane :8080); this script never starts it.
 // Navigation waits on "load", not "networkidle": the authed shell keeps a live SSE stream open for the nav
 // badges (ADR-0030), so the page never reaches network-idle. Content settles via waitForSelector + a pause.
 // Captures the key surfaces in both dark and light theme at a roomy, retina resolution.
@@ -10,7 +10,7 @@
 import { mkdirSync } from "node:fs";
 import { chromium } from "@playwright/test";
 
-const BASE = process.env.SHOT_BASE_URL ?? "http://localhost:3000";
+const BASE = process.env.SHOT_BASE_URL ?? "http://localhost:3200";
 const EMAIL = process.env.SHOT_EMAIL ?? "admin@condux.dev";
 const PASSWORD = process.env.SHOT_PASSWORD ?? "condux-dev-admin";
 // The issue featured in the detail/fix shots (a real bug reads better than a benign cancellation).

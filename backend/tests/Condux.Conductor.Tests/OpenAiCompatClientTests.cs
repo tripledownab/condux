@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Condux.Agent;
 using Xunit;
+using Condux.Core.FixEngine;
 
 namespace Condux.Conductor.Tests;
 
@@ -82,7 +83,8 @@ public class OpenAiCompatClientTests
     {
         var client = new OpenAiCompatClient(
             new HttpClient(new StubHandler(HttpStatusCode.Unauthorized, "nope")));
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => client.CreateAsync("m", "s", "u", "k", "https://x/v1"));
+        Assert.Equal(FixFailureReason.ModelKeyRejected, error.Reason);
     }
 }

@@ -31,6 +31,15 @@ public sealed class PostgresAiFixQuota(string connectionString) : IAiFixQuota
         WHERE org_id = @org AND period = @period;
         """;
 
+    // Takes back a run the stale-run sweep refunded and that then turned out to succeed. Guarded on the
+    // period like the refund, so a counter that has rolled over is left alone by both, and never past the
+    // limit, since the freed slot may already have been spent on another run. limit 0 is uncapped.
+    private const string RechargeSql = """
+        UPDATE ai_fix_quota
+          SET used = CASE WHEN @limit = 0 OR used < @limit THEN used + 1 ELSE used END, updated_at = now()
+        WHERE org_id = @org AND period = @period;
+        """;
+
     private const string UsedSql = "SELECT used FROM ai_fix_quota WHERE org_id = @org AND period = @period;";
 
     // The lifetime grant (#112) lives in its own column that never resets, so it is independent of the
@@ -63,13 +72,34 @@ public sealed class PostgresAiFixQuota(string connectionString) : IAiFixQuota
         return await cmd.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
-    public async Task RefundAsync(long orgId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
+    public async Task RefundAsync(long orgId, DateTimeOffset reservedAt, CancellationToken cancellationToken = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(RefundSql, conn);
+        await RefundAsync(conn, null, orgId, reservedAt, cancellationToken);
+    }
+
+    /// <summary>The same refund inside a caller's transaction, for a writer that must commit the refund
+    /// together with the change that earned it.</summary>
+    internal static async Task RefundAsync(
+        NpgsqlConnection conn, NpgsqlTransaction? tx, long orgId, DateTimeOffset reservedAt,
+        CancellationToken cancellationToken)
+    {
+        await using var cmd = new NpgsqlCommand(RefundSql, conn, tx);
         cmd.Parameters.AddWithValue("org", orgId);
-        cmd.Parameters.AddWithValue("period", PeriodOf(nowUtc));
+        cmd.Parameters.AddWithValue("period", PeriodOf(reservedAt));
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Takes back a refunded run inside a caller's transaction, never past the monthly limit.</summary>
+    internal static async Task RechargeAsync(
+        NpgsqlConnection conn, NpgsqlTransaction tx, long orgId, DateTimeOffset reservedAt, int monthlyLimit,
+        CancellationToken cancellationToken)
+    {
+        await using var cmd = new NpgsqlCommand(RechargeSql, conn, tx);
+        cmd.Parameters.AddWithValue("org", orgId);
+        cmd.Parameters.AddWithValue("period", PeriodOf(reservedAt));
+        cmd.Parameters.AddWithValue("limit", monthlyLimit);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 

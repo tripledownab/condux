@@ -121,6 +121,8 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var anon = await CreateClient().PostAsJsonAsync("/api/mcp",
             new { jsonrpc = "2.0", id = 1, method = "tools/list" });
         Assert.Equal(HttpStatusCode.Unauthorized, anon.StatusCode);
+        // RFC 9110 15.5.2: a 401 must carry a challenge, and a client reads the scheme from it.
+        Assert.Equal("Bearer", anon.Headers.WwwAuthenticate.Single().Scheme);
 
         // A minted-then-revoked token no longer authenticates.
         var mint = await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens", new { name = "x" });
@@ -133,5 +135,67 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var revoked = await BearerClient(raw).PostAsJsonAsync("/api/mcp",
             new { jsonrpc = "2.0", id = 1, method = "tools/list" });
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+        Assert.Equal("Bearer", revoked.Headers.WwwAuthenticate.Single().Scheme);
+        // RFC 6750 3.1: a token that was sent and refused is named; the missing one above is not.
+        Assert.Contains("error=\"invalid_token\"", revoked.Headers.WwwAuthenticate.Single().Parameter);
+        Assert.DoesNotContain("error", anon.Headers.WwwAuthenticate.Single().Parameter);
+    }
+
+    [Fact]
+    public async Task ServerCard_NeedsNoToken_AndPublishesExactlyWhatATriageTokenIsServed()
+    {
+        var (client, orgId) = await ProvisionAsync();
+        var projectId = await CreateProjectAsync(client, orgId, "A");
+        var raw = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens",
+                new { name = "x", capability = "triage" }))
+            .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        var agent = BearerClient(raw);
+
+        var resp = await CreateClient().GetAsync("/.well-known/mcp/server-card.json");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var card = await resp.Content.ReadFromJsonAsync<JsonElement>();
+
+        // Compared as JSON values, definition for definition (the two responses escape characters
+        // differently, which is not a difference), so a tool on one side only fails here rather than in a
+        // directory's listing.
+        var listed = await RpcAsync(agent, "tools/list");
+        var served = listed.GetProperty("result").GetProperty("tools");
+        Assert.True(JsonElement.DeepEquals(served, card.GetProperty("tools")));
+        Assert.Contains("set_issue_status", McpRpc.ToolNames(listed));
+
+        var init = (await RpcAsync(agent, "initialize")).GetProperty("result").GetProperty("serverInfo");
+        Assert.True(JsonElement.DeepEquals(init, card.GetProperty("serverInfo")));
+        Assert.True(card.GetProperty("authentication").GetProperty("required").GetBoolean());
+        Assert.Equal("bearer", card.GetProperty("authentication").GetProperty("schemes")[0].GetString());
+    }
+
+    [Fact]
+    public async Task AForeignBrowserOrigin_Is403_WhileTheDeploymentsOwnOriginAndNoOriginAreServed()
+    {
+        var (client, orgId) = await ProvisionAsync();
+        var projectId = await CreateProjectAsync(client, orgId, "A");
+        var raw = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens", new { name = "x" }))
+            .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        // The base URL is an internationalised domain, which a browser sends in punycode. The CORS origin
+        // carries a port, which is the split-origin dev shape and must survive the comparison.
+        var app = ControlPlaneApp.Create(pg.ConnectionString, appBaseUrl: "https://bücher.example.test/",
+            configure: b => b.UseSetting("CONDUX_CORS_ORIGINS", "http://localhost:3000"));
+
+        async Task<HttpStatusCode> ListToolsFrom(string? origin)
+        {
+            var agent = McpRpc.BearerClient(app.CreateClient(), raw);
+            if (origin is not null)
+                agent.DefaultRequestHeaders.Add("Origin", origin);
+            var resp = await agent.PostAsJsonAsync("/api/mcp", new { jsonrpc = "2.0", id = 1, method = "tools/list" });
+            return resp.StatusCode;
+        }
+
+        // MCP 2025-06-18 basic/transports: the server must validate Origin, against DNS rebinding.
+        Assert.Equal(HttpStatusCode.Forbidden, await ListToolsFrom("https://evil.example"));
+        Assert.Equal(HttpStatusCode.Forbidden, await ListToolsFrom("https://xn--bcher-kva.example.test:8443"));
+        Assert.Equal(HttpStatusCode.OK, await ListToolsFrom("https://xn--bcher-kva.example.test"));
+        Assert.Equal(HttpStatusCode.OK, await ListToolsFrom("http://localhost:3000"));
+        Assert.Equal(HttpStatusCode.Forbidden, await ListToolsFrom("http://localhost"));
+        Assert.Equal(HttpStatusCode.OK, await ListToolsFrom(null));
     }
 }

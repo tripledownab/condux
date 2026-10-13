@@ -15,8 +15,11 @@ public interface IAiFixQuota
     Task<bool> TryConsumeAsync(
         long orgId, int monthlyLimit, DateTimeOffset nowUtc, CancellationToken cancellationToken = default);
 
-    /// <summary>Return one run to the org's current period (a failed/cancelled run delivered no PR).</summary>
-    Task RefundAsync(long orgId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default);
+    /// <summary>Return one run to the period it was reserved in (a failed/cancelled run delivered no PR).
+    /// A period the counter has already left is not refunded, so pass when the run was reserved, never
+    /// when it ended: a run that fails after the month rolls over would otherwise refund a run the new
+    /// month never reserved.</summary>
+    Task RefundAsync(long orgId, DateTimeOffset reservedAt, CancellationToken cancellationToken = default);
 
     /// <summary>How many runs the org has consumed in the current period (0 when untouched) — the cheap
     /// read behind the usage meter.</summary>

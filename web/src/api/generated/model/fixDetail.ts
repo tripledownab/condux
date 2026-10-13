@@ -34,4 +34,6 @@ export interface FixDetail {
   /** @nullable */
   costUsd: number | null;
   audit: FixAuditEntry[];
+  /** @nullable */
+  failureReason?: number | null;
 }

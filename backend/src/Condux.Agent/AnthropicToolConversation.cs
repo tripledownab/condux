@@ -47,14 +47,13 @@ internal sealed class AnthropicToolConversation(
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"Anthropic returned {(int)response.StatusCode}: {ModelApiError.Describe(payload)}");
+            throw ModelApiError.ToFailure("Anthropic", response.StatusCode, payload);
         }
 
         var root = JsonNode.Parse(payload)?.AsObject()
-            ?? throw new InvalidOperationException("Anthropic returned an unreadable response.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "Anthropic returned an unreadable response.");
         var content = root["content"]?.AsArray()
-            ?? throw new InvalidOperationException("Anthropic returned no content.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "Anthropic returned no content.");
 
         // Echo the assistant turn back verbatim on the next request: the tool_use ids must match the
         // tool_result ids we send, so the model can correlate them.

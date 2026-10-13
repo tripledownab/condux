@@ -1,0 +1,105 @@
+{{/*
+The native symbolizer (ADR-0049): its Deployment, its Service and the NetworkPolicy that fences it. It
+parses debug files a stranger uploaded, so it is handed nothing worth taking: no Secret, no service
+account token and a read-only root. Its NetworkPolicy allows no egress and admits only the control-plane
+and the consumer, where the cluster enforces it, and Kubernetes always lets the pod's own node through.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-symbolizer
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: symbolizer
+spec:
+  replicas: {{ .Values.symbolizer.replicas }}
+  selector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "symbolizer") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "condux.selectorLabels" (dict "Release" .Release "component" "symbolizer") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: symbolizer
+          image: {{ include "condux.image" (dict "root" . "name" .Values.image.symbolizer) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.symbolizer.port }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://0.0.0.0:{{ .Values.symbolizer.port }}"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.symbolizer.resources | nindent 12 }}
+      volumes:
+        # Only a cache: a caller reads each file from object storage, so losing one costs a fetch.
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ .Values.symbolizer.cacheSizeLimit }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-symbolizer
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: symbolizer
+spec:
+  selector:
+    {{- include "condux.selectorLabels" (dict "Release" .Release "component" "symbolizer") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.symbolizer.port }}
+      targetPort: http
+---
+# Enforced only where the cluster's network plugin implements NetworkPolicy. Elsewhere it is accepted and
+# ignored, and the other fences above still hold. Even where it is enforced, traffic to and from the pod's
+# own node is always allowed (Kubernetes' network policy docs), so this fences the pod off from other pods
+# and the outside, not from its host.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-symbolizer
+  labels:
+    {{- include "condux.labels" . | nindent 4 }}
+    app.kubernetes.io/component: symbolizer
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "condux.selectorLabels" (dict "Release" .Release "component" "symbolizer") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range list "controlplane" "consumer" }}
+        - podSelector:
+            matchLabels:
+              {{- include "condux.selectorLabels" (dict "Release" $.Release "component" .) | nindent 14 }}
+        {{- end }}
+      ports:
+        - port: http
+  # No egress rules: the symbolizer opens no connection of its own.
+  egress: []

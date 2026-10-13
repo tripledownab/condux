@@ -15,7 +15,7 @@ Prism.languages.dotenv = {
 };
 
 // The snippet catalog's languages mapped to a prism-react-renderer grammar (bundled, plus the dotenv one
-// registered above). C-family languages prism does not ship (Java, C#, PHP) borrow the generic clike
+// registered above). C-family languages prism does not ship (Java, C#, PHP, Dart) borrow the generic clike
 // grammar; anything unmapped (shell, Ruby) renders as plain text, which is fine for one-line commands.
 const PRISM_LANGUAGE: Record<string, string> = {
   typescript: "typescript",
@@ -27,6 +27,8 @@ const PRISM_LANGUAGE: Record<string, string> = {
   java: "clike",
   csharp: "clike",
   php: "clike",
+  dart: "clike",
+  yaml: "yaml",
 };
 
 // A titled, syntax-highlighted code block with a copy button (prism-react-renderer, themed by the active

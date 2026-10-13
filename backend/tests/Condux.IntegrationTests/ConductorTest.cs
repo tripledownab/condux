@@ -30,6 +30,7 @@ public sealed class ConductorTest(PostgresFixture pg) : IClassFixture<PostgresFi
 
         var result = await new FixOrchestrator(store, new FakeFixProvider()).RunAsync(job);
 
+        Assert.NotNull(result);
         Assert.Equal(FixStatus.Succeeded, result.Status);
         Assert.Contains("example.invalid", result.PrUrl);
 

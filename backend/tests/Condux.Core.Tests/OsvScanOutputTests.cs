@@ -92,4 +92,25 @@ public class OsvScanOutputTests
         Assert.Null(finding.FixedVersion);
         Assert.Equal(CveSeverity.Unknown, finding.Severity);
     }
+    /// <summary>
+    /// Each event that can end an OSV interval becomes its own comparator. Reading <c>fixed</c> alone
+    /// wrote the first two as "&gt;=0", which the exposure matcher would confirm for every version.
+    /// The shapes come from the golden scan's own lodash.template advisory.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"introduced":"0"},{"last_affected":"4.5.0"}""", ">=0 <=4.5.0", null)]
+    [InlineData("""{"introduced":"1.0.0"},{"limit":"1.5.0"}""", ">=1.0.0 <1.5.0", null)]
+    [InlineData("""{"introduced":"0"},{"fixed":"4.17.21"}""", ">=0 <4.17.21", "4.17.21")]
+    public void Every_upper_bound_event_becomes_a_comparator(string events, string range, string? fixedVersion)
+    {
+        var finding = Assert.Single(OsvScanOutput.Parse($$"""
+            {"results":[{"packages":[{"package":{"name":"x","ecosystem":"npm"},
+             "vulnerabilities":[{"id":"GHSA-x","affected":[{"package":{"name":"x"},
+             "ranges":[{"type":"SEMVER","events":[{{events}}]}]}]}]}]}]}
+            """));
+
+        Assert.Equal(range, finding.VulnerableRange);
+        Assert.Equal(fixedVersion, finding.FixedVersion);
+        Assert.False(VulnerableRanges.IsConfirmedInRange("npm", finding.VulnerableRange, "9.9.9"));
+    }
 }

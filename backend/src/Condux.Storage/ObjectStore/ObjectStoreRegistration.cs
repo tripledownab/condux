@@ -17,9 +17,13 @@ public static class ObjectStoreRegistration
         services.AddSingleton(config);
         if (config.Enabled)
         {
-            // A factory (not an eager instance) so the S3 client is built only when first resolved, which
-            // lets a test override IObjectStore with a fake without a real S3 client ever being constructed.
-            services.AddSingleton<IObjectStore>(_ => new S3ObjectStore(config));
+            // A factory (not an eager instance) so the S3 client is built only when first resolved, and one
+            // instance behind both seams. A test can still override IObjectStore with a fake; the control-plane's
+            // upload storage worker resolves the cleanup seam at startup, which builds the client but opens no
+            // connection until its first pass.
+            services.AddSingleton(_ => new S3ObjectStore(config));
+            services.AddSingleton<IObjectStore>(sp => sp.GetRequiredService<S3ObjectStore>());
+            services.AddSingleton<IObjectStoreCleanup>(sp => sp.GetRequiredService<S3ObjectStore>());
         }
 
         return services;

@@ -5,6 +5,8 @@
  * OpenAPI spec version: v1
  */
 import type { FixStatus } from './fixStatus';
+import type { VerifyStatus } from './verifyStatus';
+import type { CveFixRunVerifyEvidence } from './cveFixRunVerifyEvidence';
 
 export interface CveFixRun {
   id: string;
@@ -28,4 +30,13 @@ export interface CveFixRun {
   updatedAt: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** @nullable */
+  failureReason?: number | null;
+  /** @nullable */
+  mergedAt?: string | null;
+  verifyStatus?: VerifyStatus;
+  /** @nullable */
+  verifiedAt?: string | null;
+  /** @nullable */
+  verifyEvidence?: CveFixRunVerifyEvidence;
 }

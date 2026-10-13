@@ -59,7 +59,11 @@ public static class SandboxTar
                 continue;
             }
 
-            using var contents = new StreamReader(entry.DataStream, Encoding.UTF8);
+            // Kept byte for byte, a byte order mark included: stripping it made a file read back from the
+            // container differ from the repository's own text, so it could never count as read.
+            using var contents = new StreamReader(
+                entry.DataStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                detectEncodingFromByteOrderMarks: false);
             return contents.ReadToEnd();
         }
 

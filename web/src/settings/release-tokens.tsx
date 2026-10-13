@@ -10,9 +10,11 @@ import {
 } from "@/src/api/generated/condux";
 import { type MintedView, TokenManager } from "./token-manager";
 
-// Scoped release tokens for a project: the machine credential CI uses to record releases (POST
-// /api/releases with Authorization: Bearer) without a login or internal ids. The raw token is shown once
-// at creation and only its hash is stored, so it is never re-fetchable. Admins mint/revoke; members read.
+// Scoped release tokens for a project: the machine credential CI uses, as Authorization: Bearer with no
+// login or internal ids, to record releases (POST /api/releases) and, where object storage is configured,
+// upload source maps and debug files.
+// The raw token is shown once at creation and only its hash is stored, so it is never re-fetchable.
+// Admins mint/revoke; members read.
 // The mint/list/revoke UI is the shared TokenManager (also used by MCP tokens); this wires its hooks.
 export function ReleaseTokens({ projectId, canManage }: { projectId: number; canManage: boolean }) {
   const queryClient = useQueryClient();

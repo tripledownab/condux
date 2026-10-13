@@ -49,6 +49,17 @@ public sealed record CveFinding(
 }
 
 /// <summary>
+/// What one scan found, and whether the scanner stopped before the end. <see cref="Truncated"/> is part
+/// of the answer rather than a log line, because a list cut short and presented as whole reads as full
+/// coverage, and the reader has no other way to know.
+/// </summary>
+public sealed record CveScan(IReadOnlyList<CveFinding> Findings, bool Truncated)
+{
+    /// <summary>A scan that found nothing, which is a complete answer.</summary>
+    public static readonly CveScan Empty = new([], Truncated: false);
+}
+
+/// <summary>
 /// Finds vulnerable dependencies in a repository. GitHub reads Dependabot's already-computed alerts;
 /// every other forge runs a scanner over the repo's lockfiles. Both answer in <see cref="CveFinding"/>.
 /// </summary>
@@ -62,7 +73,7 @@ public interface ICveScanner
     /// throwing: the CVE surface is advisory, and a missing permission or an unreachable service must not
     /// turn a page load into an error.
     /// </summary>
-    Task<IReadOnlyList<CveFinding>> ScanAsync(
+    Task<CveScan> ScanAsync(
         string token, string repoFullName, CancellationToken cancellationToken = default);
 }
 

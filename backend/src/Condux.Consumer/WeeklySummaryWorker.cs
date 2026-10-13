@@ -43,7 +43,7 @@ public sealed class WeeklySummaryWorker(
             {
                 await TickAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -57,7 +57,7 @@ public sealed class WeeklySummaryWorker(
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }

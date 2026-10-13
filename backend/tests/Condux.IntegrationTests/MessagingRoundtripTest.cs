@@ -1,4 +1,6 @@
+extern alias consumer;
 using System.Text;
+using consumer::Condux.Consumer;
 using Condux.Core.Events;
 using Condux.Core.Messaging;
 using Condux.Core.Plans;
@@ -26,6 +28,7 @@ public class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<Re
 
         // ProduceAsync awaits delivery, so this also auto-creates the topic.
         var retentionDays = PlanCatalog.For(Tier.Free).RetentionDays;
+        var published = DateTimeOffset.UtcNow;
         await publisher.PublishAsync("proj-1", new Event { EventId = "abc", Level = Level.Error }, retentionDays);
 
         using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
@@ -56,6 +59,15 @@ public class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<Re
         // The relay's per-tier retention rides as a header the consumer reads back.
         Assert.True(result.Message.Headers.TryGetLastBytes(EventHeaders.RetentionDays, out var retentionHeader));
         Assert.Equal(retentionDays.ToString(), Encoding.UTF8.GetString(retentionHeader));
+
+        // The producer stamps the message with the time it published, which the consumer bounds the
+        // event's own claimed time to (EventMessages.ToFiledEvent). The producer runs in this process,
+        // so this is its own clock; the second either side only allows for scheduling.
+        Assert.Equal(TimestampType.CreateTime, result.Message.Timestamp.Type);
+        Assert.InRange(
+            EventMessages.ToReceivedAt(result.Message.Timestamp),
+            published.AddSeconds(-1),
+            DateTimeOffset.UtcNow.AddSeconds(1));
 
         consumer.Close();
     }

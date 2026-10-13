@@ -1,5 +1,6 @@
 extern alias consumer;
 
+using System.Text;
 using Condux.Core.Alerting;
 using Condux.Core.Events;
 using Condux.Core.FixEngine;
@@ -11,6 +12,7 @@ using Condux.IntegrationTests.Fixtures;
 using Condux.Notifications;
 using Condux.Storage.Postgres;
 using Microsoft.Extensions.Logging.Abstractions;
+using Condux.Storage.SourceMaps;
 using Xunit;
 using AutoFixDispatcher = consumer::Condux.Consumer.AutoFixDispatcher;
 
@@ -26,17 +28,6 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
 {
-    private sealed class CapturingPublisher : IFixRequestPublisher
-    {
-        public List<FixJob> Jobs { get; } = [];
-
-        public Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
-        {
-            Jobs.Add(job);
-            return Task.CompletedTask;
-        }
-    }
-
     // Captures the pause notices the dispatcher fans out via the org's notification channels, so a test can
     // assert auto-fix actually told the org why it paused (not just that it published no fix job).
     private sealed class CapturingNotifier : INotifier
@@ -65,13 +56,16 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
             NullLogger<OrgNotificationDispatcher>.Instance),
         NullLogger<ConductorPauseNotifier>.Instance);
 
-    private AutoFixDispatcher Dispatcher(CapturingPublisher publisher, INotifier? pauseSink = null) => new(
+    private AutoFixDispatcher Dispatcher(
+        IFixRequestPublisher publisher, INotifier? pauseSink = null, FrameSymbolicator? symbolicator = null) => new(
         new ProjectRepository(pg.ConnectionString), new OrgRepository(pg.ConnectionString),
         new RepoLinkRepository(pg.ConnectionString), new ReleaseRepository(pg.ConnectionString),
         new GithubInstallationRepository(pg.ConnectionString),
         new PostgresAiFixQuota(pg.ConnectionString), new PostgresAiFixSpend(pg.ConnectionString), publisher,
         new PostgresJobLeaseStore(pg.ConnectionString), new PostgresFixStore(pg.ConnectionString),
-        PauseNotifier(pauseSink), NullLogger<AutoFixDispatcher>.Instance);
+        PauseNotifier(pauseSink),
+        new EventSymbolication(symbolicator, native: null, NullLogger<EventSymbolication>.Instance),
+        NullLogger<AutoFixDispatcher>.Instance);
 
     // An org at the given tier + mode, a project, and optionally a linked repo + GitHub installation.
     //
@@ -114,7 +108,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var (orgId, projectId, installationId) = await SeedAsync(
             (int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         var upsert = await NewIssueAsync(projectId, "fp-auto", Level.Error);
-        var pub = new CapturingPublisher();
+        var pub = new CapturingFixPublisher();
 
         await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { EventId = "e1", Level = Level.Error });
 
@@ -130,7 +124,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     [Fact]
     public async Task Manual_mode_and_sub_error_issues_publish_nothing()
     {
-        var pub = new CapturingPublisher();
+        var pub = new CapturingFixPublisher();
 
         // Manual mode: even a new error issue is left for a human to trigger.
         var (_, manualProject, _) = await SeedAsync((int)Tier.Team, mode: 0, withRepo: true, withInstall: true);
@@ -173,7 +167,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         // Set a $10 cap — already blown by the $30 spent — then a new error issue lands.
         await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
             orgId, mode: 1, costCapUsd: 10m, fixExecution: (int)FixExecution.Hosted);
-        var pub = new CapturingPublisher();
+        var pub = new CapturingFixPublisher();
         var sink = new CapturingNotifier();
         await Dispatcher(pub, sink).DispatchAsync(projectId,
             await NewIssueAsync(projectId, "fp-capped", Level.Error), new Event { Level = Level.Error });
@@ -201,7 +195,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
             Assert.True(await quota.TryConsumeAsync(orgId, allowance, DateTimeOffset.UtcNow));
         }
 
-        var pub = new CapturingPublisher();
+        var pub = new CapturingFixPublisher();
         var sink = new CapturingNotifier();
         await Dispatcher(pub, sink).DispatchAsync(projectId,
             await NewIssueAsync(projectId, "fp-noallowance", Level.Error), new Event { Level = Level.Error });
@@ -212,6 +206,174 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     }
 
     [Fact]
+    public async Task A_bundled_frame_is_scoped_to_the_source_file_its_map_names()
+    {
+        // A Next.js app reports a minified chunk that no repository holds. Its source map names the file
+        // the way Turbopack writes it, relative to the workspace root, so the fix scopes to that repository
+        // path with no code mapping at all. Without the symbolication the job names the chunk and the run
+        // reads nothing.
+        var (projectId, bundled) = await SeedBundledAsync();
+        var pub = new CapturingFixPublisher();
+
+        await Dispatcher(pub, symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString),
+                new InMemoryMapStore(Encoding.UTF8.GetBytes(BundledMap), BundledMapKey)))
+            .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled", Level.Error), bundled);
+
+        Assert.Equal(["web/src/cart.ts"], Assert.Single(pub.Jobs).ScopedPaths);
+    }
+
+    [Fact]
+    public async Task A_map_store_that_fails_still_requests_the_fix_on_the_raw_frames()
+    {
+        var (projectId, bundled) = await SeedBundledAsync();
+        var pub = new CapturingFixPublisher();
+
+        await Dispatcher(pub, symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString), new UnreachableMapStore()))
+            .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled-down", Level.Error), bundled);
+
+        Assert.Equal(["chunk.js"], Assert.Single(pub.Jobs).ScopedPaths);
+    }
+
+    [Fact]
+    public async Task A_dispatch_cancelled_while_reading_maps_hands_the_run_back()
+    {
+        // Nothing has been sent when a read is cancelled, so the run reserved for it is refunded.
+        var (projectId, bundled) = await SeedBundledAsync();
+        var orgId = (await new ProjectRepository(pg.ConnectionString).GetAsync(projectId))!.OrgId;
+        var store = new HangingMapStore();
+        var pub = new CapturingFixPublisher();
+        using var shutdown = new CancellationTokenSource();
+
+        var dispatch = Dispatcher(pub, symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString), store))
+            .DispatchAsync(
+                projectId, await NewIssueAsync(projectId, "fp-bundled-slow", Level.Error), bundled, shutdown.Token);
+        await store.Reached.Task.WaitAsync(Bound);
+        await shutdown.CancelAsync();
+        await dispatch.WaitAsync(Bound);
+
+        Assert.Empty(pub.Jobs);
+        Assert.Equal(0, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public async Task An_org_with_no_runs_left_reads_no_maps()
+    {
+        // The allowance is checked before the context is built, so an exhausted org costs the drain two
+        // queries and not a source-map fetch per new issue.
+        var (projectId, bundled) = await SeedBundledAsync();
+        var orgId = (await new ProjectRepository(pg.ConnectionString).GetAsync(projectId))!.OrgId;
+        var quota = new PostgresAiFixQuota(pg.ConnectionString);
+        var limit = PlanCatalog.For(Tier.Team).AiFixesPerMonth;
+        while (await quota.TryConsumeAsync(orgId, limit, DateTimeOffset.UtcNow))
+        {
+        }
+        var store = new HangingMapStore();
+
+        await Dispatcher(new CapturingFixPublisher(), symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString), store))
+            .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled-spent", Level.Error), bundled)
+            .WaitAsync(Bound);
+
+        Assert.False(store.Reached.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task A_publish_cancelled_in_flight_withdraws_the_run_and_refunds_it()
+    {
+        // A cancelled produce stops the wait, not the send, so the job may still arrive. Its run is cancelled
+        // first, so if it does it finds the run no longer pending and does not run: the refund is safe.
+        var (orgId, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var publisher = new HangingFixPublisher();
+        using var shutdown = new CancellationTokenSource();
+
+        var issue = await NewIssueAsync(projectId, "fp-publish-slow", Level.Error);
+        var dispatch = Dispatcher(publisher).DispatchAsync(
+            projectId, issue, new Event { Level = Level.Error }, shutdown.Token);
+        await publisher.Reached.Task.WaitAsync(Bound);
+        await shutdown.CancelAsync();
+        await dispatch.WaitAsync(Bound);
+
+        Assert.Equal(0, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        Assert.Equal(FixStatus.Cancelled, Assert.Single(
+            await new PostgresFixStore(pg.ConnectionString).ListByIssueAsync(issue.Id)).Status);
+    }
+
+    [Fact]
+    public async Task An_issue_with_a_run_in_progress_gets_no_second_one()
+    {
+        // As when an issue regresses again before the first fix concludes. The first request's pending run
+        // refuses the second, which hands its reservation back rather than queueing a second draft PR.
+        var (orgId, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var upsert = await NewIssueAsync(projectId, "fp-auto-twice", Level.Error);
+        var pub = new CapturingFixPublisher();
+
+        await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { Level = Level.Error });
+        await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { Level = Level.Error });
+
+        Assert.Single(pub.Jobs);
+        Assert.Equal(1, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        var run = Assert.Single(await new PostgresFixStore(pg.ConnectionString).ListByIssueAsync(upsert.Id));
+        Assert.Equal(FixStatus.Pending, run.Status);
+    }
+
+    // Long enough for any real wait here, short enough that a regression fails the run instead of hanging it.
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
+    // A broker that never acknowledges until the caller gives up.
+    private sealed class HangingFixPublisher : IFixRequestPublisher
+    {
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
+        {
+            Reached.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+    }
+
+    private const string BundledMapKey = "sourcemaps/by-debug-id/cart";
+
+    private const string BundledMap =
+        """{"version":3,"sources":["turbopack:///[project]/web/src/cart.ts"],"sourcesContent":["const a = 1;\nfunction boom() {\n  throw new Error();\n}\n"],"names":["boom"],"mappings":"AAAA,CAEA;KAAGA"}""";
+
+    // An auto-mode project with a map recorded for one chunk, and an event whose only frame is in it.
+    private async Task<(long ProjectId, Event Bundled)> SeedBundledAsync()
+    {
+        var (_, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        await new SourceMapArtifactRepository(pg.ConnectionString).RecordAsync(
+            projectId, "web@1", dist: null, debugId: "cart", filename: "chunk.js",
+            objectKey: BundledMapKey, byteSize: BundledMap.Length);
+        return (projectId, new Event
+        {
+            Level = Level.Error,
+            Release = "web@1",
+            DebugImages =
+                [new DebugImage { Type = "sourcemap", CodeFile = "https://app/_next/chunk.js", DebugId = "cart" }],
+            Exceptions =
+            [
+                new ExceptionValue
+                {
+                    Type = "TypeError",
+                    Stacktrace = new Stacktrace
+                    {
+                        Frames =
+                        [
+                            new Frame
+                            {
+                                InApp = true, Filename = "chunk.js", AbsPath = "https://app/_next/chunk.js",
+                                Function = "n", Lineno = 2, Colno = 6,
+                            },
+                        ],
+                    },
+                },
+            ],
+        });
+    }
+
+    [Fact]
     public async Task Fix_job_prompt_carries_the_release_attribution()
     {
         var (_, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
@@ -219,7 +381,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var repo = (await new RepoLinkRepository(pg.ConnectionString).ListByProjectAsync(projectId))[0];
         await new ReleaseRepository(pg.ConnectionString).RecordAsync(projectId, repo.Id, "1.4.2", "abc123def456");
         var upsert = await NewIssueAsync(projectId, "fp-release", Level.Error);
-        var pub = new CapturingPublisher();
+        var pub = new CapturingFixPublisher();
 
         await Dispatcher(pub).DispatchAsync(
             projectId, upsert, new Event { Level = Level.Error, Release = "1.4.2" });

@@ -93,10 +93,14 @@ public static class AgentToolCatalog
     /// <summary>The tools every workspace supports.</summary>
     public static IReadOnlyList<AgentToolSchema> All { get; } =
     [
-        new(AgentToolNames.ListFiles, "List the repo-relative paths available in the workspace.", []),
-        new(AgentToolNames.ReadFile, "Read one file's full contents.",
+        new(AgentToolNames.ListFiles, "List the repo-relative paths of the files fetched for this error. "
+            + "The rest of the repository is not listed but can still be read by path.", []),
+        new(AgentToolNames.ReadFile, "Read one file's full text by its repo-relative path, not only the listed "
+            + "files: your own edit if you made one, otherwise the file at the base branch. A file that has no "
+            + "text to give (very large, or not UTF-8) or is a link cannot be read, and so cannot be changed.",
             [new("path", "Repo-relative path of the file to read.")]),
-        new(AgentToolNames.WriteFile, "Write a file's full new contents, creating it if needed.",
+        new(AgentToolNames.WriteFile, "Write a file's full new contents, creating it if needed. An existing "
+            + "file must be read in full first, because these contents replace it whole.",
             [new("path", "Repo-relative path of the file to write."),
              new("contents", "The complete new contents of the file, not a diff.")]),
         new(AgentToolNames.Finish, "Finish the run once the fix is complete.",

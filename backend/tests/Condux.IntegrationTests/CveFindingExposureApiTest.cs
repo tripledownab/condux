@@ -27,13 +27,23 @@ namespace Condux.IntegrationTests;
 public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixture ch)
     : IClassFixture<PostgresFixture>, IClassFixture<ClickHouseFixture>
 {
-    private sealed class StubScanner(params CveFinding[] findings) : ICveScanner
+    private sealed class StubScanner(bool truncated, params CveFinding[] findings) : ICveScanner
     {
         public string Name => "stub";
 
-        public Task<IReadOnlyList<CveFinding>> ScanAsync(
+        public Task<CveScan> ScanAsync(
             string token, string repoFullName, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<CveFinding>>(findings);
+            Task.FromResult(new CveScan(findings, truncated));
+    }
+
+    // A scan GitHub refused, as when the App lacks the Dependabot-alerts permission.
+    private sealed class FailingScanner(Exception? failure = null) : ICveScanner
+    {
+        public string Name => "failing";
+
+        public Task<CveScan> ScanAsync(
+            string token, string repoFullName, CancellationToken cancellationToken = default) =>
+            throw failure ?? new HttpRequestException("403 Forbidden");
     }
 
     // Only GetAsync is implemented: the findings path mints one installation token and never asks for
@@ -58,13 +68,19 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
             Source: "stub");
 
     /// <summary>Provision org, project and a linked repo, with a scanner that reports these findings.</summary>
-    private async Task<(HttpClient Client, long ProjectId, string RepoId)> ProvisionAsync(
-        params CveFinding[] findings)
+    private Task<(HttpClient Client, long ProjectId, string RepoId)> ProvisionAsync(
+        params CveFinding[] findings) => ProvisionAsync(truncated: false, findings);
+
+    private Task<(HttpClient Client, long ProjectId, string RepoId)> ProvisionAsync(
+        bool truncated, params CveFinding[] findings) =>
+        ProvisionAsync(new StubScanner(truncated, findings));
+
+    private async Task<(HttpClient Client, long ProjectId, string RepoId)> ProvisionAsync(ICveScanner scanner)
     {
         var client = ControlPlaneApp.Create(pg.ConnectionString, ch, configure: b =>
             b.ConfigureServices(services =>
             {
-                services.AddSingleton<ICveScanner>(new StubScanner(findings));
+                services.AddSingleton(scanner);
                 services.AddSingleton<ISourceHostTokens, StubTokens>();
             })).CreateClient();
 
@@ -104,18 +120,20 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
         ]);
     }
 
-    private static async Task<JsonElement> ReadFindingsAsync(HttpClient client, long projectId, string repoId)
+    private static async Task<JsonElement> ReadResponseAsync(HttpClient client, long projectId, string repoId)
     {
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repoId}/cve-findings");
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadFromJsonAsync<JsonElement>();
     }
 
+    private static async Task<JsonElement> ReadFindingsAsync(HttpClient client, long projectId, string repoId) =>
+        (await ReadResponseAsync(client, projectId, repoId)).GetProperty("findings");
+
     /// <summary>
-    /// The feature, end to end. A version of the advisory's package was recorded running, so the row
-    /// comes back as Running with the observed version, release and environment beside the advisory's
-    /// own fixed version. Nothing asserts which side of the range it falls on: this slice ships no
-    /// matcher and the comparison is the reader's.
+    /// The feature, end to end. 4.17.11 was recorded running and the advisory's range is "&lt;
+    /// 4.17.12", so the row comes back Exposed, with the sighting confirmed and its version, release
+    /// and environment beside the advisory's own fixed version.
     /// </summary>
     [Fact]
     public async Task Finding_whose_package_is_running_reports_the_observed_version()
@@ -130,12 +148,31 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
         Assert.Equal("4.17.12", row.GetProperty("finding").GetProperty("fixedVersion").GetString());
 
         var exposure = row.GetProperty("exposure");
-        // 1 is ModuleExposureState.Running; the enum crosses the wire as an integer like every other.
-        Assert.Equal(1, exposure.GetProperty("state").GetInt32());
+        // 2 is ModuleExposureState.Exposed; the enum crosses the wire as an integer like every other.
+        Assert.Equal(2, exposure.GetProperty("state").GetInt32());
         var observed = exposure.GetProperty("observed").EnumerateArray().Single();
+        Assert.True(observed.GetProperty("confirmed").GetBoolean());
         Assert.Equal("4.17.11", observed.GetProperty("version").GetString());
         Assert.Equal("production", observed.GetProperty("environment").GetString());
         Assert.Equal("1.4.2", observed.GetProperty("release").GetString());
+    }
+
+    /// <summary>
+    /// A version past the fix reads Running and unconfirmed, never as safe: the wire carries no state
+    /// that says a package is unaffected.
+    /// </summary>
+    [Fact]
+    public async Task Finding_whose_running_version_is_past_the_fix_reads_running()
+    {
+        var (client, projectId, repoId) = await ProvisionAsync(Finding("lodash", "npm"));
+        await RecordModuleAsync(
+            projectId, "npm", "lodash", "4.17.21", new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero));
+
+        var exposure = (await ReadFindingsAsync(client, projectId, repoId)).EnumerateArray().Single()
+            .GetProperty("exposure");
+
+        Assert.Equal(1, exposure.GetProperty("state").GetInt32());
+        Assert.False(exposure.GetProperty("observed").EnumerateArray().Single().GetProperty("confirmed").GetBoolean());
     }
 
     /// <summary>
@@ -157,7 +194,8 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
 
     /// <summary>
     /// Dependabot says "pip" and we record OSV's "PyPI". Without the ecosystem fold this row would read
-    /// Unknown, and a Python customer would conclude their vulnerable dependency was not running.
+    /// Unknown, and a Python customer would conclude their vulnerable dependency was not running. 2.19.0
+    /// is inside the finding's range, so it reads Exposed, which is the pip matcher over HTTP.
     /// </summary>
     [Fact]
     public async Task Dependabot_ecosystem_lines_up_with_the_recorded_osv_one()
@@ -168,7 +206,7 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
 
         var row = (await ReadFindingsAsync(client, projectId, repoId)).EnumerateArray().Single();
 
-        Assert.Equal(1, row.GetProperty("exposure").GetProperty("state").GetInt32());
+        Assert.Equal(2, row.GetProperty("exposure").GetProperty("state").GetInt32());
         Assert.Equal(
             "2.19.0",
             row.GetProperty("exposure").GetProperty("observed").EnumerateArray().Single()
@@ -190,5 +228,59 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
         var row = (await ReadFindingsAsync(client, projectId, repoId)).EnumerateArray().Single();
 
         Assert.Equal(0, row.GetProperty("exposure").GetProperty("state").GetInt32());
+    }
+
+    /// <summary>
+    /// A scan that stopped before the end says so on the wire. Without the flag the dashboard shows the
+    /// count it received as the total, which is how a repo with more open alerts than one page read as
+    /// having exactly one page of them.
+    /// </summary>
+    [Fact]
+    public async Task A_truncated_scan_is_reported_as_truncated()
+    {
+        var (client, projectId, repoId) = await ProvisionAsync(truncated: true, Finding("lodash", "npm"));
+
+        var body = await ReadResponseAsync(client, projectId, repoId);
+
+        Assert.True(body.GetProperty("truncated").GetBoolean());
+        Assert.Single(body.GetProperty("findings").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task A_complete_scan_is_not_reported_as_truncated()
+    {
+        var (client, projectId, repoId) = await ProvisionAsync(Finding("lodash", "npm"));
+
+        Assert.False((await ReadResponseAsync(client, projectId, repoId)).GetProperty("truncated").GetBoolean());
+    }
+
+    /// <summary>
+    /// A scan that failed is not a complete answer. It still answers 200 with no findings, since the
+    /// surface is advisory, but marks the list truncated so the dashboard does not read the silence as
+    /// "this repository has no open alerts".
+    /// </summary>
+    [Fact]
+    public async Task A_failed_scan_returns_no_findings_marked_truncated()
+    {
+        var (client, projectId, repoId) = await ProvisionAsync(new FailingScanner());
+
+        var body = await ReadResponseAsync(client, projectId, repoId);
+
+        Assert.Empty(body.GetProperty("findings").EnumerateArray());
+        Assert.True(body.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public async Task A_scan_that_times_out_returns_no_findings_marked_truncated_not_a_500()
+    {
+        // HttpClient reports its own timeout as a cancellation nobody asked for. It used to escape this
+        // best-effort section as if the request had been aborted, so a slow GitHub answered 500.
+        var (client, projectId, repoId) =
+            await ProvisionAsync(new FailingScanner(new TaskCanceledException("timed out")));
+
+        var body = await ReadResponseAsync(client, projectId, repoId);
+
+        Assert.Empty(body.GetProperty("findings").EnumerateArray());
+        Assert.True(body.GetProperty("truncated").GetBoolean());
     }
 }

@@ -59,25 +59,10 @@ internal static class CveFixEndpoints
                         return TypedResults.Conflict(new ErrorResponse("github_not_connected"));
                     }
 
-                    // Re-fetch the advisory from GitHub and match by id — the client only supplies the GHSA id,
-                    // so a stale/forged package or version can never drive the bump. One advisory can raise an
-                    // alert per monorepo workspace member (#41), so keep every match: the run bumps them all in
-                    // one draft PR, with the fixable one (it names the patched version) leading.
-                    IReadOnlyList<DependabotAlert> matching;
-                    try
+                    if (await DependabotAdvisories.FetchMatchingAsync(
+                            tokens, repoClient, installs[0].InstallationId, repo.RepoFullName, req.GhsaId,
+                            loggerFactory.CreateLogger(nameof(CveFixEndpoints)), ct) is not { } matching)
                     {
-                        var token = await tokens.GetAsync(installs[0].InstallationId, ct);
-                        matching =
-                        [
-                            .. (await repoClient.ListDependabotAlertsAsync(token, repo.RepoFullName, ct))
-                                .Where(a => a.GhsaId == req.GhsaId)
-                                .OrderByDescending(a => !string.IsNullOrEmpty(a.FixedVersion)),
-                        ];
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        loggerFactory.CreateLogger(nameof(CveFixEndpoints))
-                            .LogWarning(ex, "cve-fix advisory fetch failed project={ProjectId} repo={RepoId}", projectId, repoId);
                         return TypedResults.Conflict(new ErrorResponse("github_not_connected"));
                     }
 
@@ -124,9 +109,10 @@ internal static class CveFixEndpoints
                         return TypedResults.Conflict(new ErrorResponse("ai_fix_cost_cap_exceeded"));
                     }
 
+                    var reservedAt = DateTimeOffset.UtcNow;
                     var reserved = onLifetimeGrant
-                        ? await quota.TryConsumeLifetimeAsync(org.Id, limits.AiFixesLifetime, DateTimeOffset.UtcNow, ct)
-                        : await quota.TryConsumeAsync(org.Id, limits.AiFixesPerMonth, DateTimeOffset.UtcNow, ct);
+                        ? await quota.TryConsumeLifetimeAsync(org.Id, limits.AiFixesLifetime, reservedAt, ct)
+                        : await quota.TryConsumeAsync(org.Id, limits.AiFixesPerMonth, reservedAt, ct);
                     if (!reserved)
                     {
                         return TypedResults.Conflict(new ErrorResponse("ai_fix_quota_exceeded"));
@@ -142,43 +128,48 @@ internal static class CveFixEndpoints
                         ScopedPaths = context.ScopedPaths,
                         InstallationId = installs[0].InstallationId,
                         OrgId = org.Id,
+                        JobId = Guid.CreateVersion7(),
+                        ReservedAt = reservedAt,
+                        // Every alert for the advisory carries the same advisory, and the package's
+                        // other ranges are what a merged bump is verified against (ADR-0051). An alert
+                        // with no range list stores none, so the bump reads as unverifiable rather than
+                        // being judged on its own range alone.
+                        VulnerableRanges = alert.AdvisoryRanges is { } listed
+                            ? CveFixVerification.ToVulnerableRanges(
+                                alert.Ecosystem, alert.Package, alert.VulnerableRange, listed)
+                            : [],
                     };
 
-                    // The reservation is taken; if the job never reaches the topic the run never happens, so
-                    // refund here (the orchestrator only refunds runs it actually started).
-                    try
+                    // Routed like an issue fix. The run is written before anything can execute it, so the
+                    // database, which admits one run per advisory in progress, refuses a request that passed
+                    // the check above alongside another.
+                    var enqueued = await FixEnqueue.EnqueueCveAsync(
+                        (FixExecution)org.FixExecution, job, context, leases, cveFixes, publisher, ct);
+
+                    // Hands the reservation back: the lifetime grant or the month, whichever it came from. Not
+                    // the request's token: a client that hung up must not cancel a refund it is owed.
+                    Task RefundAsync() => onLifetimeGrant
+                        ? quota.RefundLifetimeAsync(org.Id, CancellationToken.None)
+                        : quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+
+                    if (enqueued.Failure is not null)
                     {
-                        // Same routing as an issue fix (ADR-0033 slice 4c): a self-hosting org gets a
-                        // leasable row its own runner takes; everyone else gets the Kafka topic. The
-                        // advisory re-fetch, the cost cap and the allowance above are identical either way.
-                        if ((FixExecution)org.FixExecution == FixExecution.Runner)
-                        {
-                            var now = DateTimeOffset.UtcNow;
-                            await leases.EnqueueCveAsync(
-                                new CveFixRun(
-                                    Guid.CreateVersion7(), repo.Id, alert.GhsaId, alert.CveId,
-                                    alert.Package, alert.Ecosystem, alert.VulnerableRange, alert.FixedVersion,
-                                    alert.HtmlUrl, FixStatus.Pending, PostgresJobLeaseStore.RunnerProvider,
-                                    Model: "", Branch: "", PrUrl: "", Summary: "", actor, now, now),
-                                new RunnerJobContext(repo.DefaultBranch, context.Prompt, context.ScopedPaths),
-                                ct);
-                        }
-                        else
-                        {
-                            await publisher.PublishAsync(job, ct);
-                        }
+                        // Logged even when the run went ahead: a publish can fail after the job arrived.
+                        loggerFactory.CreateLogger(nameof(CveFixEndpoints)).LogError(
+                            enqueued.Failure, "cve-fix enqueue failed org={OrgId} ghsa={Ghsa} outcome={Outcome}",
+                            org.Id, alert.GhsaId, enqueued.Outcome);
                     }
-                    catch (Exception ex)
+                    if (enqueued.Outcome == FixQueueOutcome.InProgress)
                     {
-                        loggerFactory.CreateLogger(nameof(CveFixEndpoints))
-                            .LogError(ex, "cve-fix enqueue failed org={OrgId} ghsa={Ghsa}", org.Id, alert.GhsaId);
-                        if (onLifetimeGrant)
+                        await RefundAsync();
+                        return TypedResults.Conflict(new ErrorResponse("cve_fix_in_progress"));
+                    }
+                    if (enqueued.Outcome != FixQueueOutcome.Queued)
+                    {
+                        // An unsettled reservation is kept; FixQueueOutcome.Unsettled says how it is settled.
+                        if (enqueued.Outcome == FixQueueOutcome.Withdrawn)
                         {
-                            await quota.RefundLifetimeAsync(org.Id, ct);
-                        }
-                        else
-                        {
-                            await quota.RefundAsync(org.Id, DateTimeOffset.UtcNow, ct);
+                            await RefundAsync();
                         }
                         return TypedResults.Json(
                             new ErrorResponse("cve_fix_enqueue_failed"),

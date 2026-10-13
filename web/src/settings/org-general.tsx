@@ -7,7 +7,7 @@ import type { ConduxApiError } from "@/src/api/fetcher";
 import { getListMyOrgsQueryKey, useAiFixUsage, useUpdateOrg } from "@/src/api/generated/condux";
 import { Notice } from "@/src/components/notice";
 import { formatUsd } from "@/src/lib/format";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { tierHasSelfHostedRunner, tierIsByo } from "@/src/orgs/plan-format";
 import { PlanSection } from "./plan-section";
 import { RunnerTokens } from "./runner-tokens";
@@ -37,7 +37,7 @@ export function OrgGeneral() {
   }
 
   const { org, role } = current;
-  const canManage = role === "owner" || role === "admin";
+  const canManage = canManageOrg(role);
   return (
     <div className="flex flex-col gap-8">
       <section>

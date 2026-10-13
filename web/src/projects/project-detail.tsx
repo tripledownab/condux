@@ -15,7 +15,7 @@ import type { ProjectRecord } from "@/src/api/generated/model";
 import { FIELD_CLASS, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { usePlatformLabel } from "@/src/projects/platforms";
 import { ROUTES } from "@/src/routes";
 import { DsnKeys } from "@/src/settings/dsn-keys";
@@ -51,8 +51,7 @@ export function ProjectDetail({ publicId }: { publicId: string }) {
     return <Notice>{translate("notFound")}</Notice>;
   }
 
-  const canManage =
-    current.status === OrgStatus.Ready && (current.role === "owner" || current.role === "admin");
+  const canManage = current.status === OrgStatus.Ready && canManageOrg(current.role);
 
   return (
     <div className="flex flex-col gap-8">
@@ -115,20 +114,15 @@ function ProjectSections({
 }
 
 // The Releases tab: manual release recording plus the CI release tokens. Recording a release maps a
-// version to a commit, so it needs GitHub connected — until then we prompt for that instead of an empty
-// record form (a GitHub-less self-host falls through to the normal view). The release tokens sit below
-// and always show, since CI mints one to record releases over the API regardless of the GitHub link.
+// version to a commit, so it needs a linked repository, and linking one needs GitHub connected when the
+// GitHub App is configured; only the record form says so. The section and the tokens always show, since a
+// token also uploads source maps and debug files, which need neither.
 function ReleasesTab({ projectId, canManage }: { projectId: number; canManage: boolean }) {
-  const translate = useTranslations("projects");
   const github = useGithubConnection();
   const needsGithub = !github.loading && !github.connected && !github.notConfigured;
   return (
     <div className="flex flex-col gap-8">
-      {needsGithub ? (
-        <Notice>{translate("releasesNeedGithub")}</Notice>
-      ) : (
-        <Releases projectId={projectId} canManage={canManage} />
-      )}
+      <Releases projectId={projectId} canManage={canManage} needsGithub={needsGithub} />
       <ReleaseTokens projectId={projectId} canManage={canManage} />
     </div>
   );

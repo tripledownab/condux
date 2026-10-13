@@ -16,7 +16,7 @@ import { ChannelList, ChannelRow } from "@/src/channels/channel-list";
 import { TestChannelButton, TestStatus, testStatus } from "@/src/channels/test-channel-button";
 import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { WeeklySummarySettings } from "./weekly-summary-settings";
 import { WeeklySummarySubscription } from "./weekly-summary-subscription";
 
@@ -37,7 +37,7 @@ export function NotificationSettings() {
     return <Notice>{translate("noOrg")}</Notice>;
   }
 
-  const canManage = current.role === "owner" || current.role === "admin";
+  const canManage = canManageOrg(current.role);
   return (
     <div className="flex flex-col gap-8">
       <Channels orgId={current.org.id} canManage={canManage} />

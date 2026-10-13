@@ -36,7 +36,8 @@ public static class TelemetryExtensions
             })
             .WithMetrics(metrics =>
             {
-                metrics.AddHttpClientInstrumentation().AddRuntimeInstrumentation();
+                // Every meter of our own is named under "Condux.", so a new one is exported with no edit here.
+                metrics.AddHttpClientInstrumentation().AddRuntimeInstrumentation().AddMeter("Condux.*");
                 configureMetrics?.Invoke(metrics);
             })
             .UseOtlpExporter();

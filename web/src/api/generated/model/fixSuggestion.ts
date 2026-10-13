@@ -21,6 +21,8 @@ export interface FixSuggestion {
   updatedAt: string;
   /** @nullable */
   mergedAt?: string | null;
+  /** @nullable */
+  failureReason?: number | null;
   verifyStatus?: VerifyStatus;
   /** @nullable */
   verifiedAt?: string | null;

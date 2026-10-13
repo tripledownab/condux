@@ -1,4 +1,5 @@
 using System.Globalization;
+using Condux.Core.Http;
 using Condux.Core.Ingest;
 using Condux.Core.Messaging;
 using Condux.Core.Plans;
@@ -38,8 +39,9 @@ internal static class SentryIngestEndpoints
     }
 
     // Shared ingest pipeline for the two Sentry-compatible endpoints: auth → per-tier rate-limit → spike
-    // → per-tier monthly quota → parse → scrub → publish. `parse` returns null when the payload carries
-    // no event item (an envelope of only sessions/transactions), which is accepted but stores nothing.
+    // → per-tier monthly quota → parse → scrub → publish. A payload that carries no event (an envelope of
+    // only sessions or transactions, or a transaction, feedback or CSP payload) is answered 200 once past
+    // the gates, and stores nothing.
     private static async Task IngestAsync(
         string projectId, HttpContext ctx, IRateLimiter limiter, IQuotaMeter quotaMeter, SpikeGuard spike,
         IProjectStore projects, IEventPublisher publisher, ILogger logger, RelayOptions options,
@@ -84,9 +86,10 @@ internal static class SentryIngestEndpoints
             return;
         }
 
-        // 4. Monthly event quota (plan tier). Enterprise is unlimited and skips this. Only admitted events
-        // are counted, and only after the cheaper rate + spike gates, so shed events never consume quota.
-        var quota = await quotaMeter.TryConsumeAsync(projectKey, limits.MonthlyEvents, ct: ctx.RequestAborted);
+        // 4. Monthly event quota (plan tier), one allowance for the whole org. Enterprise is unlimited and
+        // skips this. Only admitted events are counted, and only after the cheaper rate + spike gates, so
+        // shed events never consume quota.
+        var quota = await quotaMeter.TryConsumeAsync(project.QuotaKey, limits.MonthlyEvents, ct: ctx.RequestAborted);
         if (limits.MonthlyEvents > 0)
         {
             ctx.Response.Headers["X-Condux-Quota-Remaining"] = quota.Remaining.ToString(CultureInfo.InvariantCulture);
@@ -100,7 +103,7 @@ internal static class SentryIngestEndpoints
 
         // 5. Parse → scrub → publish. Read bytes, not text: envelope items are length-delimited and an
         // attachment payload is raw binary, so decoding the whole body to a string first corrupts it.
-        var body = await IngestRequest.ReadBoundedAsync(ctx.Request.Body, options.MaxIngestBytes, ctx.RequestAborted);
+        var body = await RequestBodies.ReadBoundedAsync(ctx.Request.Body, options.MaxIngestBytes, ctx.RequestAborted);
         if (body is null)
         {
             // What the body decompressed to ran past CONDUX_MAX_INGEST_BYTES. Answered rather than thrown
@@ -123,8 +126,15 @@ internal static class SentryIngestEndpoints
 
         if (result.Event is not { } normalized)
         {
-            // A valid envelope that carried no event item (e.g. only a transaction/session). Accepted, but
-            // there is nothing for an error monitor to store.
+            // A valid payload that carried no event (an envelope of only a transaction or a session, or a
+            // transaction, feedback or CSP payload). Accepted, but there is nothing for an error monitor to store,
+            // so the event step 4 counted is given back. No token: a client that hangs up must not keep it.
+            // On a capped tier whose consume was metered, the quota header written at step 4 typically reads
+            // one fewer than the org now has left.
+            if (limits.MonthlyEvents > 0)
+            {
+                await quotaMeter.RefundAsync(project.QuotaKey, 1, CancellationToken.None);
+            }
             ctx.Response.StatusCode = StatusCodes.Status200OK;
             await ctx.Response.WriteAsJsonAsync(new { id = (string?)null });
             return;

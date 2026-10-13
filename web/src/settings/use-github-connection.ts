@@ -3,7 +3,7 @@
 import type { ConduxApiError } from "@/src/api/fetcher";
 import { useListGithubInstallations } from "@/src/api/generated/condux";
 import type { GithubInstallationResponse } from "@/src/api/generated/model";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 
 // The GitHub connection state for a project's org, shared by the connect panel (github-connect.tsx) and
 // the Repositories section, which gates repo-linking on it — a repo can't be linked before GitHub is
@@ -41,7 +41,7 @@ export function useGithubConnection(): GithubConnectionState {
   const linked = installations.data?.status === 200 ? installations.data.data : [];
   // The App installs once per org, and every repo operation mints its token from the first row.
   const installation = linked[0];
-  const canManage = orgReady && (current.role === "owner" || current.role === "admin");
+  const canManage = orgReady && canManageOrg(current.role);
 
   return {
     orgId,

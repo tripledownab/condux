@@ -67,7 +67,7 @@ internal static class SsoEndpoints
         app.MapGet("/api/auth/sso/callback",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     SecretsConfig secrets, SsoOidcClient oidc, UserRepository users,
-                    OrgMemberRepository members, SessionRepository sessions,
+                    OrgMemberRepository members, SessionRepository sessions, EmailAllowlist platformAdmins,
                     IConfiguration cfg, HttpContext http) =>
                 {
                     if (!secrets.Enabled)
@@ -108,7 +108,7 @@ internal static class SsoEndpoints
                     }
 
                     return TypedResults.Redirect(await SsoSignIn.CompleteAsync(
-                        config, identity.Email, users, members, sessions, cfg, http));
+                        config, identity.Email, users, members, sessions, platformAdmins, cfg, http));
                 })
             .WithName("ssoCallback").WithTags("Auth");
     }

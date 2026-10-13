@@ -60,7 +60,7 @@ public sealed class SsoVerificationWorker(
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -69,7 +69,7 @@ public sealed class SsoVerificationWorker(
             {
                 await RunOnceAsync(DateTimeOffset.UtcNow, stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }

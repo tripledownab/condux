@@ -12,6 +12,17 @@ namespace Condux.Core.Tests;
 public sealed class EventJsonRoundTripTests
 {
     [Fact]
+    public void An_inlined_frame_keeps_its_mark_and_no_other_frame_carries_the_field()
+    {
+        // Every stored frame would otherwise grow by the field, for the few native symbolication marks.
+        var plain = JsonSerializer.Serialize(new Frame { Function = "f" });
+        var inlined = JsonSerializer.Serialize(new Frame { Function = "g", Inlined = true });
+
+        Assert.DoesNotContain("Inlined", plain);
+        Assert.True(JsonSerializer.Deserialize<Frame>(inlined)!.Inlined);
+    }
+
+    [Fact]
     public void Event_round_trips_through_default_json_serialization()
     {
         var original = new Event

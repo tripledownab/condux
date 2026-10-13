@@ -5,8 +5,8 @@ import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 // The guide resolves the current org, lists its projects, and reads the selected project's DSN keys.
 // Mock those seams; keep the real OrgStatus values so the status switch matches.
 const useCurrentOrgMock = vi.fn();
-vi.mock("@/src/orgs/current-org", () => ({
-  OrgStatus: { Loading: "loading", Error: "error", NoOrg: "no-org", Ready: "ready" },
+vi.mock("@/src/orgs/current-org", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/src/orgs/current-org")>()),
   useCurrentOrg: () => useCurrentOrgMock(),
 }));
 

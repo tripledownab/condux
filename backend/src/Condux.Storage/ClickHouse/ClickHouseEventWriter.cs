@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Condux.Core.Events;
 
@@ -9,7 +8,7 @@ public sealed record EventRow(
     string project_id,
     ulong issue_id,
     string event_id,
-    string timestamp,
+    long timestamp,
     string level,
     string platform,
     string environment,
@@ -41,14 +40,13 @@ public sealed class ClickHouseEventWriter(HttpClient http)
     {
         var ex = EventExceptions.ResolvePrimary(e);
         var ms = e.TimestampUnixMs > 0 ? e.TimestampUnixMs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var ts = DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
-            .ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
         return new EventRow(
             projectId,
             issueId,
             e.EventId,
-            ts,
+            // A unix number, never text (see ClickHouseInsert).
+            ms,
             e.Level.ToString().ToLowerInvariant(),
             e.Platform ?? "",
             e.Environment ?? "",

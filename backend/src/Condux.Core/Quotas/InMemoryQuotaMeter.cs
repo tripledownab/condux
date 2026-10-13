@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace Condux.Core.Quotas;
 
 /// <summary>
-/// In-process monthly quota meter, keyed by (project, calendar month). Only admitted events increment the
+/// In-process monthly quota meter, keyed by (quota key, calendar month). Only admitted events increment the
 /// counter, so usage never runs past the limit. Single-relay/dev/tests only — a multi-replica deployment
 /// shares one budget via the Valkey meter. The clock is injectable so tests can exercise month rollover.
 /// </summary>

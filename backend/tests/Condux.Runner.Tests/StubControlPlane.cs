@@ -18,9 +18,46 @@ internal sealed class StubControlPlane : HttpMessageHandler
     /// <summary>How many report calls to drop before answering, standing in for a flaky network.</summary>
     public int FailReportsBeforeAccepting { get; set; }
 
+    /// <summary>What a dropped report does. A dropped connection by default.</summary>
+    public Func<HttpResponseMessage> ReportFailure { get; set; } = () => throw new HttpRequestException("connection reset");
+
     public List<string> Reports { get; } = [];
 
     public int HeartbeatCount { get; private set; }
+
+    /// <summary>
+    /// How many lease calls time out before answering. HttpClient reports its own timeout as a
+    /// <see cref="TaskCanceledException"/> the caller never asked for.
+    /// </summary>
+    public int TimeOutLeasesBeforeAnswering { get; set; }
+
+    /// <summary>How many heartbeats fail before answering.</summary>
+    public int FailHeartbeatsBeforeAnswering { get; set; }
+
+    /// <summary>Fail every other heartbeat, so they keep landing but never two in a row.</summary>
+    public bool FailEveryOtherHeartbeat { get; set; }
+
+    private int heartbeatCalls;
+
+    /// <summary>Answer this many heartbeats, then leave every later one hanging until its caller gives up,
+    /// as a control plane behind a partition does. Null answers them all.</summary>
+    public int? AnswerHeartbeatsThenHang { get; set; }
+
+    /// <summary>When the last answered heartbeat arrived, on <see cref="Clock"/>. It was sent no later.</summary>
+    public TimeSpan LastAnsweredHeartbeatAt { get; private set; }
+
+    /// <summary>The clock both the stub and a test read, so their times can be compared.</summary>
+    public System.Diagnostics.Stopwatch Clock { get; } = System.Diagnostics.Stopwatch.StartNew();
+
+    /// <summary>What a failed heartbeat does: time out, like <see cref="TimeOutLeasesBeforeAnswering"/>, by default.</summary>
+    public Func<HttpResponseMessage> HeartbeatFailure { get; set; } =
+        () => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+
+    /// <summary>Completes once a heartbeat is answered.</summary>
+    public TaskCompletionSource HeartbeatAnswered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once a lease call is answered, so a test can wait for the worker to get there.</summary>
+    public TaskCompletionSource LeaseAnswered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Queue a job for the next lease call. An empty queue answers 204, the ordinary "no work".</summary>
     public void Offer(string json) => leases.Enqueue(json);
@@ -32,6 +69,13 @@ internal sealed class StubControlPlane : HttpMessageHandler
 
         if (path.EndsWith("/lease", StringComparison.Ordinal))
         {
+            if (TimeOutLeasesBeforeAnswering > 0)
+            {
+                TimeOutLeasesBeforeAnswering--;
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+            }
+
+            LeaseAnswered.TrySetResult();
             return leases.Count == 0
                 ? new HttpResponseMessage(HttpStatusCode.NoContent)
                 : Json(leases.Dequeue());
@@ -39,7 +83,21 @@ internal sealed class StubControlPlane : HttpMessageHandler
 
         if (path.EndsWith("/heartbeat", StringComparison.Ordinal))
         {
+            heartbeatCalls++;
+            if (AnswerHeartbeatsThenHang is { } answered && HeartbeatCount >= answered)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            if (FailHeartbeatsBeforeAnswering > 0 || (FailEveryOtherHeartbeat && heartbeatCalls % 2 == 1))
+            {
+                FailHeartbeatsBeforeAnswering = Math.Max(0, FailHeartbeatsBeforeAnswering - 1);
+                return HeartbeatFailure();
+            }
+
+            HeartbeatAnswered.TrySetResult();
             HeartbeatCount++;
+            LastAnsweredHeartbeatAt = Clock.Elapsed;
             return new HttpResponseMessage(
                 LeaseHeld ? HttpStatusCode.NoContent : HttpStatusCode.Conflict);
         }
@@ -49,7 +107,7 @@ internal sealed class StubControlPlane : HttpMessageHandler
             if (FailReportsBeforeAccepting > 0)
             {
                 FailReportsBeforeAccepting--;
-                throw new HttpRequestException("connection reset");
+                return ReportFailure();
             }
 
             Reports.Add(await request.Content!.ReadAsStringAsync(cancellationToken));

@@ -167,10 +167,11 @@ public class OpenAiToolConversationTests
     {
         var handler = new FailingHandler();
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => Create(handler).NextAsync([]));
 
         Assert.Contains("401", error.Message, StringComparison.Ordinal);
+        Assert.Equal(FixFailureReason.ModelKeyRejected, error.Reason);
     }
 
     private sealed class FailingHandler : HttpMessageHandler

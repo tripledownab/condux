@@ -39,3 +39,8 @@ export function useCurrentOrg(): CurrentOrgState {
   }
   return { status: OrgStatus.Ready, org: current.org, role: current.role };
 }
+
+// Whether a role may change the org's settings and spend its allowance: the admin+ routes the server gates.
+export function canManageOrg(role: string): boolean {
+  return role === "owner" || role === "admin";
+}

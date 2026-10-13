@@ -29,6 +29,14 @@ spec:
                 name: {{ .Release.Name }}-controlplane
                 port:
                   number: {{ .Values.controlplane.port }}
+          # The MCP server card, which directories read without a token.
+          - path: /.well-known/mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-controlplane
+                port:
+                  number: {{ .Values.controlplane.port }}
           - path: /
             pathType: Prefix
             backend:

@@ -15,6 +15,7 @@ export const PLATFORM_KEYS = [
   "php",
   "ruby",
   "rust",
+  "flutter",
   "other",
 ] as const;
 

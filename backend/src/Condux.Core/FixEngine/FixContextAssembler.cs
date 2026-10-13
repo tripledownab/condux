@@ -49,11 +49,17 @@ public static class FixContextAssembler
     }
 
     /// <summary>The repo path of the culprit frame — the newest in-app frame, resolved via mappings (#144).
-    /// Null when the error has no in-app frame. The control-plane blames this file for the suspect commit.</summary>
+    /// Null when the error has no in-app frame, or when its path is not one inside the repository (an
+    /// unmapped build path), by the rule the scoped paths use. The control-plane blames this file for the
+    /// suspect commit.</summary>
     public static string? CulpritPath(Event sampleEvent, IReadOnlyList<CodeMapping> mappings)
     {
         var inApp = PrimaryFrames(sampleEvent).Where(f => f.InApp && !string.IsNullOrEmpty(f.Filename)).ToList();
-        return inApp.Count == 0 ? null : CodeMapper.Resolve(inApp[^1].Filename!, mappings) ?? inApp[^1].Filename!;
+        return inApp.Count > 0
+            && (CodeMapper.Resolve(inApp[^1].Filename!, mappings) ?? inApp[^1].Filename!) is var path
+            && RepoPaths.IsRepoRelative(path)
+                ? path
+                : null;
     }
 
     private static IReadOnlyList<Frame> PrimaryFrames(Event e) =>

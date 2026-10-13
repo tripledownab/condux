@@ -63,10 +63,27 @@ describe("Releases", () => {
     );
   });
 
-  it("prompts to link a repo when the project has none", () => {
+  // Each hint names only what recording needs, and says the release tokens below do not need it.
+  it("says recording needs a linked repo when the project has none", () => {
     useListReposMock.mockReturnValue({ data: { data: [] } });
     renderWithIntl(<Releases projectId={7} canManage />);
-    expect(screen.getByText(/Link a repository first/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Recording a release here needs a linked repository/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/can still upload source maps and debug files/)).toBeInTheDocument();
+  });
+
+  it("says to connect GitHub first when it is not connected and no repo is linked", () => {
+    useListReposMock.mockReturnValue({ data: { data: [] } });
+    renderWithIntl(<Releases projectId={7} canManage needsGithub />);
+    expect(screen.getByText(/which needs GitHub connected first/)).toBeInTheDocument();
+    expect(screen.queryByText(/needs a linked repository\./)).not.toBeInTheDocument();
+  });
+
+  // The server records against any linked repo, GitHub connected or not.
+  it("still offers the record form while GitHub is disconnected if a repo is linked", () => {
+    renderWithIntl(<Releases projectId={7} canManage needsGithub />);
+    expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
   });
 
   it("is read-only for a non-admin (no record form)", () => {

@@ -11,8 +11,8 @@ namespace Condux.IntegrationTests;
 /// <summary>
 /// The admin seed (env-gated): with CONDUX_SEED_ADMIN_EMAIL/PASSWORD set, the control-plane seeds a
 /// ready-to-use account at startup; with them unset it seeds nothing. Not gated on the environment,
-/// because a platform-admin address cannot be signed up for and this is how that account is created
-/// anywhere. Local-only, like the other auth integration tests (CI runs Category!=Integration).
+/// because signup refuses a platform-admin address and this is how that account is created without an
+/// identity provider.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class DevAdminSeedTest(PostgresFixture pg) : IClassFixture<PostgresFixture>

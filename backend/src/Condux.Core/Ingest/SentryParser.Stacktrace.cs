@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Condux.Core.Events;
 
@@ -104,7 +105,7 @@ public static partial class SentryParser
         {
             list.Add(new Frame
             {
-                Filename = GetString(f, "filename"),
+                Filename = JvmFramePaths.ToSourcePath(GetString(f, "filename"), GetString(f, "module")),
                 AbsPath = GetString(f, "abs_path"),
                 Function = GetString(f, "function"),
                 Module = GetString(f, "module"),
@@ -126,7 +127,9 @@ public static partial class SentryParser
     }
 
     // debug_meta.images[] links a debug id to the built file it identifies, so a frame can later be matched
-    // to its uploaded source map (ADR-0028). Defensive: skips a missing/malformed debug_meta or image.
+    // to its uploaded source map (ADR-0028), and says where each native image was loaded, so a frame that
+    // carries only an instruction address can be placed inside one. Defensive: skips a missing/malformed
+    // debug_meta or image, and an image_size that is not a positive whole number.
     private static IReadOnlyList<DebugImage> ParseDebugImages(JsonElement root)
     {
         if (!root.TryGetProperty("debug_meta", out var meta) || meta.ValueKind != JsonValueKind.Object
@@ -148,9 +151,29 @@ public static partial class SentryParser
                 Type = GetString(img, "type"),
                 CodeFile = GetString(img, "code_file"),
                 DebugId = GetString(img, "debug_id"),
+                ImageAddr = GetString(img, "image_addr"),
+                ImageSize = ParseImageSize(img),
             });
         }
 
         return list;
+    }
+
+    // Sentry's own protocol docs send it as a number in their elf and macho examples and as a decimal
+    // string in the pe one, so both are read. Anything that is not a positive whole number reads as absent.
+    private static long? ParseImageSize(JsonElement image)
+    {
+        if (!image.TryGetProperty("image_size", out var size))
+        {
+            return null;
+        }
+        var bytes = size.ValueKind switch
+        {
+            JsonValueKind.Number when size.TryGetInt64(out var number) => number,
+            JsonValueKind.String when long.TryParse(
+                size.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var text) => text,
+            _ => 0L,
+        };
+        return bytes > 0 ? bytes : null;
     }
 }

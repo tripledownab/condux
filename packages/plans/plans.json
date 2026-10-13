@@ -12,11 +12,11 @@
     "sso": false,
     "byoKey": false,
     "selfHostedRunner": false,
-    "fixComputeCapUsd": 2
+    "fixComputeCapUsd": 2.25
   },
   "Team": {
     "tier": 1,
-    "monthlyEvents": 1000000,
+    "monthlyEvents": 500000,
     "unlimitedEvents": false,
     "ratePerSecond": 100,
     "burst": 500,
@@ -27,11 +27,11 @@
     "sso": false,
     "byoKey": false,
     "selfHostedRunner": true,
-    "fixComputeCapUsd": 10
+    "fixComputeCapUsd": 19
   },
   "Business": {
     "tier": 2,
-    "monthlyEvents": 10000000,
+    "monthlyEvents": 5000000,
     "unlimitedEvents": false,
     "ratePerSecond": 1000,
     "burst": 5000,
@@ -42,7 +42,7 @@
     "sso": true,
     "byoKey": false,
     "selfHostedRunner": true,
-    "fixComputeCapUsd": 40
+    "fixComputeCapUsd": 75
   },
   "Enterprise": {
     "tier": 3,

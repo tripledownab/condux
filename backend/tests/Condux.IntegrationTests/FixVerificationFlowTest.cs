@@ -87,6 +87,40 @@ public sealed class FixVerificationFlowTest(PostgresFixture pg) : IClassFixture<
         Assert.Equal(VerifyStatus.Held, (await fixes.GetAsync(fixId))!.VerifyStatus);
     }
 
+    /// <summary>
+    /// The same merge webhook marks a CVE bump whose draft PR lives on the branch (ADR-0051), matched
+    /// through its repository link since the run keeps no repository name, and writes no audit.
+    /// </summary>
+    [Fact]
+    public async Task Merged_pull_request_starts_the_watch_for_a_cve_bump()
+    {
+        var app = CreateApp();
+        var (_, projectId) = await ProjectSeed.CreateOrgAndProjectAsync(pg.ConnectionString);
+        var repo = await new RepoLinkRepository(pg.ConnectionString).LinkAsync(projectId, "acme/api", "main");
+        var bumps = new PostgresCveFixStore(pg.ConnectionString);
+        var now = DateTimeOffset.UtcNow;
+        var bump = new Condux.Core.CveFix.CveFixRun(
+            Guid.CreateVersion7(), repo.Id, "GHSA-jf85-cpcp-j695", null, "lodash", "npm", "< 4.17.21", "4.17.21",
+            "", FixStatus.Running, "fake", "model", Branch: "", PrUrl: "", Summary: "", Actor: "1", now, now)
+        { JobId = Guid.CreateVersion7(), VulnerableRanges = ["< 4.17.21"] };
+        Assert.True(await bumps.InsertAsync(bump));
+        await bumps.RecordSuccessAsync(bump with
+        {
+            Status = FixStatus.Succeeded,
+            Branch = "condux/fix-boom",
+            PrUrl = "https://github.com/acme/api/pull/7",
+        });
+
+        // The merge also pings the project, so a dashboard showing the bump refreshes (ADR-0030).
+        Assert.True(await ProjectNudges.IsSentAsync(pg.ConnectionString, projectId, async () =>
+            Assert.Equal(HttpStatusCode.NoContent, (await SendPullRequestWebhookAsync(app, merged: true)).StatusCode)));
+
+        var watched = Assert.Single(
+            await new PostgresCveFixVerification(pg.ConnectionString).ListWatchingAsync(), w => w.RunId == bump.Id);
+        Assert.Equal(DateTimeOffset.Parse("2026-07-22T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture), watched.MergedAt);
+        Assert.Equal(projectId, watched.ProjectId);
+    }
+
     private static async Task<HttpResponseMessage> SendPullRequestWebhookAsync(
         WebApplicationFactory<Program> app, bool merged)
     {

@@ -72,6 +72,80 @@ public class FingerprinterTests
         Assert.Equal(firstRun.Fingerprint, afterRelocation.Fingerprint);
     }
 
+    // A frame that names no image takes its base from debug_meta: the image with the highest base at or
+    // below the address, which must also contain the address when it states a size.
+    private static Event CrashAt(string instruction, params DebugImage[] images) => new()
+    {
+        Exceptions =
+        [
+            new ExceptionValue
+            {
+                Type = "StateError",
+                Stacktrace = new Stacktrace { Frames = [new Frame { InstructionAddr = instruction }] },
+            },
+        ],
+        DebugImages = images,
+    };
+
+    [Fact]
+    public void AFrameWithNoImage_IsPlacedInTheNearestImageBelowIt()
+    {
+        var images = new[]
+        {
+            new DebugImage { Type = "elf", ImageAddr = "0x1000" },
+            new DebugImage { Type = "elf", ImageAddr = "0x5000" },
+        };
+
+        Assert.Equal("?+40", Fingerprinter.Compute(CrashAt("0x5040", images)).Culprit);
+        Assert.Equal("?+3040", Fingerprinter.Compute(CrashAt("0x4040", images)).Culprit);
+        // "At or below" includes the base itself.
+        Assert.Equal("?+0", Fingerprinter.Compute(CrashAt("0x5000", images)).Culprit);
+    }
+
+    [Fact]
+    public void AnAddressPastTheNearestImagesSize_BelongsToNoImage()
+    {
+        var images = new[]
+        {
+            new DebugImage { Type = "elf", ImageAddr = "0x1000" },
+            new DebugImage { Type = "elf", ImageAddr = "0x5000", ImageSize = 0x100 },
+        };
+
+        // Inside the sized image, and just past it. Past it, the unsized image below must not stretch
+        // over the sized one to claim the address.
+        Assert.Equal("?+ff", Fingerprinter.Compute(CrashAt("0x50ff", images)).Culprit);
+        Assert.Equal("", Fingerprinter.Compute(CrashAt("0x5100", images)).Culprit);
+    }
+
+    [Fact]
+    public void TheImagesOrder_DoesNotChangeWhichImageAFrameIsPlacedIn()
+    {
+        DebugImage[] images =
+        [
+            new() { Type = "elf", ImageAddr = "0x5000" },
+            new() { Type = "elf", ImageAddr = "0x1000" },
+            new() { Type = "elf", ImageAddr = "0x9000" },
+        ];
+
+        Assert.Equal("?+40", Fingerprinter.Compute(CrashAt("0x5040", images)).Culprit);
+        Assert.Equal("?+40", Fingerprinter.Compute(CrashAt("0x5040", [.. images.Reverse()])).Culprit);
+    }
+
+    [Fact]
+    public void AFramesOwnImageBase_WinsOverDebugMeta()
+    {
+        var e = CrashAt("0x5040", new DebugImage { Type = "elf", ImageAddr = "0x5000" });
+        e = e with
+        {
+            Exceptions = [e.Exceptions[0] with
+            {
+                Stacktrace = new Stacktrace { Frames = [new Frame { InstructionAddr = "0x5040", ImageAddr = "0x5020" }] },
+            }],
+        };
+
+        Assert.Equal("?+20", Fingerprinter.Compute(e).Culprit);
+    }
+
     [Fact]
     public void SameStack_SameFingerprint()
     {

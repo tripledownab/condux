@@ -65,8 +65,9 @@ import type {
   CreateReleaseTokenRequest,
   CreateRunnerTokenRequest,
   Credentials,
-  CveFindingWithExposure,
+  CveFindingsResponse,
   CveFixRun,
+  DebugFileResponse,
   DerivedMapping,
   DsnKey,
   ErrorResponse,
@@ -4015,128 +4016,6 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
     
-export type suggestedMappingsResponse200 = {
-  data: DerivedMapping[]
-  status: 200
-}
-
-export type suggestedMappingsResponse404 = {
-  data: void
-  status: 404
-}
-    
-export type suggestedMappingsResponseSuccess = (suggestedMappingsResponse200) & {
-  headers: Headers;
-};
-export type suggestedMappingsResponseError = (suggestedMappingsResponse404) & {
-  headers: Headers;
-};
-
-export type suggestedMappingsResponse = (suggestedMappingsResponseSuccess | suggestedMappingsResponseError)
-
-export const getSuggestedMappingsUrl = (projectId: number,
-    repoId: string,) => {
-
-
-  
-
-  return `/api/projects/${projectId}/repos/${repoId}/suggested-mappings`
-}
-
-export const suggestedMappings = async (projectId: number,
-    repoId: string, options?: RequestInit): Promise<suggestedMappingsResponse> => {
-  
-  return conduxFetch<suggestedMappingsResponse>(getSuggestedMappingsUrl(projectId,repoId),
-  {      
-    ...options,
-    method: 'GET'
-    
-    
-  }
-);}
-
-
-
-
-
-export const getSuggestedMappingsQueryKey = (projectId?: number,
-    repoId?: string,) => {
-    return [
-    `/api/projects/${projectId}/repos/${repoId}/suggested-mappings`
-    ] as const;
-    }
-
-    
-export const getSuggestedMappingsQueryOptions = <TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getSuggestedMappingsQueryKey(projectId,repoId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof suggestedMappings>>> = ({ signal }) => suggestedMappings(projectId,repoId, { signal, ...requestOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(projectId && repoId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type SuggestedMappingsQueryResult = NonNullable<Awaited<ReturnType<typeof suggestedMappings>>>
-export type SuggestedMappingsQueryError = void
-
-
-export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
- projectId: number,
-    repoId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof suggestedMappings>>,
-          TError,
-          Awaited<ReturnType<typeof suggestedMappings>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof suggestedMappings>>,
-          TError,
-          Awaited<ReturnType<typeof suggestedMappings>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-
-export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
- projectId: number,
-    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getSuggestedMappingsQueryOptions(projectId,repoId,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
 export type recordReleaseResponse201 = {
   data: Release
   status: 201
@@ -4318,6 +4197,128 @@ export function useListReleases<TData = Awaited<ReturnType<typeof listReleases>>
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListReleasesQueryOptions(projectId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+export type suggestedMappingsResponse200 = {
+  data: DerivedMapping[]
+  status: 200
+}
+
+export type suggestedMappingsResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type suggestedMappingsResponseSuccess = (suggestedMappingsResponse200) & {
+  headers: Headers;
+};
+export type suggestedMappingsResponseError = (suggestedMappingsResponse404) & {
+  headers: Headers;
+};
+
+export type suggestedMappingsResponse = (suggestedMappingsResponseSuccess | suggestedMappingsResponseError)
+
+export const getSuggestedMappingsUrl = (projectId: number,
+    repoId: string,) => {
+
+
+  
+
+  return `/api/projects/${projectId}/repos/${repoId}/suggested-mappings`
+}
+
+export const suggestedMappings = async (projectId: number,
+    repoId: string, options?: RequestInit): Promise<suggestedMappingsResponse> => {
+  
+  return conduxFetch<suggestedMappingsResponse>(getSuggestedMappingsUrl(projectId,repoId),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getSuggestedMappingsQueryKey = (projectId?: number,
+    repoId?: string,) => {
+    return [
+    `/api/projects/${projectId}/repos/${repoId}/suggested-mappings`
+    ] as const;
+    }
+
+    
+export const getSuggestedMappingsQueryOptions = <TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSuggestedMappingsQueryKey(projectId,repoId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof suggestedMappings>>> = ({ signal }) => suggestedMappings(projectId,repoId, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(projectId && repoId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SuggestedMappingsQueryResult = NonNullable<Awaited<ReturnType<typeof suggestedMappings>>>
+export type SuggestedMappingsQueryError = void
+
+
+export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
+ projectId: number,
+    repoId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof suggestedMappings>>,
+          TError,
+          Awaited<ReturnType<typeof suggestedMappings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof suggestedMappings>>,
+          TError,
+          Awaited<ReturnType<typeof suggestedMappings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useSuggestedMappings<TData = Awaited<ReturnType<typeof suggestedMappings>>, TError = void>(
+ projectId: number,
+    repoId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof suggestedMappings>>, TError, TData>>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSuggestedMappingsQueryOptions(projectId,repoId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -5334,6 +5335,95 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(mutationOptions, queryClient);
     }
     
+export type uploadDebugFileResponse201 = {
+  data: DebugFileResponse
+  status: 201
+}
+
+export type uploadDebugFileResponse400 = {
+  data: string
+  status: 400
+}
+
+export type uploadDebugFileResponse404 = {
+  data: void
+  status: 404
+}
+    
+export type uploadDebugFileResponseSuccess = (uploadDebugFileResponse201) & {
+  headers: Headers;
+};
+export type uploadDebugFileResponseError = (uploadDebugFileResponse400 | uploadDebugFileResponse404) & {
+  headers: Headers;
+};
+
+export type uploadDebugFileResponse = (uploadDebugFileResponseSuccess | uploadDebugFileResponseError)
+
+export const getUploadDebugFileUrl = () => {
+
+
+  
+
+  return `/api/debug-files`
+}
+
+export const uploadDebugFile = async ( options?: RequestInit): Promise<uploadDebugFileResponse> => {
+  
+  return conduxFetch<uploadDebugFileResponse>(getUploadDebugFileUrl(),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getUploadDebugFileMutationOptions = <TError = string | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadDebugFile>>, TError,void, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadDebugFile>>, TError,void, TContext> => {
+
+const mutationKey = ['uploadDebugFile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadDebugFile>>, void> = () => {
+          
+
+          return  uploadDebugFile(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadDebugFileMutationResult = NonNullable<Awaited<ReturnType<typeof uploadDebugFile>>>
+    
+    export type UploadDebugFileMutationError = string | void
+
+    export const useUploadDebugFile = <TError = string | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadDebugFile>>, TError,void, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof uploadDebugFile>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getUploadDebugFileMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 export type requestFixResponse202 = {
   data: void
   status: 202
@@ -5550,7 +5640,7 @@ export function useListFixes<TData = Awaited<ReturnType<typeof listFixes>>, TErr
 
 
 export type cveFindingsResponse200 = {
-  data: CveFindingWithExposure[]
+  data: CveFindingsResponse
   status: 200
 }
 
@@ -6522,6 +6612,190 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
 
       const mutationOptions = getMarkFixViewedMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type cancelFixResponse204 = {
+  data: void
+  status: 204
+}
+
+export type cancelFixResponse404 = {
+  data: void
+  status: 404
+}
+
+export type cancelFixResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+    
+export type cancelFixResponseSuccess = (cancelFixResponse204) & {
+  headers: Headers;
+};
+export type cancelFixResponseError = (cancelFixResponse404 | cancelFixResponse409) & {
+  headers: Headers;
+};
+
+export type cancelFixResponse = (cancelFixResponseSuccess | cancelFixResponseError)
+
+export const getCancelFixUrl = (projectId: number,
+    fixId: string,) => {
+
+
+  
+
+  return `/api/projects/${projectId}/fixes/${fixId}/cancel`
+}
+
+export const cancelFix = async (projectId: number,
+    fixId: string, options?: RequestInit): Promise<cancelFixResponse> => {
+  
+  return conduxFetch<cancelFixResponse>(getCancelFixUrl(projectId,fixId),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getCancelFixMutationOptions = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelFix>>, TError,{projectId: number;fixId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelFix>>, TError,{projectId: number;fixId: string}, TContext> => {
+
+const mutationKey = ['cancelFix'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelFix>>, {projectId: number;fixId: string}> = (props) => {
+          const {projectId,fixId} = props ?? {};
+
+          return  cancelFix(projectId,fixId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelFixMutationResult = NonNullable<Awaited<ReturnType<typeof cancelFix>>>
+    
+    export type CancelFixMutationError = void | ErrorResponse
+
+    export const useCancelFix = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelFix>>, TError,{projectId: number;fixId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelFix>>,
+        TError,
+        {projectId: number;fixId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getCancelFixMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+export type cancelCveFixResponse204 = {
+  data: void
+  status: 204
+}
+
+export type cancelCveFixResponse404 = {
+  data: void
+  status: 404
+}
+
+export type cancelCveFixResponse409 = {
+  data: ErrorResponse
+  status: 409
+}
+    
+export type cancelCveFixResponseSuccess = (cancelCveFixResponse204) & {
+  headers: Headers;
+};
+export type cancelCveFixResponseError = (cancelCveFixResponse404 | cancelCveFixResponse409) & {
+  headers: Headers;
+};
+
+export type cancelCveFixResponse = (cancelCveFixResponseSuccess | cancelCveFixResponseError)
+
+export const getCancelCveFixUrl = (projectId: number,
+    repoId: string,
+    runId: string,) => {
+
+
+  
+
+  return `/api/projects/${projectId}/repos/${repoId}/cve-fixes/${runId}/cancel`
+}
+
+export const cancelCveFix = async (projectId: number,
+    repoId: string,
+    runId: string, options?: RequestInit): Promise<cancelCveFixResponse> => {
+  
+  return conduxFetch<cancelCveFixResponse>(getCancelCveFixUrl(projectId,repoId,runId),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getCancelCveFixMutationOptions = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelCveFix>>, TError,{projectId: number;repoId: string;runId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelCveFix>>, TError,{projectId: number;repoId: string;runId: string}, TContext> => {
+
+const mutationKey = ['cancelCveFix'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelCveFix>>, {projectId: number;repoId: string;runId: string}> = (props) => {
+          const {projectId,repoId,runId} = props ?? {};
+
+          return  cancelCveFix(projectId,repoId,runId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelCveFixMutationResult = NonNullable<Awaited<ReturnType<typeof cancelCveFix>>>
+    
+    export type CancelCveFixMutationError = void | ErrorResponse
+
+    export const useCancelCveFix = <TError = void | ErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelCveFix>>, TError,{projectId: number;repoId: string;runId: string}, TContext>, request?: SecondParameter<typeof conduxFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelCveFix>>,
+        TError,
+        {projectId: number;repoId: string;runId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getCancelCveFixMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

@@ -7,6 +7,224 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.6.0
+**Four things want your attention before you upgrade.** There is a new service, `symbolizer`, and it
+needs Docker Engine 28.0 or later under Compose and a new image under Helm. The monthly event allowance
+and the new upload quota are counted per organisation, not per project. If you run the base Compose file
+on its own, two environment variables were renamed and the old names stop the control plane from
+starting. And if you set `CONDUX_S3_*`, the consumer now reads it too, and its credentials now need to
+list and delete objects.
+
+### SSO refuses platform administrator addresses
+
+An organisation's identity provider can no longer sign in, or create, an account whose address is on
+`CONDUX_PLATFORM_ADMIN_EMAILS`. That list grants the cross tenant admin console, and SSO
+speaks only for an organisation. A platform administrator signs in another way. An address on the list
+that is not a member of the organisation gets the same answer as any address the organisation has not
+invited, so the response says nothing about who is on the list.
+
+Keep the list to the people who need it, and before adding an address, check who holds it.
+
+### Native crashes from Flutter on Android resolve to Dart source
+
+Upload the `.symbols` files from `flutter build --obfuscate --split-debug-info` and Condux shows native
+frames as Dart function, file and line, on the issue page, in the events list, in Suggest from errors and
+in what the Conductor reads. Inlined calls are expanded and marked. The Developer guide has a Flutter
+(Android) entry with a CI step that uploads them.
+
+`POST /api/debug-files` takes one ELF debug file as the raw body, with the same release token that
+uploads source maps. The build is read from the file itself, never named by the caller. A file with no
+debug information (the stripped `libapp.so` that ships) is refused with `400`, a body over 64 MiB with
+`413` and a third upload while two are still being received with `429` and `Retry-After`. It needs object storage
+configured, and iOS is not supported yet.
+
+Resolution runs in the new `symbolizer` service. It parses files that anyone holding a release token can
+upload, so it holds no credential, opens no connection and sits on a network of its own.
+
+**Compose:** the service is built from `backend/Dockerfile` with the rest. Its network needs **Docker
+Engine 28.0 or later**: an older engine refuses to create it, and the stack will not start.
+
+**Helm:** build `backend/Dockerfile --target symbolizer` and push it as `symbolizer` beside your other
+images, or that pod will not pull. See the `symbolizer.*` values. Its NetworkPolicy is enforced only
+where your network plugin implements it.
+
+Address only native frames, as an obfuscated Flutter build sends them, used to group as `?:?`, merging
+unrelated crashes of one exception type. They now group on their offset inside the image they belong to.
+**Issues stored before this will not match new events**, so expect new issues for existing native
+crashes, and expect an obfuscated crash to open a new issue in a release that shifts its code. The stack
+trace shows such a frame by its address rather than `?`.
+
+### JavaScript source maps
+
+Index source maps, the kind with `sections` that Turbopack writes for its runtime and server chunks, now
+symbolicate. Suggest from errors derives code mappings from deminified frames, and no longer pairs a
+frame that already names a repository file with a different file of the same name.
+
+Server side errors from a Next.js app are deminified too once you use `@condux/nextjs` 0.3.0, which
+stamps and uploads the server chunks' maps alongside the client ones. `serverMaps: false` opts out.
+
+### Monthly events and uploads are counted per organisation
+
+The monthly event allowance was counted per project, so an organisation with several projects got that
+many allowances. It is now one allowance per organisation, across both ingest paths, and
+`X-Condux-Quota-Remaining` reports what the organisation has left. The ingest rate limit stays per
+project. **Counting starts from zero in the month you upgrade.**
+
+The Team and Business event allowances are now 500,000 and 5,000,000 a month. Free and Enterprise are
+unchanged. The default Conductor compute ceilings changed too, and Settings shows yours.
+
+Source maps and native debug files now share an upload quota per organisation: 1 GiB on Free, 10 GiB on
+Team, 50 GiB on Business and no limit on Enterprise. Past it, the oldest uploads across all of the
+organisation's projects are removed to make room, so a CI upload never fails on space. Uploads also
+expire after the plan's event retention, counted from their last upload, so **an old release stops
+being deminified once its maps expire**. Deleting a project now deletes its uploaded objects.
+
+### Object storage changes
+
+**Only affects you if you set `CONDUX_S3_*`.**
+
+The consumer now reads the same `CONDUX_S3_*` settings as the control plane, so an auto fix sees
+deminified frames. A partial set of those settings now stops the consumer as well as the control plane.
+
+The control plane now lists and deletes objects in the bucket: to evict, expire and clean up after a
+deleted project, and once a day to remove objects under the upload prefixes that no database row names,
+once they are older than the longest retention plus 14 days. **Give its credentials list and delete
+permission on the bucket, and never point a scratch or restore environment at your live bucket**, since
+that sweep cannot tell a database that lost track of an object from one that never knew it.
+
+### Base Compose file: renamed variables and a new dashboard port
+
+**Only affects you if you run `deploy/docker-compose.yml` without the production overlay.**
+
+The bundled object store is now RustFS rather than MinIO. Rename `MINIO_ROOT_USER` and
+`MINIO_ROOT_PASSWORD` in `deploy/.env` to `DEV_S3_ACCESS_KEY` and `DEV_S3_SECRET_KEY`, or the control
+plane and the consumer refuse to start. Objects stored in `./.data/minio` are not carried over, so upload
+your source maps again.
+
+The dashboard's host port moved from 3000 to 3200 in the base file. The bundled edge proxy is
+unaffected. If you proxy to the host port yourself, point it at 3200.
+
+### Events with no level are errors, and some payloads are no longer issues
+
+An event that names no level is stored as an error, as the Sentry protocol defines. Some stock SDKs send
+none on a captured exception, and those events used to be stored at a level no alert rule or auto fix
+could match. **Alert rules and auto fix now fire for them.** The aliases `log` and `critical` and Python
+logging numbers are understood, and a transaction defaults to info. The upgrade rewrites issues and alert
+rules stored at the old level to error, and the alert rule API now refuses that level with `400`.
+
+A payload whose type is `transaction`, `feedback` or `csp` is accepted and no longer stored as an issue,
+and it no longer counts against your allowance.
+
+OpenTelemetry log records now fill in the affected user from `enduser.id`, `user.id` and their siblings,
+scrubbed exactly as on the Sentry path, so Users affected is no longer always zero for an OTLP project.
+
+### Event times are bounded
+
+An event was filed under whatever time its sender claimed. A time more than a minute ahead of receipt,
+older than your retention, or missing is now filed at receipt. **A device whose clock runs fast, or an
+event held offline for longer than retention, now lands at the time Condux received it.**
+
+If you bring your own ClickHouse and it is not set to UTC, stored times were shifted by its offset. New
+times are correct whatever its timezone. Times already stored stay shifted.
+
+### A slow Valkey no longer fails ingest
+
+The rate limiter and the monthly quota meter both let ingest through when Valkey is unreachable. A
+timeout was not treated as unreachable, so a slow Valkey made ingest fail. And a relay that started while
+Valkey was down never came up at all. Both now let ingest through, and the relay starts and reconnects
+once Valkey returns.
+
+### The Conductor
+
+**A failed run says why.** Fix runs and dependency bumps carry a `failureReason`, and the dashboard
+explains it with a next step. The error text itself is still never returned. Suggest fix is offered
+again after a failed or cancelled run.
+
+**One run per issue at a time.** A second request for an issue with a run in progress answers `409
+fix_in_progress`, and a second bump for an advisory `409 cve_fix_in_progress`, with the allowance handed
+back. The upgrade cancels all but one in progress run per issue, under a brief write lock on that table.
+
+**An administrator can cancel a run nothing is working on**, from the fix detail or beside a bump.
+`POST .../fixes/{fixId}/cancel` and `POST .../cve-fixes/{runId}/cancel` answer `409 fix_not_cancellable`
+for a run that is executing.
+
+**Runs a restart left in progress are concluded** and their allowance refunded, unless GitHub shows the
+run did open its draft pull request, in which case it is recorded as a success. A model or network
+timeout now fails the run it belongs to instead of stopping the worker.
+
+**A fix never overwrites a file the run did not read in full.** A file larger than GitHub will return,
+or not valid UTF-8, is treated as unreadable.
+
+**The Conductor reads deminified frames**, so a fix for a bundled JavaScript app is scoped to its source
+file, often with no code mapping. A code mapping written against a raw bundler path such as
+`webpack://_N_E/` stops matching and needs rewriting against the source path.
+
+**Java, Kotlin and Scala frames reach code mappings.** A frame is stored under its package path, so one
+mapping adding your source root works, and Suggest from errors proposes it. Before this the Conductor got
+no source files for those projects. Grouping is unchanged.
+
+If you run a **customer hosted runner**, update its image: it now stops its work before its lease can
+lapse.
+
+### The MCP endpoint checks Origin and publishes a server card
+
+**If you run your own edge proxy instead of the bundled Caddy or the Helm ingress, route
+`/.well-known/mcp/*` to the control plane.** `GET /.well-known/mcp/server-card.json` answers without a
+token and lists the server and its tools, for the directories that scan MCP servers.
+
+A request to `/api/mcp` whose `Origin` header is not an address this deployment serves the dashboard
+from (`CONDUX_APP_BASE_URL` or a `CONDUX_CORS_ORIGINS` entry) is refused with `403`, as the MCP transport
+specification requires. An agent running outside a browser sends no `Origin`, so it is unaffected.
+
+A missing or unrecognised token still answers `401`, which now carries the `WWW-Authenticate: Bearer`
+challenge HTTP requires, with `error="invalid_token"` when a token was sent and not recognised.
+
+### Dependency findings and bumps
+
+`GET .../repos/{repoId}/cve-findings` now reads every page of Dependabot alerts and **returns
+`{findings, truncated}` instead of a bare array**. `truncated` is true whenever the read stopped early,
+including a scan that failed outright, which used to read as no alerts. The list is now a searchable,
+sortable table.
+
+For npm packages a finding can now read **Exposed** (a new exposure value, `2`), meaning a version in the
+vulnerable range was seen running. Nothing ever says a package is safe.
+
+After a bump's draft pull request merges, Condux watches what your app reports running and concludes
+**Held**, **Still exposed** or **Cannot verify**, for npm, PyPI and Maven. This needs an SDK that sends
+the dependency inventory. A bump requested before the upgrade concludes Cannot verify.
+
+### Managed Agents
+
+**Only affects you if `CONDUX_CONDUCTOR_PROVIDER=managed-agents`.**
+
+`CONDUX_CONDUCTOR_POLL_SECONDS`, `CONDUX_CONDUCTOR_MAX_POLLS`, `CONDUX_CMA_MAX_SESSION_USD`,
+`CONDUX_CMA_AGENT_ID` and `CONDUX_CMA_ENVIRONMENT_ID` were never passed to the conductor by Compose, so
+setting them did nothing. **They take effect now.** Helm gains matching `conductor.*` values.
+
+The sandbox now has no network access and the agent only the tools a fix needs. Condux sets that up for
+the environment and agent it creates. **If you pin your own environment, give it limited networking with
+no allowed hosts, or sessions will not start. If you pin your own agent, turn `read`, `web_fetch` and
+`web_search` off on it**: Condux uses a pinned agent as configured. Leftover sessions are now cleaned up, which removes the repository copy they hold. That assumes
+one Managed Agents key per deployment.
+
+### Operations
+
+If you export the services' own telemetry, `OTEL_EXPORTER_OTLP_ENDPOINT` must be your collector's gRPC
+port (4317 by convention). The example file said 4318, where nothing is exported and nothing logs an
+error.
+
+The production overlay gives the edge proxy a memory limit. Compose gives the control plane a 20 second
+stop grace period, so fix jobs still queued at shutdown are sent.
+
+The dashboard image moves to Next.js 16.3.8 and sharp 0.35.5, and pins source-map-js 1.2.2, each past a
+published advisory.
+
+### Migrations
+
+Postgres migrations `0055` to `0064` run on upgrade. `0059` cancels duplicate in progress fix runs and
+`0063` rewrites issues and alert rules at the old empty level to error. There are no ClickHouse
+migrations.
+
 ## 0.5.0
 **Three things want your attention before you upgrade.** Enterprise SSO now needs a DNS proof of the
 email domain it routes on, and a configuration that works today can stop routing a week after you

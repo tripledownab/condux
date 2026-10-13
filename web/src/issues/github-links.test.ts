@@ -11,7 +11,15 @@ const repo = {
 const mapping = { id: "m1", repoLinkId: "r1", stackRoot: "src/", sourceRoot: "services/api/src/" };
 
 function frame(filename: string, lineno = 42) {
-  return { filename, lineno, inApp: true, contextBefore: [], contextAfter: [], vars: {} };
+  return {
+    filename,
+    lineno,
+    inApp: true,
+    inlined: false,
+    contextBefore: [],
+    contextAfter: [],
+    vars: {},
+  };
 }
 
 describe("frameGithubUrl", () => {
@@ -27,6 +35,23 @@ describe("frameGithubUrl", () => {
     expect(
       frameGithubUrl({ ...frame("src/a.ts"), filename: undefined }, [repo], [mapping]),
     ).toBeNull();
+  });
+
+  it("takes the longest matching stack root, whatever the list order", () => {
+    // The mappings arrive sorted by stack root, so an empty root for the whole source tree comes first.
+    const tree = { id: "m2", repoLinkId: "r1", stackRoot: "", sourceRoot: "src/main/java/" };
+    const billing = {
+      id: "m3",
+      repoLinkId: "r1",
+      stackRoot: "com/acme/billing/",
+      sourceRoot: "billing/src/main/java/com/acme/billing/",
+    };
+    expect(frameGithubUrl(frame("com/acme/billing/Invoice.java"), [repo], [tree, billing])).toBe(
+      "https://github.com/acme/backend/blob/main/billing/src/main/java/com/acme/billing/Invoice.java#L42",
+    );
+    expect(frameGithubUrl(frame("com/acme/web/Home.java"), [repo], [tree, billing])).toBe(
+      "https://github.com/acme/backend/blob/main/src/main/java/com/acme/web/Home.java#L42",
+    );
   });
 
   it("normalizes leading ./ and skips the anchor without a line number", () => {

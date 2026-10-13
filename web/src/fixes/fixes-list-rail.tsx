@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import type { FixListItem } from "@/src/api/generated/model";
-import { fixStatusMeta, verifyStatusMeta } from "@/src/issues/fix-format";
 import { formatRelativeTime } from "@/src/lib/time";
 import { fixDetailPath } from "@/src/routes";
+import { FixStatusLabel } from "./fix-status-label";
 
 // The second rail of the Fixes surface: compact rows for the filtered fixes, worked through while the
 // detail stays open in the main pane. The active fix is derived from the route; an unviewed fix shows a
@@ -23,8 +23,6 @@ export function FixesListRail({
   fixes: FixListItem[];
 }) {
   const translate = useTranslations("fixes");
-  const translateStatus = useTranslations("issues.fix.status");
-  const translateVerify = useTranslations("issues.fix.verify");
   const params = useParams<{ fixId?: string }>();
   const activeFixId = params?.fixId;
 
@@ -46,8 +44,6 @@ export function FixesListRail({
         <ul>
           {fixes.map((fix) => {
             const active = fix.id === activeFixId;
-            const statusMeta = fixStatusMeta(fix.status);
-            const verifyMeta = verifyStatusMeta(fix.verifyStatus);
             return (
               <li key={fix.id} className="border-b border-border/50">
                 <Link
@@ -62,17 +58,11 @@ export function FixesListRail({
                         <span className="sr-only">{translate("unviewed")}</span>
                       </>
                     ) : null}
-                    {/* Once merged the verification state is the true status; "Draft PR ready" would
-                      be stale, so the verify badge replaces the run status rather than joining it. */}
-                    {verifyMeta ? (
-                      <span className={`uppercase ${verifyMeta.className}`}>
-                        {translateVerify(verifyMeta.key)}
-                      </span>
-                    ) : (
-                      <span className={`uppercase ${statusMeta.className}`}>
-                        {translateStatus(statusMeta.key)}
-                      </span>
-                    )}
+                    <FixStatusLabel
+                      status={fix.status}
+                      verifyStatus={fix.verifyStatus}
+                      className="uppercase"
+                    />
                     <span className="ml-auto text-muted-foreground">
                       {formatRelativeTime(fix.createdAt)}
                     </span>

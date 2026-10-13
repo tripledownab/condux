@@ -44,7 +44,7 @@
 	tls /etc/condux/tls/staging.crt /etc/condux/tls/staging.key
 	encode zstd gzip
 
-	@backend path /api/* /openapi/*
+	@backend path /api/* /openapi/* /.well-known/mcp/*
 	handle @backend {
 		reverse_proxy controlplane:8080
 	}

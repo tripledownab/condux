@@ -16,16 +16,22 @@ public readonly record struct ObservedModule(
     string Version,
     string Environment,
     string Release,
-    DateTimeOffset LastSeen);
+    DateTimeOffset LastSeen)
+{
+    /// <summary>
+    /// Whether this version was matched inside the finding's vulnerable range by
+    /// <see cref="VulnerableRanges"/>. Set per finding by <see cref="ModuleExposures.For"/>, and false
+    /// as read. <b>False means not confirmed, never not affected</b>: it covers a version outside the
+    /// range and one the matcher cannot decide alike.
+    /// </summary>
+    public bool Confirmed { get; init; }
+}
 
 /// <summary>
 /// What can honestly be said about whether a finding's vulnerable package is actually running.
 ///
-/// <para><b>ADR-0041 names three states and this enum has two.</b> The third, a confirmed match
-/// against an advisory's vulnerable range, needs a matcher, and the first slice deliberately ships
-/// without one. Declaring the value before anything can produce it would put an unreachable branch in
-/// every consumer and a state in the API that never arrives. It is added by the slice that can emit
-/// it, and adding it is additive.</para>
+/// <para>The states only ever climb on evidence. Nothing here says a package is safe: a version
+/// outside the range and one the matcher cannot decide both stay <see cref="Running"/>.</para>
 /// </summary>
 public enum ModuleExposureState
 {
@@ -38,11 +44,17 @@ public enum ModuleExposureState
     Unknown = 0,
 
     /// <summary>
-    /// A version of this package was observed running. Whether that version falls inside the
-    /// advisory's vulnerable range is not asserted; the observed version and the advisory's fixed
+    /// A version of this package was observed running, and none was confirmed inside the advisory's
+    /// vulnerable range. That is not a verdict of safety: the observed version and the advisory's fixed
     /// version are both shown and the reader compares them.
     /// </summary>
     Running = 1,
+
+    /// <summary>
+    /// At least one observed version was matched inside the advisory's vulnerable range. The sightings
+    /// that matched carry <see cref="ObservedModule.Confirmed"/>.
+    /// </summary>
+    Exposed = 2,
 }
 
 /// <summary>The exposure verdict for one finding, with the sightings it was drawn from.</summary>
@@ -53,7 +65,7 @@ public readonly record struct ModuleExposure(
 /// <summary>
 /// Decides a finding's exposure from what was observed. Pure, and the single home of the rule: a
 /// client that recomputed "running means the list is non-empty" would be a second statement of it,
-/// free to drift the day a third state arrives.
+/// and one that tested for Running alone would read every Exposed finding as Unknown.
 /// </summary>
 public static class ModuleExposures
 {
@@ -64,35 +76,51 @@ public static class ModuleExposures
     /// </summary>
     public static ModuleExposure For(CveFinding finding, IReadOnlyList<ObservedModule> observed)
     {
-        IReadOnlyList<ObservedModule> matches = [.. observed.Where(module => Matches(finding, module))];
-        return new ModuleExposure(
-            matches.Count == 0 ? ModuleExposureState.Unknown : ModuleExposureState.Running, matches);
+        IReadOnlyList<ObservedModule> matches =
+        [
+            .. observed
+                .Where(module => Matches(finding, module))
+                .Select(module => module with
+                {
+                    // The registry's own name rule, unlike the lenient match above. npm names are
+                    // case sensitive and the registry holds distinct packages that differ only in case
+                    // ("Proto" and "proto"), so there a lenient match may be another package, which may
+                    // show as Running and must never be confirmed. A scanner that miscases an npm name
+                    // loses the confirmation, which is the safe side.
+                    Confirmed = PackageNames.AreSame(module.Ecosystem, finding.Package, module.Package)
+                        && VulnerableRanges.IsConfirmedInRange(
+                            finding.Ecosystem, finding.VulnerableRange, module.Version),
+                }),
+        ];
+        var state = matches switch
+        {
+            [] => ModuleExposureState.Unknown,
+            _ when matches.Any(module => module.Confirmed) => ModuleExposureState.Exposed,
+            _ => ModuleExposureState.Running,
+        };
+        return new ModuleExposure(state, matches);
     }
 
     /// <summary>
-    /// Whether a sighting is of the package a finding names. Both halves are compared leniently on
-    /// purpose, because every mistake in this direction produces a false "not observed", and this
-    /// feature exists to avoid exactly that reading.
+    /// Whether a sighting is of the package a finding names, for Running. Both halves are compared
+    /// leniently on purpose, because every mistake in the other direction produces a false "not
+    /// observed", and this feature exists to avoid exactly that reading. Confirmation does not rely on
+    /// it: <see cref="For"/> applies the registry's own name rule before it confirms.
     ///
     /// <para>The ecosystem is folded through <see cref="PackageEcosystems.Canonical"/> because a
-    /// finding carries its scanner's vocabulary and a sighting carries OSV's. The package is compared
-    /// case insensitively because a scanner reports a registry's spelling and an SDK reports the
-    /// runtime's.</para>
+    /// finding carries its scanner's vocabulary and a sighting carries OSV's. The package is compared by
+    /// <see cref="PackageNames.ToMatchKey"/>, case insensitively and on PyPI with its separators
+    /// folded, because a scanner reports a registry's spelling and an SDK reports the runtime's.</para>
     ///
     /// <para><b>The package half is enforced twice and both must agree</b> (pinned by
-    /// ModuleExposureTests here and ReleaseModuleFlowTest at the reader, each asserting the same
-    /// case-insensitive answer). The reader also filters
-    /// server-side on <c>lower(package)</c>, because fetching a project's entire inventory to match it
-    /// here would be far worse. That filter is the coarse one and this is the exact one, so loosening
-    /// the rule here alone changes nothing: the extra rows never arrive. Change both or neither.</para>
-    ///
-    /// <para><b>Known gap:</b> PyPI also folds <c>-</c>, <c>_</c> and <c>.</c> to one another
-    /// (PEP 503), so <c>zope.interface</c> and <c>zope-interface</c> are one project there and do not
-    /// match here. That is per-ecosystem normalisation, which this slice does not do, and its failure
-    /// is a row reading as unknown rather than a wrong match.</para>
+    /// ModuleExposureTests here and ReleaseModuleFlowTest at the reader). The reader also filters
+    /// server-side on <see cref="PackageNames.ToFilterKey"/>, because fetching a project's entire
+    /// inventory to match it here would be far worse. That filter is the coarse one and this is the
+    /// exact one, so loosening the rule here alone changes nothing: the extra rows never arrive. Change
+    /// both or neither.</para>
     /// </summary>
     private static bool Matches(CveFinding finding, ObservedModule module) =>
-        string.Equals(finding.Package, module.Package, StringComparison.OrdinalIgnoreCase)
+        PackageNames.ToMatchKey(module.Ecosystem, finding.Package) == PackageNames.ToMatchKey(module.Ecosystem, module.Package)
         && string.Equals(
             PackageEcosystems.Canonical(finding.Ecosystem),
             PackageEcosystems.Canonical(module.Ecosystem),

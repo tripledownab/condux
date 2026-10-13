@@ -27,8 +27,8 @@ public sealed record Dsn(string PublicKey, string Host, string ProjectId)
 }
 
 /// <summary>
-/// An authenticated project: its id, its effective plan tier (inherited from its org) and the salt its
-/// pseudonymous user keys are derived with.
+/// An authenticated project: its id, its effective plan tier (inherited from its org), the salt its
+/// pseudonymous user keys are derived with, and the org it belongs to.
 ///
 /// <para>The salt is a positional parameter and not an optional one, so every store that can produce a
 /// project has to say where its salt comes from. An optional one would let a store default to empty and
@@ -37,8 +37,16 @@ public sealed record Dsn(string PublicKey, string Host, string ProjectId)
 /// <para><b>Never serialise this.</b> The relay answers with an event id and nothing else; the salt is
 /// read on the ingest path and goes no further. Publishing it would return the pseudonyms to being
 /// brute-forceable by whoever read it.</para>
+///
+/// <para>The monthly event cap is the org's, not the project's: a plan sells one allowance to the org,
+/// and an org can create any number of projects, so a cap keyed on the project would multiply by however
+/// many a stranger made. <see cref="QuotaKey"/> is the one place that key is built. Its prefix keeps it
+/// apart from the counters keyed on a project that were written before it.</para>
 /// </summary>
-public sealed record Project(string Id, Tier Tier, string UserKeySalt);
+public sealed record Project(string Id, Tier Tier, string UserKeySalt, string OrgId)
+{
+    public string QuotaKey => $"org:{OrgId}";
+}
 
 /// <summary>
 /// Resolves and authenticates a project from a DSN (project id + public key). The
@@ -55,7 +63,8 @@ public interface IProjectStore
 /// <summary>
 /// In-memory store for dev/tests, seeded with <c>(projectId, publicKey, tier)</c> DSNs.
 ///
-/// <para>Each seeded project gets a fresh random salt, generated here rather than written down. A
+/// <para>A seeded project has no org, so it is its own: the dev store has nothing to share a cap with.
+/// Each seeded project gets a fresh random salt, generated here rather than written down. A
 /// constant would be a published salt, and this store activates whenever the relay has no Postgres
 /// configured, which still leaves a consumer writing rows to ClickHouse. Per instance rather than per
 /// process, so a test that builds two stores gets two salts and cannot pass by accident.</para>
@@ -67,7 +76,7 @@ public sealed class InMemoryProjectStore : IProjectStore
     public InMemoryProjectStore(IEnumerable<(string ProjectId, string PublicKey, Tier Tier)> dsns) =>
         _byDsn = dsns.ToDictionary(
             d => (d.ProjectId, d.PublicKey),
-            d => new Project(d.ProjectId, d.Tier, UserKeys.NewSalt()));
+            d => new Project(d.ProjectId, d.Tier, UserKeys.NewSalt(), OrgId: d.ProjectId));
 
     public Task<Project?> AuthenticateAsync(string projectId, string publicKey, CancellationToken ct = default) =>
         Task.FromResult(_byDsn.GetValueOrDefault((projectId, publicKey)));

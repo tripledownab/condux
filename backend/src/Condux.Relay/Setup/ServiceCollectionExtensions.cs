@@ -7,6 +7,7 @@ using Condux.Messaging;
 using Condux.Storage.Postgres;
 using Condux.Storage.Quotas;
 using Condux.Storage.RateLimiting;
+using Condux.Storage.Valkey;
 using Condux.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
@@ -52,7 +53,7 @@ internal static class ServiceCollectionExtensions
         return options;
     }
 
-    // Per-project rate limiter and monthly quota meter. Valkey-backed when CONDUX_VALKEY is set (one
+    // Rate limiter per project and monthly quota meter per org. Valkey-backed when CONDUX_VALKEY is set (one
     // budget shared across all relay replicas); otherwise in-process (dev/single-relay). The rate and
     // burst are sourced from the project's plan tier per request, not fixed here.
     private static void AddRateLimiting(this WebApplicationBuilder builder, RelayOptions options)
@@ -64,7 +65,7 @@ internal static class ServiceCollectionExtensions
             return;
         }
 
-        builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options.Valkey));
+        builder.Services.AddSingleton(ValkeyConnections.Connect(options.Valkey));
         builder.Services.AddSingleton<IRateLimiter>(sp =>
             new ValkeyRateLimiter(sp.GetRequiredService<IConnectionMultiplexer>()));
         builder.Services.AddSingleton<IQuotaMeter>(sp =>

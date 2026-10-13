@@ -53,12 +53,27 @@ public class RepoPathsTests
         Assert.Throws<ArgumentException>(() => RepoPaths.Normalize(path));
 
     /// <summary>
-    /// A single dot segment is not a traversal and is left alone, so a legitimate path is not rejected by
-    /// a rule aimed at something else. Only a leading "./" is stripped, matching the previous behaviour.
+    /// A single dot segment is not a traversal, so the path is accepted, but as the file it names: the
+    /// URI stack collapses <c>src/./App.cs</c> to <c>src/App.cs</c> before GitHub sees it, and a check that
+    /// keyed on the uncollapsed spelling would compare a different string from the file it touched.
     /// </summary>
-    [Fact]
-    public void Normalize_keeps_an_interior_single_dot_segment() =>
-        Assert.Equal("src/./App.cs", RepoPaths.Normalize("src/./App.cs"));
+    [Theory]
+    [InlineData("src/./App.cs", "src/App.cs")]
+    [InlineData("./././App.cs", "App.cs")]
+    public void Normalize_drops_a_single_dot_segment(string path, string expected) =>
+        Assert.Equal(expected, RepoPaths.Normalize(path));
+
+    /// <summary>
+    /// A file path never has an empty segment. GitHub answers a trailing slash with a redirect that drops
+    /// the ref, which .NET follows without the credential, so a private file reads as absent.
+    /// </summary>
+    [Theory]
+    [InlineData("src/App.cs/")]
+    [InlineData("src//App.cs")]
+    [InlineData(".")]
+    [InlineData("./")]
+    public void Normalize_refuses_a_path_with_an_empty_segment_or_no_file(string path) =>
+        Assert.Throws<ArgumentException>(() => RepoPaths.Normalize(path));
 
     [Fact]
     public void IsRepoRelative_answers_without_throwing()

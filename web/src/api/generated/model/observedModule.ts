@@ -12,4 +12,5 @@ export interface ObservedModule {
   environment?: string;
   release?: string;
   lastSeen?: string;
+  confirmed?: boolean;
 }

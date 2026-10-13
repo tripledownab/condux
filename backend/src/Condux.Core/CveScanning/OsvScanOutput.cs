@@ -42,7 +42,7 @@ public static class OsvScanOutput
                         continue;
                     }
 
-                    var (introduced, fixedVersion) = AffectedRange(vulnerability, name);
+                    var (introduced, fixedVersion, upper) = AffectedRange(vulnerability, name);
                     findings.Add(new CveFinding(
                         AdvisoryId: id,
                         CveId: Aliases(vulnerability).FirstOrDefault(a => a.StartsWith("CVE-", StringComparison.Ordinal)),
@@ -52,7 +52,7 @@ public static class OsvScanOutput
                         Summary: String(vulnerability, "summary"),
                         Package: name,
                         Ecosystem: ecosystem,
-                        VulnerableRange: Range(introduced, fixedVersion),
+                        VulnerableRange: Range(introduced, upper),
                         FixedVersion: fixedVersion,
                         Url: $"https://osv.dev/vulnerability/{id}",
                         Source: SourceName));
@@ -93,10 +93,17 @@ public static class OsvScanOutput
     }
 
     /// <summary>
-    /// The introduced and fixed versions for this package, from the affected range. An advisory can list
-    /// several affected packages, so the entry naming this one is the relevant one.
+    /// The introduced version, the fixed version and the upper bound as a comparator, from the
+    /// affected range. An advisory can list several affected packages, so the entry naming this one is
+    /// the relevant one.
+    ///
+    /// <para>OSV ends an interval with one of three events, and each means a different comparator:
+    /// <c>fixed</c> is "&lt;", <c>last_affected</c> is "&lt;=" and <c>limit</c> is "&lt;". Only
+    /// <c>fixed</c> names a version to bump to. Reading <c>fixed</c> alone wrote a range bounded by
+    /// either of the others as open ended, which claims every later version is affected.</para>
     /// </summary>
-    private static (string? Introduced, string? Fixed) AffectedRange(JsonElement vulnerability, string package)
+    private static (string? Introduced, string? Fixed, string? Upper) AffectedRange(
+        JsonElement vulnerability, string package)
     {
         foreach (var affected in Array(vulnerability, "affected"))
         {
@@ -110,27 +117,36 @@ public static class OsvScanOutput
             {
                 string? introduced = null;
                 string? fixedVersion = null;
+                string? upper = null;
                 foreach (var element in Array(range, "events"))
                 {
-                    introduced ??= element.TryGetProperty("introduced", out var i) ? i.GetString() : null;
-                    fixedVersion ??= element.TryGetProperty("fixed", out var f) ? f.GetString() : null;
+                    introduced ??= Event(element, "introduced");
+                    var fixedHere = Event(element, "fixed");
+                    fixedVersion ??= fixedHere;
+                    upper ??= fixedHere is not null ? $"<{fixedHere}"
+                        : Event(element, "last_affected") is { } last ? $"<={last}"
+                        : Event(element, "limit") is { } limit ? $"<{limit}"
+                        : null;
                 }
 
-                if (fixedVersion is not null || introduced is not null)
+                if (upper is not null || introduced is not null)
                 {
-                    return (introduced, fixedVersion);
+                    return (introduced, fixedVersion, upper);
                 }
             }
         }
 
-        return (null, null);
+        return (null, null, null);
     }
 
-    private static string Range(string? introduced, string? fixedVersion) => (introduced, fixedVersion) switch
+    private static string? Event(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) ? value.GetString() : null;
+
+    private static string Range(string? introduced, string? upper) => (introduced, upper) switch
     {
-        (not null, not null) => $">={introduced} <{fixedVersion}",
+        (not null, not null) => $">={introduced} {upper}",
         (not null, null) => $">={introduced}",
-        (null, not null) => $"<{fixedVersion}",
+        (null, not null) => upper,
         _ => "",
     };
 

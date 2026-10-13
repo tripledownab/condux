@@ -1,0 +1,58 @@
+# Local dev reached from other machines on a private network (a tailnet), layered on the base file:
+#
+#   docker compose --env-file deploy/.env -f deploy/docker-compose.yml -f deploy/docker-compose.tailnet.yml up -d --build
+#
+# Every `pnpm dev*` script adds it by itself when deploy/.env sets TAILNET_HOST (scripts/compose.sh).
+#
+# ADDITIVE, the way the staging overlay publishes its private-network ports. The base file keeps every
+# binding on 127.0.0.1, which is the rule that keeps a database off a public interface: Compose
+# concatenates published ports and cannot remove one, so whatever the base file binds, production binds
+# too. This file is never part of a production or staging deploy, and it binds TAILNET_ADDRESS, never
+# 0.0.0.0, so it publishes only to the private network.
+#
+# Ports alone would not do: the dashboard's API and relay URLs are baked into its image, and a browser
+# on another machine reads "localhost" as itself. So everything a browser or an SDK is told to reach is
+# TAILNET_HOST here, and a browser has to open exactly http://<TAILNET_HOST>:3200: a page on any other
+# name (localhost, a short name) makes the API another site, and the session cookie is not sent to it.
+#
+#   TAILNET_ADDRESS  the address to bind, this machine's address on the private network
+#   TAILNET_HOST     the name the URLs are built from. It must resolve to TAILNET_ADDRESS on this machine
+#                    as well as on the others, since SDKs here report to it too. Debian-family systems map
+#                    their own short hostname to 127.0.1.1 in /etc/hosts, where nothing listens, so use
+#                    the network's full name (a tailnet's is <host>.<tailnet>.ts.net).
+
+# The dashboard's address here: the one origin the API allows, and the base for links in mail.
+x-tailnet-dashboard: &tailnet-dashboard "http://${TAILNET_HOST:?set TAILNET_HOST to the name this machine is reached by}:3200"
+
+services:
+  web:
+    build:
+      args:
+        NEXT_PUBLIC_CONDUX_API_URL: "http://${TAILNET_HOST:?set TAILNET_HOST to the name this machine is reached by}:8080"
+        NEXT_PUBLIC_CONDUX_INGEST_URL: "http://${TAILNET_HOST:?set TAILNET_HOST to the name this machine is reached by}:9010"
+    ports:
+      - "${TAILNET_ADDRESS:?set TAILNET_ADDRESS to this machine's address on the private network}:3200:3000"
+
+  controlplane:
+    environment:
+      CONDUX_CORS_ORIGINS: *tailnet-dashboard
+      CONDUX_APP_BASE_URL: *tailnet-dashboard
+      CONDUX_INGEST_HOST: "${TAILNET_HOST:?set TAILNET_HOST to the name this machine is reached by}:9010"
+      # GitHub sends the browser back here after authorizing, so it has to be a name the browser can
+      # reach, and it must also be listed among the GitHub App's callback URLs, or GitHub refuses it.
+      CONDUX_GITHUB_OAUTH_REDIRECT_URI: "http://${TAILNET_HOST:?set TAILNET_HOST to the name this machine is reached by}:8080/api/github/oauth/callback"
+    ports:
+      - "${TAILNET_ADDRESS:?set TAILNET_ADDRESS to this machine's address on the private network}:8080:8080"
+
+  consumer:
+    environment:
+      CONDUX_CORS_ORIGINS: *tailnet-dashboard
+      CONDUX_APP_BASE_URL: *tailnet-dashboard
+
+  relay:
+    ports:
+      - "${TAILNET_ADDRESS:?set TAILNET_ADDRESS to this machine's address on the private network}:9010:9000"
+
+  mailpit:
+    ports:
+      - "${TAILNET_ADDRESS:?set TAILNET_ADDRESS to this machine's address on the private network}:8025:8025"

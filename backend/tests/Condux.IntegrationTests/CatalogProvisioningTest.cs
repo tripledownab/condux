@@ -36,6 +36,7 @@ public sealed class CatalogProvisioningTest(PostgresFixture pg) : IClassFixture<
         Assert.NotNull(authed);
         Assert.Equal(project.Id.ToString(), authed!.Id);
         Assert.Equal(Tier.Business, authed.Tier);
+        Assert.Equal(org.Id.ToString(), authed.OrgId);
 
         // Wrong key and unknown project are rejected (a non-UUID segment can never match either).
         Assert.Null(await store.AuthenticateAsync(dsn, "not-the-key"));
@@ -74,6 +75,34 @@ public sealed class CatalogProvisioningTest(PostgresFixture pg) : IClassFixture<
         var store = new PostgresProjectStore(pg.ConnectionString);
         Assert.NotNull(await store.AuthenticateAsync(web.PublicId.ToString(), "web-key-1"));
         Assert.NotNull(await store.AuthenticateAsync(web.PublicId.ToString(), "web-key-2"));
+    }
+
+    [Fact]
+    public async Task Projects_of_one_org_share_a_quota_key_and_other_orgs_do_not()
+    {
+        // The monthly event cap is sold to the org, and an org can create any number of projects, so a
+        // key per project would multiply the cap by however many projects a stranger made.
+        var orgs = new OrgRepository(pg.ConnectionString);
+        var projects = new ProjectRepository(pg.ConnectionString);
+        var keys = new DsnKeyRepository(pg.ConnectionString);
+        var store = new PostgresProjectStore(pg.ConnectionString);
+
+        var org = await orgs.CreateAsync("initech-" + Guid.NewGuid().ToString("N"), "Initech", (int)Tier.Free);
+        var other = await orgs.CreateAsync("hooli-" + Guid.NewGuid().ToString("N"), "Hooli", (int)Tier.Free);
+        var first = await projects.CreateAsync(org.Id, "Web", "javascript");
+        var second = await projects.CreateAsync(org.Id, "API", "go");
+        var elsewhere = await projects.CreateAsync(other.Id, "Web", "javascript");
+        await keys.CreateAsync(first.Id, "default", "quota-key-1");
+        await keys.CreateAsync(second.Id, "default", "quota-key-2");
+        await keys.CreateAsync(elsewhere.Id, "default", "quota-key-3");
+
+        var a = await store.AuthenticateAsync(first.PublicId.ToString(), "quota-key-1");
+        var b = await store.AuthenticateAsync(second.PublicId.ToString(), "quota-key-2");
+        var c = await store.AuthenticateAsync(elsewhere.PublicId.ToString(), "quota-key-3");
+
+        Assert.Equal(a!.QuotaKey, b!.QuotaKey);
+        Assert.NotEqual(a.QuotaKey, c!.QuotaKey);
+        Assert.NotEqual(a.Id, b.Id);
     }
 
     [Fact]

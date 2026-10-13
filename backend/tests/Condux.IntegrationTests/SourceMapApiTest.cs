@@ -3,13 +3,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using Condux.Core.SourceMaps;
 using Condux.IntegrationTests.Fixtures;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using static Condux.IntegrationTests.Fixtures.ReleaseTokenUploads;
 
 namespace Condux.IntegrationTests;
 
@@ -24,48 +20,6 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
 {
     private const string Map = "{\"version\":3,\"file\":\"app.js\",\"sources\":[\"app.ts\"],\"mappings\":\"AAAA\"}";
 
-    // A control-plane with object storage "configured" (so the routes are live) but backed by an in-memory
-    // fake, so the test never touches a real S3/MinIO. The factory registration is overridden, not invoked.
-    private static WebApplicationFactory<Program> AppWithStore(string postgres, FakeObjectStore store) =>
-        ControlPlaneApp.Create(postgres, configure: b =>
-        {
-            b.UseSetting("CONDUX_S3_ENDPOINT", "http://minio.invalid:9000");
-            b.UseSetting("CONDUX_S3_BUCKET", "test-bucket");
-            b.UseSetting("CONDUX_S3_ACCESS_KEY", "test");
-            b.UseSetting("CONDUX_S3_SECRET_KEY", "test");
-            b.ConfigureTestServices(s => s.AddSingleton<IObjectStore>(store));
-        });
-
-    // Not static: reaches pg.ConnectionString to set the tier out of band, since POST /api/orgs
-    // always creates Free and only the Stripe webhook moves an org off it.
-    private async Task<(HttpClient Admin, long ProjectId)> ProvisionAsync(WebApplicationFactory<Program> app)
-    {
-        var client = app.CreateClient();
-        await ApiAuth.SignUpAsync(client);
-        var orgResp = await client.PostAsJsonAsync("/api/orgs",
-            new { slug = "acme-" + Guid.NewGuid().ToString("N"), name = "Acme" });
-        var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
-        await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 2);
-        var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
-            new { slug = "web", name = "Web", platform = "javascript" });
-        var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("project").GetProperty("id").GetInt64();
-        return (client, projectId);
-    }
-
-    private static async Task<string> MintTokenAsync(HttpClient admin, long projectId)
-    {
-        var mint = await admin.PostAsJsonAsync($"/api/projects/{projectId}/release-tokens", new { name = "CI" });
-        return (await mint.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
-    }
-
-    private static HttpClient Bearer(WebApplicationFactory<Program> app, string token)
-    {
-        var client = app.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return client;
-    }
-
     private static ByteArrayContent MapContent()
     {
         var content = new ByteArrayContent(Encoding.UTF8.GetBytes(Map));
@@ -76,9 +30,9 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_ViaBearer_StoresBytes_IndexesRow()
     {
-        var store = new FakeObjectStore();
+        var store = new RecordingObjectStore();
         var app = AppWithStore(pg.ConnectionString, store);
-        var (admin, projectId) = await ProvisionAsync(app);
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
         var token = await MintTokenAsync(admin, projectId);
 
         var ci = Bearer(app, token);
@@ -98,9 +52,72 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     }
 
     [Fact]
+    public async Task An_upload_past_the_quota_evicts_the_oldest_artifact_and_still_succeeds()
+    {
+        var store = new RecordingObjectStore();
+        var app = AppWithStore(pg.ConnectionString, store);
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
+        var token = await MintTokenAsync(admin, projectId);
+        // An older artifact that alone fills the org's quota (ProvisionAsync puts the org on Business),
+        // so the next upload pushes it out.
+        var old = $"sourcemaps/{projectId}/by-debug-id/old";
+        await ExecuteAsync(
+            "INSERT INTO sourcemap_artifacts (id, project_id, release, filename, object_key, byte_size, created_at) "
+            + $"VALUES ('{Guid.CreateVersion7()}', {projectId}, '1.0.0', 'old.js', '{old}', "
+            + $"{Condux.Core.Plans.PlanCatalog.For(Condux.Core.Plans.Tier.Business).UploadBytes}, now() - interval '1 day')");
+
+        var resp = await Bearer(app, token)
+            .PostAsync("/api/sourcemaps?release=1.4.2&filename=app.js&debugId=new", MapContent());
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+        Assert.Equal(0L, await ScalarAsync($"SELECT count(*) FROM sourcemap_artifacts WHERE object_key = '{old}'"));
+        Assert.Equal(1L, await ScalarAsync($"SELECT count(*) FROM object_deletions WHERE object_key = '{old}'"));
+        Assert.Equal(1L, await ScalarAsync(
+            $"SELECT count(*) FROM sourcemap_artifacts WHERE object_key = 'sourcemaps/{projectId}/by-debug-id/new'"));
+    }
+
+    [Fact]
+    public async Task An_upload_whose_store_write_fails_still_leaves_a_row_the_quota_counts()
+    {
+        // The row is written before the object, so storage never holds an object no row names: one the
+        // quota could not count and nothing would ever expire.
+        var app = AppWithStore(pg.ConnectionString, new UnreachableMapStore());
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
+        var token = await MintTokenAsync(admin, projectId);
+
+        try
+        {
+            await Bearer(app, token).PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js&debugId=lost", MapContent());
+        }
+        catch (HttpRequestException)
+        {
+            // The test host surfaces the store's exception; what matters is what was recorded first.
+        }
+
+        Assert.Equal(1L, await ScalarAsync(
+            $"SELECT count(*) FROM sourcemap_artifacts WHERE object_key = 'sourcemaps/{projectId}/by-debug-id/lost'"));
+    }
+
+    private async Task ExecuteAsync(string sql)
+    {
+        await using var conn = new Npgsql.NpgsqlConnection(pg.ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task<long> ScalarAsync(string sql)
+    {
+        await using var conn = new Npgsql.NpgsqlConnection(pg.ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
+        return (long)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    [Fact]
     public async Task Upload_WithBadToken_Returns401()
     {
-        var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
+        var app = AppWithStore(pg.ConnectionString, new RecordingObjectStore());
         var ci = Bearer(app, "condux_rel_nope");
         var resp = await ci.PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js", MapContent());
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
@@ -119,8 +136,8 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WithNonSourceMapBody_Returns400()
     {
-        var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
-        var (admin, projectId) = await ProvisionAsync(app);
+        var app = AppWithStore(pg.ConnectionString, new RecordingObjectStore());
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
         var token = await MintTokenAsync(admin, projectId);
 
         var ci = Bearer(app, token);
@@ -133,28 +150,13 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
     [Fact]
     public async Task Upload_WithOverlongField_Returns400()
     {
-        var app = AppWithStore(pg.ConnectionString, new FakeObjectStore());
-        var (admin, projectId) = await ProvisionAsync(app);
+        var app = AppWithStore(pg.ConnectionString, new RecordingObjectStore());
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
         var token = await MintTokenAsync(admin, projectId);
 
         var ci = Bearer(app, token);
         var resp = await ci.PostAsync(
             $"/api/sourcemaps?release={new string('x', 300)}&filename=app.js", MapContent());
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-    }
-
-    private sealed class FakeObjectStore : IObjectStore
-    {
-        public Dictionary<string, byte[]> Objects { get; } = new();
-
-        public Task PutAsync(
-            string key, byte[] content, string contentType, CancellationToken cancellationToken = default)
-        {
-            Objects[key] = content;
-            return Task.CompletedTask;
-        }
-
-        public Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default) =>
-            Task.FromResult(Objects.TryGetValue(key, out var value) ? value : null);
     }
 }

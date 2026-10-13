@@ -47,7 +47,7 @@ public sealed class RunnerLeaseTest(PostgresFixture pg) : IClassFixture<Postgres
         // The failure this exists for: the hosted orchestrator creates its run, flips it to Running and
         // never takes a lease, so for the whole length of a fix the row looks free. A runner polling the
         // same org would take work already under way and open a second draft pull request for one issue.
-        var (orgId, _, issueId) = await SeedIssueAsync();
+        var (orgId, projectId, issueId) = await SeedIssueAsync();
         var hosted = new FixSuggestion(
             Guid.CreateVersion7(), issueId, "acme/api", FixStatus.Running,
             "anthropic", ModelDefaults.Fix, "", "", "", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
@@ -56,9 +56,12 @@ public sealed class RunnerLeaseTest(PostgresFixture pg) : IClassFixture<Postgres
         Assert.Null(await Leases().TryClaimAsync(orgId, Now));
 
         // And the exclusion is about who the work is for, not about the org: a runner job in the same org
-        // is still handed over.
-        await Leases().EnqueueAsync(
-            Guid.CreateVersion7(), issueId, "acme/api", Context, DateTimeOffset.UtcNow);
+        // is still handed over. It is for another issue, since an issue holds one run in progress at a time.
+        var other = await new IssueRepository(pg.ConnectionString).UpsertAsync(
+            projectId, new Grouping($"fp-{Guid.NewGuid():N}", "ValueError: other", "run"),
+            Level.Error, DateTimeOffset.UtcNow);
+        Assert.True(await Leases().EnqueueAsync(
+            Guid.CreateVersion7(), other.Id, "acme/api", Context, DateTimeOffset.UtcNow));
         Assert.NotNull(await Leases().TryClaimAsync(orgId, Now));
     }
 

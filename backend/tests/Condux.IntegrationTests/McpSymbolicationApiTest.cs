@@ -33,10 +33,10 @@ public sealed class McpSymbolicationApiTest(PostgresFixture pg, ClickHouseFixtur
     public async Task EventTools_deminify_the_stored_frame()
     {
         const string objectKey = "sourcemaps/by-debug-id/abc123";
-        var store = new MapStore(objectKey, Encoding.UTF8.GetBytes(Map));
+        var store = new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), objectKey);
         var app = ControlPlaneApp.Create(pg.ConnectionString, ch, configure: b =>
         {
-            b.UseSetting("CONDUX_S3_ENDPOINT", "http://minio.invalid:9000");
+            b.UseSetting("CONDUX_S3_ENDPOINT", "http://s3.invalid:9000");
             b.UseSetting("CONDUX_S3_BUCKET", "test");
             b.UseSetting("CONDUX_S3_ACCESS_KEY", "test");
             b.UseSetting("CONDUX_S3_SECRET_KEY", "test");
@@ -139,13 +139,4 @@ public sealed class McpSymbolicationApiTest(PostgresFixture pg, ClickHouseFixtur
     private static JsonElement FrameOf(string payload) =>
         JsonDocument.Parse(payload).RootElement
             .GetProperty("Exceptions")[0].GetProperty("Stacktrace").GetProperty("Frames")[0];
-
-    private sealed class MapStore(string key, byte[] bytes) : IObjectStore
-    {
-        public Task PutAsync(string k, byte[] content, string contentType, CancellationToken ct = default) =>
-            Task.CompletedTask;
-
-        public Task<byte[]?> GetAsync(string k, CancellationToken ct = default) =>
-            Task.FromResult<byte[]?>(k == key ? bytes : null);
-    }
 }

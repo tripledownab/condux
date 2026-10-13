@@ -30,8 +30,9 @@ public sealed class OsvCveScannerTest
         }
         """;
 
-    /// <summary>A forge holding one vulnerable lockfile and nothing else.</summary>
-    private sealed class FakeForge(IReadOnlyDictionary<string, string> files) : ISourceHostClient
+    /// <summary>A forge holding the given files. A null entry is one the forge has but will not return
+    /// as text, as GitHub answers for a file over 1 MB.</summary>
+    private sealed class FakeForge(IReadOnlyDictionary<string, string?> files) : ISourceHostClient
     {
         public Task<IReadOnlyList<string>> ListTreeAsync(
             string token, string repoFullName, string gitRef, CancellationToken ct = default) =>
@@ -72,6 +73,10 @@ public sealed class OsvCveScannerTest
             string token, string repoFullName, string head, string baseBranch, string title,
             string body, CancellationToken ct = default) =>
             throw new NotSupportedException();
+
+        public Task<FoundPullRequest?> FindPullRequestAsync(
+            string token, string repoFullName, string headBranch, CancellationToken ct = default) =>
+            throw new NotSupportedException();
     }
 
     private static SandboxOptions Options() => new(
@@ -97,9 +102,12 @@ public sealed class OsvCveScannerTest
         }
 
         var scanner = new OsvCveScanner(
-            new FakeForge(new Dictionary<string, string> { ["package-lock.json"] = PackageLock }), Options());
+            new FakeForge(new Dictionary<string, string?> { ["package-lock.json"] = PackageLock }), Options());
 
-        var findings = await scanner.ScanAsync("token", "acme/api");
+        var scan = await scanner.ScanAsync("token", "acme/api");
+        var findings = scan.Findings;
+
+        Assert.False(scan.Truncated);
 
         Assert.NotEmpty(findings);
         Assert.All(findings, f => Assert.Equal("lodash", f.Package));
@@ -110,14 +118,57 @@ public sealed class OsvCveScannerTest
         Assert.Contains(findings, f => f.Severity != CveSeverity.Unknown);
     }
 
+    /// <summary>
+    /// One lockfile scanned and one the forge would not return: the findings from the first are real, but
+    /// the answer is incomplete, so it says so rather than reading as the whole repository's. Reaches
+    /// osv.dev, so gated like the test above.
+    /// </summary>
+    [Fact]
+    public async Task A_scan_missing_one_lockfile_reports_what_it_found_and_that_it_is_incomplete()
+    {
+        if (Environment.GetEnvironmentVariable("CONDUX_TEST_OSV_LIVE") is not "1")
+        {
+            return;
+        }
+
+        var scanner = new OsvCveScanner(
+            new FakeForge(new Dictionary<string, string?>
+            {
+                ["package-lock.json"] = PackageLock,
+                ["services/api/package-lock.json"] = null,
+            }),
+            Options());
+
+        var scan = await scanner.ScanAsync("token", "acme/api");
+
+        Assert.NotEmpty(scan.Findings);
+        Assert.True(scan.Truncated);
+    }
+
     [Fact]
     public async Task A_repository_with_no_lockfile_scans_clean_without_starting_a_container()
     {
         var scanner = new OsvCveScanner(
-            new FakeForge(new Dictionary<string, string> { ["README.md"] = "# hi" }), Options());
+            new FakeForge(new Dictionary<string, string?> { ["README.md"] = "# hi" }), Options());
 
         // Plenty of repositories have no dependencies to scan; that is a clean result, not a failure, and
         // it should not cost a container start to discover.
-        Assert.Empty(await scanner.ScanAsync("token", "acme/api"));
+        var scan = await scanner.ScanAsync("token", "acme/api");
+        Assert.Empty(scan.Findings);
+        Assert.False(scan.Truncated);
+    }
+
+    // A lockfile the forge would not return was never scanned, so "no findings" would be a false clean
+    // answer for it. The scan says it is incomplete instead, and still starts no container to say so.
+    [Fact]
+    public async Task A_lockfile_the_forge_will_not_return_makes_the_scan_incomplete_rather_than_clean()
+    {
+        var scanner = new OsvCveScanner(
+            new FakeForge(new Dictionary<string, string?> { ["package-lock.json"] = null }), Options());
+
+        var scan = await scanner.ScanAsync("token", "acme/api");
+
+        Assert.Empty(scan.Findings);
+        Assert.True(scan.Truncated);
     }
 }

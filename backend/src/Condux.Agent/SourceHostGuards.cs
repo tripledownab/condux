@@ -12,7 +12,8 @@ internal static class SourceHostGuards
     {
         if (spec.InstallationId == 0 && tokens.RequiresInstallation)
         {
-            throw new InvalidOperationException(
+            throw new FixFailedException(
+                FixFailureReason.SourceHostAccess,
                 "The org has no GitHub App installation. Connect GitHub in settings before requesting a fix.");
         }
     }

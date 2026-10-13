@@ -57,7 +57,11 @@ public sealed record FixDetail(
     long InputTokens,
     long OutputTokens,
     decimal? CostUsd,
-    IReadOnlyList<FixAuditEntry> Audit);
+    IReadOnlyList<FixAuditEntry> Audit)
+{
+    /// <summary>Why the run failed, as the closed set the dashboard explains. Null unless it failed.</summary>
+    public FixFailureReason? FailureReason { get; init; }
+}
 
 /// <summary>Conductor spend for one model over a window (#120): the run count, token totals and the
 /// derived USD cost (null when the model has no published rate, e.g. a bring-your-own model).</summary>
@@ -96,7 +100,7 @@ public sealed class PostgresFixCatalog(string connectionString)
                f.repo_full_name, f.provider, f.model, f.branch, f.pr_url, f.summary,
                f.created_at, f.updated_at, f.merged_at, f.verified_at,
                (f.archived_at IS NOT NULL) AS archived, (v.user_id IS NOT NULL) AS viewed,
-               f.input_tokens, f.output_tokens
+               f.input_tokens, f.output_tokens, f.failure_reason
         FROM fix_suggestions f
         JOIN issues i ON i.id = f.issue_id
         LEFT JOIN fix_views v ON v.fix_id = f.id AND v.user_id = @user
@@ -198,7 +202,10 @@ public sealed class PostgresFixCatalog(string connectionString)
                 reader.IsDBNull(14) ? null : reader.GetFieldValue<DateTimeOffset>(14),
                 reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15),
                 reader.GetBoolean(16), reader.GetBoolean(17),
-                inputTokens, outputTokens, ModelPricing.EstimateUsd(model, inputTokens, outputTokens), []);
+                inputTokens, outputTokens, ModelPricing.EstimateUsd(model, inputTokens, outputTokens), [])
+            {
+                FailureReason = FixFailureColumn.Read(reader, 20),
+            };
         }
 
         await using var auditCmd = new NpgsqlCommand(AuditSql, conn);

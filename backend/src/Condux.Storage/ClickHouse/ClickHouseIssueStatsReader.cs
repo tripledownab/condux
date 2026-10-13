@@ -19,17 +19,17 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         SELECT toUnixTimestamp(bucket) AS ts, sum(count) AS c
         FROM condux.issue_stats_1h
         WHERE project_id = {pid:String} AND issue_id = {iid:UInt64}
-          AND bucket >= toStartOfHour(now() - INTERVAL {hours:UInt32} HOUR)
+          AND bucket >= toStartOfHour(now('UTC') - INTERVAL {hours:UInt32} HOUR)
         GROUP BY bucket ORDER BY bucket
         FORMAT JSON
         """;
 
     private const string DailySql = """
-        SELECT toUnixTimestamp(toStartOfDay(bucket)) AS ts, sum(count) AS c
+        SELECT toUnixTimestamp(toStartOfDay(bucket, 'UTC')) AS ts, sum(count) AS c
         FROM condux.issue_stats_1h
         WHERE project_id = {pid:String} AND issue_id = {iid:UInt64}
-          AND bucket >= toStartOfDay(now() - INTERVAL {hours:UInt32} HOUR)
-        GROUP BY toStartOfDay(bucket) ORDER BY ts
+          AND bucket >= toStartOfDay(now('UTC') - INTERVAL {hours:UInt32} HOUR)
+        GROUP BY toStartOfDay(bucket, 'UTC') ORDER BY ts
         FORMAT JSON
         """;
 
@@ -37,7 +37,7 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         SELECT issue_id, toUnixTimestamp(bucket) AS ts, sum(count) AS c
         FROM condux.issue_stats_1h
         WHERE project_id = {pid:String}
-          AND bucket >= toStartOfHour(now() - INTERVAL {hours:UInt32} HOUR)
+          AND bucket >= toStartOfHour(now('UTC') - INTERVAL {hours:UInt32} HOUR)
         GROUP BY issue_id, bucket ORDER BY issue_id, bucket
         FORMAT JSON
         """;
@@ -49,7 +49,7 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         SELECT sum(count) AS c
         FROM condux.issue_stats_1h
         WHERE project_id = {pid:String} AND issue_id = {iid:UInt64}
-          AND bucket >= toStartOfHour(toDateTime({since:Int64})) + INTERVAL 1 HOUR
+          AND bucket >= toStartOfHour(toDateTime({since:Int64}, 'UTC')) + INTERVAL 1 HOUR
         FORMAT JSON
         """;
 
@@ -105,11 +105,11 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
     // per issue (not per issue-hour), which scales; the caller sums for the project totals and ranks the top.
     private const string WeeklyVolumeSql = """
         SELECT issue_id,
-               sumIf(count, bucket >= toDateTime({cutoff:Int64})) AS this_week,
-               sumIf(count, bucket < toDateTime({cutoff:Int64})) AS prev_week
+               sumIf(count, bucket >= toDateTime({cutoff:Int64}, 'UTC')) AS this_week,
+               sumIf(count, bucket < toDateTime({cutoff:Int64}, 'UTC')) AS prev_week
         FROM condux.issue_stats_1h
         WHERE project_id = {pid:String}
-          AND bucket >= toDateTime({start:Int64}) AND bucket < toDateTime({end:Int64})
+          AND bucket >= toDateTime({start:Int64}, 'UTC') AND bucket < toDateTime({end:Int64}, 'UTC')
         GROUP BY issue_id
         FORMAT JSON
         """;

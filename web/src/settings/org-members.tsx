@@ -15,7 +15,7 @@ import { ConfirmDialog } from "@/src/components/confirm-dialog";
 import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { OrgInvites } from "./org-invites";
 
 // The role a member can be set to (owner outranks admin outranks member).
@@ -39,7 +39,7 @@ export function OrgMembers() {
   }
 
   const { org, role } = current;
-  const canInvite = role === "owner" || role === "admin";
+  const canInvite = canManageOrg(role);
   const canManage = role === "owner";
 
   return (

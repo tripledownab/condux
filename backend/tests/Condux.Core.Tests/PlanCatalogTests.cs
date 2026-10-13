@@ -80,4 +80,20 @@ public class PlanCatalogTests
         // Enterprise is BYO, so the budget is the org's own money and its own business.
         Assert.Null(PlanCatalog.For(Tier.Enterprise).FixComputeCapUsd);
     }
+
+    [Theory]
+    [InlineData(Tier.Free)]
+    [InlineData(Tier.Team)]
+    [InlineData(Tier.Business)]
+    public void EachCeilingCoversTheAdvertisedRunsAtTheSizingRate(Tier tier)
+    {
+        // The ceiling must not bind before the run count at the rate the catalog is sized for, or a
+        // customer is refused runs the plan advertises. Lowering a ceiling or raising an allowance
+        // without the other fails here.
+        const decimal sizingRateUsd = 0.75m;
+        var limits = PlanCatalog.For(tier);
+
+        Assert.True(limits.FixComputeCapUsd >= limits.AiFixesPerMonth * sizingRateUsd,
+            $"{tier}: ${limits.FixComputeCapUsd} does not cover {limits.AiFixesPerMonth} runs at ${sizingRateUsd}");
+    }
 }

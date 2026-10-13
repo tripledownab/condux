@@ -47,12 +47,12 @@ public sealed partial class PostgresJobLeaseStore
         UPDATE cve_fix_runs SET
             status = @status, branch = @branch, pr_url = @pr, summary = @summary,
             model = COALESCE(NULLIF(@model, ''), model),
-            input_tokens = @inputTokens, output_tokens = @outputTokens,
+            input_tokens = @inputTokens, output_tokens = @outputTokens, failure_reason = @reason,
             lease_expires_at = NULL, updated_at = now()
-        FROM repo_links r
+        FROM repo_links r JOIN projects p ON p.id = r.project_id
         WHERE cve_fix_runs.id = @fix AND r.id = cve_fix_runs.repo_link_id
           AND cve_fix_runs.leased_by = @runner AND cve_fix_runs.lease_expires_at > @now
-        RETURNING r.project_id;
+        RETURNING r.project_id, p.org_id, COALESCE(cve_fix_runs.reserved_at, cve_fix_runs.created_at);
         """;
 
     // Like EnqueueSql, the whole row is written here beside the claim that reads it. The lifecycle
@@ -61,17 +61,20 @@ public sealed partial class PostgresJobLeaseStore
     private const string EnqueueCveSql = """
         INSERT INTO cve_fix_runs
             (id, repo_link_id, ghsa_id, cve_id, package, ecosystem, from_range, to_version, advisory_url,
-             status, provider, model, branch, pr_url, summary, actor, created_at, updated_at, job_context)
+             status, provider, model, branch, pr_url, summary, actor, created_at, updated_at, reserved_at,
+             job_context, vulnerable_ranges)
         VALUES (@id, @repo, @ghsa, @cve, @package, @ecosystem, @from, @to, @advisory,
-                1, @provider, '', '', '', '', @actor, @now, @now, @context::jsonb);
+                1, @provider, '', '', '', '', @actor, @now, @now, @reserved, @context::jsonb, @ranges)
+        ON CONFLICT DO NOTHING;
         """;
 
     /// <summary>
     /// Queue a CVE bump for a customer-hosted runner. Only the identity, advisory and actor fields of
     /// <paramref name="run"/> are written; its lifecycle fields are ignored in favour of the pending
-    /// runner-provider state every enqueued job starts in.
+    /// runner-provider state every enqueued job starts in. False when nothing was queued because the
+    /// advisory already has a run in progress on this repository.
     /// </summary>
-    public async Task EnqueueCveAsync(
+    public async Task<bool> EnqueueCveAsync(
         CveFixRun run, RunnerJobContext context, CancellationToken cancellationToken = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);
@@ -89,8 +92,10 @@ public sealed partial class PostgresJobLeaseStore
         cmd.Parameters.AddWithValue("provider", RunnerProvider);
         cmd.Parameters.AddWithValue("actor", run.Actor);
         cmd.Parameters.AddWithValue("now", run.CreatedAt);
+        cmd.Parameters.AddWithValue("reserved", run.ReservedAt ?? run.CreatedAt);
         cmd.Parameters.AddWithValue("context", JsonSerializer.Serialize(context, ContextJson));
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        cmd.Parameters.AddWithValue("ranges", PostgresCveFixStore.ToRangesParameter(run.VulnerableRanges));
+        return await cmd.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
     private async Task<LeasedJob?> TryClaimCveAsync(

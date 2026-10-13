@@ -72,14 +72,41 @@ public static partial class SentryParser
     private static long ToStorableMs(double ms) =>
         ms >= MinTimestampMs && ms <= MaxTimestampMs ? (long)ms : 0;
 
-    private static Level ParseLevel(string? s) => s?.ToLowerInvariant() switch
+    // A level as Sentry's own ingest reads one: the five documented names plus its aliases "log" and
+    // "critical", or a Python logging number (10 to 50), which that ingest also reads. Null when absent or
+    // unrecognised, because the protocol gives an event and a breadcrumb different defaults.
+    private static Level? ParseLevel(JsonElement el)
+    {
+        if (!el.TryGetProperty("level", out var v))
+        {
+            return null;
+        }
+        return v.ValueKind switch
+        {
+            JsonValueKind.String => ToLevel(v.GetString()),
+            JsonValueKind.Number when v.TryGetInt64(out var n) => ToLevel(n),
+            _ => null,
+        };
+    }
+
+    private static Level? ToLevel(string? name) => name?.ToLowerInvariant() switch
     {
         "debug" => Level.Debug,
-        "info" => Level.Info,
+        "info" or "log" => Level.Info,
         "warning" => Level.Warning,
         "error" => Level.Error,
-        "fatal" => Level.Fatal,
-        _ => Level.Unspecified,
+        "fatal" or "critical" => Level.Fatal,
+        _ => null,
+    };
+
+    private static Level? ToLevel(long pythonLevel) => pythonLevel switch
+    {
+        10 => Level.Debug,
+        20 => Level.Info,
+        30 => Level.Warning,
+        40 => Level.Error,
+        50 => Level.Fatal,
+        _ => null,
     };
 
 

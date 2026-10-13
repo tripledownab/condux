@@ -14,6 +14,7 @@ export const ROUTES = {
   // The plan + allowance live on the General tab, so anything pointing a user at their plan (an
   // exhausted fix allowance, an upgrade prompt) links here rather than to the bare /settings redirect.
   settingsGeneral: "/settings/general",
+  settingsProvider: "/settings/provider",
   onboarding: "/onboarding",
   admin: "/admin",
 } as const;

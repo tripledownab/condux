@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Condux.Core.Http;
+using Condux.Core.FixEngine;
 
 namespace Condux.Agent;
 
@@ -50,16 +51,15 @@ public sealed class OpenAiCompatClient(HttpClient http) : IModelClient
         if (!resp.IsSuccessStatusCode)
         {
             var detail = await resp.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException(
-                $"OpenAI-compatible API returned {(int)resp.StatusCode}: {ModelApiError.Describe(detail)}");
+            throw ModelApiError.ToFailure("OpenAI-compatible API", resp.StatusCode, detail);
         }
 
         var parsed = await resp.Content.ReadFromJsonAsync<Response>(ct)
-            ?? throw new InvalidOperationException("OpenAI-compatible API returned an empty response.");
+            ?? throw new FixFailedException(FixFailureReason.NoUsableFix, "OpenAI-compatible API returned an empty response.");
         var text = parsed.Choices.FirstOrDefault()?.Message?.Content ?? "";
         return text.Length > 0
             ? new ModelOutput(text, parsed.Usage?.PromptTokens ?? 0, parsed.Usage?.CompletionTokens ?? 0)
-            : throw new InvalidOperationException("OpenAI-compatible API returned no text output.");
+            : throw new FixFailedException(FixFailureReason.NoUsableFix, "OpenAI-compatible API returned no text output.");
     }
 
 

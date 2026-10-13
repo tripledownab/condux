@@ -21,7 +21,7 @@ public sealed class PostgresProjectStore(string connectionString) : IProjectStor
     // derived on this path, and a per-project salt that cost a round trip per event would not be
     // affordable there. It is read and used inside the relay and is never part of any response.
     private const string Sql = """
-        SELECT p.id, o.tier, p.user_key_salt
+        SELECT p.id, o.tier, p.user_key_salt, o.id
         FROM dsn_keys k
         JOIN projects p ON p.id = k.project_id
         JOIN orgs o     ON o.id = p.org_id
@@ -51,6 +51,7 @@ public sealed class PostgresProjectStore(string connectionString) : IProjectStor
 
         var id = reader.GetInt64(0).ToString(CultureInfo.InvariantCulture);
         var tier = (Tier)reader.GetInt16(1);
-        return new Project(id, tier, reader.GetString(2));
+        var orgId = reader.GetInt64(3).ToString(CultureInfo.InvariantCulture);
+        return new Project(id, tier, reader.GetString(2), orgId);
     }
 }

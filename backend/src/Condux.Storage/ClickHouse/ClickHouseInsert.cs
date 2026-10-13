@@ -10,6 +10,11 @@ namespace Condux.Storage.ClickHouse;
 ///
 /// The <see cref="HttpClient"/> is pre-configured with the base URL, auth headers and resilience by
 /// <see cref="ClickHouseRegistration"/>, so nothing here knows where ClickHouse is.
+///
+/// A row carries every time as a unix number (seconds for a DateTime column, milliseconds for a
+/// DateTime64(3) one), never as text. The columns declare no zone, so ClickHouse reads a timezone-less
+/// time string in the server's own timezone and would shift it on any server not set to UTC; a number
+/// has no zone to misread. ClickHouseTimezoneTest holds each writer to that against a server at UTC+05:30.
 /// </summary>
 internal static class ClickHouseInsert
 {

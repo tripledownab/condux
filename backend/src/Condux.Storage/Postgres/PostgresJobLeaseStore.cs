@@ -53,7 +53,9 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
             WHERE p.org_id = @org
               AND f.job_context IS NOT NULL
               AND f.status IN (1, 2)
-              AND (f.lease_expires_at IS NULL OR f.lease_expires_at <= @now)
+              AND
+        """ + LeaseIsFree + """
+
             ORDER BY f.created_at
             FOR UPDATE OF f SKIP LOCKED
             LIMIT 1
@@ -88,32 +90,14 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
         RETURNING id;
         """;
 
-    // Same guard on the way out. A late report from a superseded runner would otherwise overwrite the
-    // outcome the runner that actually finished the work wrote.
-    //
-    // The model is only known once a runner has run the job, since it resolves its own, so it is written
-    // here rather than at enqueue. COALESCE keeps whatever is there when a runner reports none. Returns
-    // the project id (via the issue, which the FK guarantees) so the caller can nudge that project's
-    // live badges without a second query.
-    private const string ReportSql = """
-        UPDATE fix_suggestions SET
-            status = @status, branch = @branch, pr_url = @pr, summary = @summary,
-            model = COALESCE(NULLIF(@model, ''), model),
-            input_tokens = @inputTokens, output_tokens = @outputTokens,
-            lease_expires_at = NULL, updated_at = now()
-        FROM issues i
-        WHERE fix_suggestions.id = @fix AND i.id = fix_suggestions.issue_id
-          AND fix_suggestions.leased_by = @runner AND fix_suggestions.lease_expires_at > @now
-        RETURNING i.project_id;
-        """;
-
     // Creating the row and claiming it are the same contract seen from two sides, so they live together:
     // job_context is what a claim looks for, and this is the only thing that sets it.
     private const string EnqueueSql = """
         INSERT INTO fix_suggestions
             (id, issue_id, repo_full_name, status, provider, model, branch, pr_url, summary,
-             created_at, updated_at, job_context)
-        VALUES (@id, @issue, @repo, 1, @provider, '', '', '', '', @now, @now, @context::jsonb);
+             created_at, updated_at, reserved_at, job_context)
+        VALUES (@id, @issue, @repo, 1, @provider, '', '', '', '', @now, @now, @now, @context::jsonb)
+        ON CONFLICT DO NOTHING;
         """;
 
     /// <summary>The provider name a runner-executed fix carries. The model is the customer's and unknown
@@ -125,9 +109,9 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
     /// Queue a fix for a customer-hosted runner to take. This is where RequestFix and the auto-fix
     /// dispatcher send a run when the org's execution setting says its own runner does the work
     /// (ADR-0033 slice 4c) — the same request path either way, ending in a row here instead of a Kafka
-    /// message.
+    /// message. False when nothing was queued because the issue already has a run in progress.
     /// </summary>
-    public async Task EnqueueAsync(
+    public async Task<bool> EnqueueAsync(
         Guid fixId, long issueId, string repoFullName, RunnerJobContext context, DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
@@ -140,7 +124,7 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
         cmd.Parameters.AddWithValue("provider", RunnerProvider);
         cmd.Parameters.AddWithValue("now", now);
         cmd.Parameters.AddWithValue("context", JsonSerializer.Serialize(context, ContextJson));
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        return await cmd.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
     /// <summary>
@@ -225,46 +209,5 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
         cmd.Parameters.AddWithValue("now", now);
         cmd.Parameters.AddWithValue("expires", JobLease.ExpiresAt(now));
         return await cmd.ExecuteScalarAsync(cancellationToken) is not null;
-    }
-
-    /// <summary>Record the outcome, proved by the lease id. Returns the run's project id and kind (for
-    /// the caller's live-badge nudge and kind-specific audit), or null when the lease was lost and the
-    /// report is refused. Tried against both run tables, same guard as the heartbeat.</summary>
-    public async Task<ReportedJob?> TryReportAsync(
-        Guid fixId, string leaseId, FixStatus status, string branch, string prUrl, string summary,
-        string model, long inputTokens, long outputTokens, DateTimeOffset now,
-        CancellationToken cancellationToken = default)
-    {
-        if (await ConcludeAsync(ReportSql, fixId, leaseId, status, branch, prUrl, summary,
-                model, inputTokens, outputTokens, now, cancellationToken) is { } fixProject)
-        {
-            return new ReportedJob(fixProject, JobKind.IssueFix);
-        }
-
-        return await ConcludeAsync(CveReportSql, fixId, leaseId, status, branch, prUrl, summary,
-                model, inputTokens, outputTokens, now, cancellationToken) is { } cveProject
-            ? new ReportedJob(cveProject, JobKind.CveFix)
-            : null;
-    }
-
-    private async Task<long?> ConcludeAsync(
-        string sql, Guid fixId, string leaseId, FixStatus status, string branch, string prUrl,
-        string summary, string model, long inputTokens, long outputTokens, DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("fix", fixId);
-        cmd.Parameters.AddWithValue("runner", leaseId);
-        cmd.Parameters.AddWithValue("status", (short)status);
-        cmd.Parameters.AddWithValue("branch", branch);
-        cmd.Parameters.AddWithValue("model", model);
-        cmd.Parameters.AddWithValue("pr", prUrl);
-        cmd.Parameters.AddWithValue("summary", summary);
-        cmd.Parameters.AddWithValue("inputTokens", inputTokens);
-        cmd.Parameters.AddWithValue("outputTokens", outputTokens);
-        cmd.Parameters.AddWithValue("now", now);
-        return await cmd.ExecuteScalarAsync(cancellationToken) is long projectId ? projectId : null;
     }
 }

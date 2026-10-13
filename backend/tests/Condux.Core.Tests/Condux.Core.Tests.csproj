@@ -14,4 +14,9 @@
     <!-- Golden contract fixtures (real Sentry SDK wire shapes), read at test time. -->
     <None Include="Golden/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- One ELF builder for the parser's unit tests and the upload endpoint's integration tests. -->
+  <ItemGroup>
+    <Compile Include="../Shared/ElfFiles.cs" Link="Shared/ElfFiles.cs" />
+  </ItemGroup>
+
 </Project>

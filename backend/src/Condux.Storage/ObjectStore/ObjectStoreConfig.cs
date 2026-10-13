@@ -6,11 +6,11 @@ namespace Condux.Storage.ObjectStore;
 /// Object-storage configuration from env (<c>CONDUX_S3_*</c>), for the source-map artifact store
 /// (ADR-0028). Opt-in: <see cref="Enabled"/> only when the bucket and credentials are set. A partial
 /// config fails fast (a likely typo), matching the Stripe/GitHub configs. When unset the
-/// <c>/api/sourcemaps</c> routes 404. <see cref="Endpoint"/> is set for a custom endpoint (dev MinIO,
-/// path-style); left unset for real AWS S3, where <see cref="Region"/> selects the endpoint.
-/// <see cref="ServerSideEncryption"/> (<c>CONDUX_S3_SSE</c>, e.g. "AES256") requests at-rest encryption
-/// per object; leave it unset to rely on the bucket's default encryption (AWS S3 encrypts by default, and
-/// dev MinIO has no KMS, so the default stays off there).
+/// <c>/api/sourcemaps</c> routes 404. <see cref="Endpoint"/> is set for a custom endpoint (the dev object
+/// store, or any S3-compatible server; path-style); left unset for real AWS S3, where <see cref="Region"/>
+/// selects the endpoint. <see cref="ServerSideEncryption"/> (<c>CONDUX_S3_SSE</c>, e.g. "AES256") requests
+/// at-rest encryption per object; leave it unset to rely on the bucket's default encryption (AWS S3 encrypts
+/// by default, and the dev object store is not configured for it, so the default stays off there).
 /// </summary>
 public sealed record ObjectStoreConfig(
     string? Endpoint, string? Bucket, string? AccessKey, string? SecretKey, string? Region,

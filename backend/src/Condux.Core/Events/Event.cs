@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Condux.Core.Events;
 
 /// <summary>Severity of an event, named for the level values the SDKs send.</summary>
@@ -25,6 +27,11 @@ public sealed record Frame
     public int Lineno { get; init; }
     public int Colno { get; init; }
     public bool InApp { get; init; }
+
+    /// <summary>Set by native symbolication on a frame the compiler inlined into the frame before it, which
+    /// shares its address. Never read from the wire, and left out of the stored JSON when false.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Inlined { get; init; }
     public string? ContextLine { get; init; }
 
     /// <summary>Source lines around <see cref="ContextLine"/> (Sentry pre_context/post_context),
@@ -109,12 +116,20 @@ public sealed record Breadcrumb
 /// <summary>A debug image (Sentry <c>debug_meta.images[]</c>): links a debug id to the built file it
 /// identifies, so a stack frame can be matched to its uploaded source map for symbolication (ADR-0028).
 /// For a JS source map the <see cref="Type"/> is "sourcemap" and <see cref="CodeFile"/> is the built
-/// file's URL.</summary>
+/// file's URL. A native image (elf, macho, pe) also says where it was loaded, which is how a frame that
+/// carries only an instruction address finds its offset.</summary>
 public sealed record DebugImage
 {
     public string? Type { get; init; }
     public string? CodeFile { get; init; }
     public string? DebugId { get; init; }
+
+    /// <summary>Where a native image was loaded, as the "0x" hex string the SDK sent. Kept unscrubbed,
+    /// like a frame's own addresses.</summary>
+    public string? ImageAddr { get; init; }
+
+    /// <summary>The image's size in memory, in bytes, when the SDK sent one.</summary>
+    public long? ImageSize { get; init; }
 }
 
 /// <summary>The normalized error event the relay produces and the consumer stores.</summary>

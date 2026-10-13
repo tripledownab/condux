@@ -16,12 +16,12 @@ public sealed class DependabotCveScanner(GitHubRepoClient repo) : ICveScanner
 
     public string Name => SourceName;
 
-    public async Task<IReadOnlyList<CveFinding>> ScanAsync(
+    public async Task<CveScan> ScanAsync(
         string token, string repoFullName, CancellationToken cancellationToken = default)
     {
-        var alerts = await repo.ListDependabotAlertsAsync(token, repoFullName, cancellationToken);
+        var list = await repo.ListDependabotAlertsAsync(token, repoFullName, cancellationToken);
 
-        return CveSeverities.Normalize(alerts.Select(alert => new CveFinding(
+        var findings = CveSeverities.Normalize(list.Alerts.Select(alert => new CveFinding(
             AdvisoryId: alert.GhsaId,
             CveId: alert.CveId,
             // Dependabot reports a word, not a score, and says "moderate" where CVSS says "medium".
@@ -36,5 +36,6 @@ public sealed class DependabotCveScanner(GitHubRepoClient repo) : ICveScanner
         {
             ManifestPath = alert.ManifestPath,
         }));
+        return new CveScan(findings, list.Truncated);
     }
 }

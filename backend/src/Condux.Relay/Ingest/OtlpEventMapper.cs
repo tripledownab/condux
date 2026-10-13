@@ -16,6 +16,15 @@ namespace Condux.Relay.Ingest;
 /// </remarks>
 public static class OtlpEventMapper
 {
+    // The log-record attributes that say who was affected, from the OpenTelemetry semantic conventions:
+    // enduser.* describes the end user of the system and user.* a user generally, so an end user's id is
+    // preferred, then a plain id, then the pseudonymous forms. They fill Event.User as a Sentry event's
+    // user does, which is what "users affected" counts, and they leave the tags so an identifier is not
+    // stored twice.
+    private static readonly string[] IdKeys = ["enduser.id", "user.id", "enduser.pseudo.id", "user.hash"];
+    private const string EmailKey = "user.email";
+    private const string NameKey = "user.name";
+
     public static IReadOnlyList<Event> ToEvents(ExportLogsServiceRequest request)
     {
         var events = new List<Event>();
@@ -39,9 +48,9 @@ public static class OtlpEventMapper
         var attributes = ToAttributeMap(record.Attributes);
         var body = record.Body is null ? null : ToText(record.Body);
         var exceptions = ParseException(attributes, body);
-        // Log-record attributes ride as tags, minus the exception ones already folded into the exception.
+        // Log-record attributes ride as tags, minus the exception and user ones already folded in above.
         var tags = attributes
-            .Where(kv => !kv.Key.StartsWith("exception.", StringComparison.Ordinal))
+            .Where(kv => !kv.Key.StartsWith("exception.", StringComparison.Ordinal) && !IsUserKey(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
         return new Event
@@ -50,7 +59,11 @@ public static class OtlpEventMapper
             EventId = Guid.NewGuid().ToString("N"),
             TimestampUnixMs = ToMilliseconds(record.TimeUnixNano) ?? ToMilliseconds(record.ObservedTimeUnixNano) ?? 0,
             Platform = resource.GetValueOrDefault("telemetry.sdk.language"),
-            Level = ToLevel(record),
+            // A record carrying an exception but no severity reads as an error, the default a Sentry event
+            // with no level gets, so no stored event is left at Unspecified.
+            Level = ToLevel(record) is var level && level == Level.Unspecified && exceptions.Count > 0
+                ? Level.Error
+                : level,
             Message = string.IsNullOrEmpty(body) ? null : body,
             Exceptions = exceptions,
             ServerName = resource.GetValueOrDefault("service.name"),
@@ -58,9 +71,25 @@ public static class OtlpEventMapper
             Environment = resource.GetValueOrDefault("deployment.environment")
                 ?? resource.GetValueOrDefault("deployment.environment.name"),
             Tags = tags,
+            User = ToUser(attributes),
             TraceId = ToTraceId(record.TraceId),
         };
     }
+
+    // Null when the record names nobody, so an event without these attributes keeps its previous shape.
+    private static EventUser? ToUser(IReadOnlyDictionary<string, string> attributes)
+    {
+        var id = IdKeys
+            .Select(key => attributes.GetValueOrDefault(key))
+            .FirstOrDefault(value => !string.IsNullOrEmpty(value));
+        var email = attributes.GetValueOrDefault(EmailKey) is { Length: > 0 } e ? e : null;
+        var name = attributes.GetValueOrDefault(NameKey) is { Length: > 0 } n ? n : null;
+        return id is null && email is null && name is null
+            ? null
+            : new EventUser { Id = id, Email = email, Username = name };
+    }
+
+    private static bool IsUserKey(string key) => key is EmailKey or NameKey || IdKeys.Contains(key);
 
     /// <summary>
     /// The decoder hands back the id as the bytes the protocol carries, so the hex spelling is ours to

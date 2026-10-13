@@ -59,10 +59,9 @@ internal static class AuthEndpoints
                     // A platform-admin address is reserved, because the claim that grants the
                     // cross-tenant console is stamped from this allowlist on every request and this
                     // route proves nothing about the address it hands out. Whoever registers first
-                    // would simply be the admin. The other two routes that create a user do prove
-                    // it, so the rule belongs here and nowhere else: Google will not assert an
-                    // address it has not verified, and an org's IdP only speaks for a domain the org
-                    // proved by DNS. Creating this account is an operator action, not an anonymous
+                    // would simply be the admin. Google, which will not assert an address it has not
+                    // verified, may create it; an organisation's IdP never may (SsoSignIn says why).
+                    // Otherwise creating this account is an operator action, not an anonymous
                     // request: CONDUX_SEED_ADMIN_EMAIL/PASSWORD mint it at startup.
                     if (platformAdmins.Contains(email))
                     {

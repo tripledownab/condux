@@ -1,10 +1,16 @@
-// The SDK setup catalog, kept as data so the Developer guide stays declarative. One entry per shipped
-// SDK; `code(dsn)` interpolates the project's real DSN so every snippet is copy-paste ready. `titleKey`
+// The SDK setup catalog, kept as data so the Developer guide stays declarative. One entry per platform
+// we cover, with our own SDK or a stock Sentry one; `code(dsn)` interpolates the project's real DSN so every snippet is copy-paste ready. `titleKey`
 // is translated under "developer.snippets" (install / initialize / framework, where the framework label
 // takes the adapter's name). Platform + framework display names are proper nouns, kept here with the code.
 // Extend this array to add a platform; nothing else changes.
 
-export type SnippetTitle = "install" | "initialize" | "framework" | "sourcemaps";
+export type SnippetTitle =
+  | "install"
+  | "initialize"
+  | "framework"
+  | "sourcemaps"
+  | "build"
+  | "symbols";
 
 export type Snippet = {
   titleKey: SnippetTitle;
@@ -106,8 +112,8 @@ initClient();`,
       {
         titleKey: "sourcemaps",
         language: "bash",
-        code: () => `# In CI after \`next build\`: upload client source maps so browser stack traces de-minify.
-# Mint a release token in the project's GitHub tab, then use the same release your app reports:
+        code: () => `# In CI after \`next build\`, before packaging: upload source maps so stack traces de-minify.
+# Mint a release token in the project's Releases tab, then use the same release your app reports:
 CONDUX_RELEASE_TOKEN=condux_rel_... \\
   npx condux-sourcemaps --url https://app.condux.ai --release "$(git rev-parse HEAD)"`,
       },
@@ -329,6 +335,52 @@ builder.Services.AddSingleton(new ConduxClient(new ConduxOptions { Dsn = "${dsn}
 
 var app = builder.Build();
 app.UseConduxExceptionReporting(); // register early, before UseRouting`,
+      },
+    ],
+  },
+  {
+    id: "flutter",
+    name: "Flutter (Android)",
+    snippets: [
+      { titleKey: "install", language: "bash", code: () => "flutter pub add sentry_flutter" },
+      {
+        titleKey: "initialize",
+        language: "dart",
+        code: (
+          dsn,
+        ) => `// lib/main.dart: the stock sentry_flutter SDK reports to Condux; only the DSN changes.
+import 'package:flutter/material.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
+
+Future<void> main() async {
+  await SentryFlutter.init(
+    (options) => options.dsn = '${dsn}',
+    appRunner: () => runApp(const MyApp()),
+  );
+}`,
+      },
+      {
+        titleKey: "build",
+        language: "bash",
+        code: () => `# An obfuscated release reports bare addresses. Split the debug info out so Condux can name
+# them, and upload it for every build: a symbols file matches only the build that wrote it.
+flutter build appbundle --release --obfuscate --split-debug-info=build/symbols`,
+      },
+      {
+        titleKey: "symbols",
+        language: "yaml",
+        code: () => `# GitHub Actions, after the build step. Mint a release token in the project's Releases tab and
+# store it as the CONDUX_RELEASE_TOKEN secret. One request per file; a busy server answers 429,
+# which curl's --retry waits out.
+- name: Upload debug symbols to Condux
+  env:
+    CONDUX_RELEASE_TOKEN: \${{ secrets.CONDUX_RELEASE_TOKEN }}
+  run: |
+    for file in build/symbols/*.symbols; do
+      curl --fail --silent --show-error --retry 5 \\
+        -H "Authorization: Bearer $CONDUX_RELEASE_TOKEN" \\
+        --data-binary "@$file" https://app.condux.ai/api/debug-files
+    done`,
       },
     ],
   },

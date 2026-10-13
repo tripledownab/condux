@@ -73,7 +73,6 @@ public sealed class MfaApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     public async Task Concurrent_verifications_of_one_code_admit_exactly_one()
     {
         var (client, secret) = await EnrolledUserAsync();
-        var code = Totp.Compute(secret, Totp.StepAt(DateTimeOffset.UtcNow) + 1);
 
         // Eight separate browsers, each with its own pending session, racing the same code. A
         // read-then-update replay guard passes every sequential test and then lets several through here.
@@ -82,12 +81,26 @@ public sealed class MfaApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         for (var i = 0; i < 8; i++)
         {
             var browser = NewBrowser();
-            await browser.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+            var login = await browser.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+            // A browser whose login failed holds no pending session and leaves the race smaller unnoticed.
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
             clients.Add(browser);
         }
 
+        // Computed after the logins, not before. The code is for the next step, because confirming may
+        // have consumed the current one, and the server's one-step drift window keeps it valid for 60 to
+        // 90 seconds from here. Eight host startups and password hashes on a loaded machine could use
+        // that up first.
+        var code = Totp.Compute(secret, Totp.StepAt(DateTimeOffset.UtcNow) + 1);
         var results = await Task.WhenAll(clients.Select(c => Verify(c, code)));
-        Assert.Equal(1, results.Count(r => r.StatusCode == HttpStatusCode.OK));
+
+        // Every answer goes in the message, so a failure says whether the guard let two through or the
+        // race lost its winner, which are different defects.
+        var answers = await Task.WhenAll(results.Select(async r =>
+            $"{(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}"));
+        Assert.True(
+            results.Count(r => r.StatusCode == HttpStatusCode.OK) == 1,
+            $"Expected exactly one 200. Answers: {string.Join(" | ", answers)}");
     }
 
     // Discovered while writing these: confirming consumes the step, so the code typed to switch MFA on
@@ -271,19 +284,8 @@ public sealed class MfaApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
     private static Task<HttpResponseMessage> Verify(HttpClient client, string code) =>
         client.PostAsJsonAsync("/api/auth/mfa/verify", new { code });
 
-    private static string RepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "backend")))
-        {
-            directory = directory.Parent;
-        }
-
-        return directory?.FullName ?? throw new InvalidOperationException("repo root not found");
-    }
-
     private static string ControlPlaneSource() =>
-        Path.Combine(RepoRoot(), "backend", "src", "Condux.ControlPlane");
+        Path.Combine(RepoFiles.FindRoot(), "backend", "src", "Condux.ControlPlane");
 
     private static async Task<JsonElement> Body(HttpResponseMessage response) =>
         await response.Content.ReadFromJsonAsync<JsonElement>();

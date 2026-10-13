@@ -1,13 +1,18 @@
 namespace Condux.Core.SourceControl;
 
 /// <summary>A file read from a source repo: its repo-relative path, decoded contents, and blob sha
-/// (needed to update it in place).</summary>
-public sealed record RepoFile(string Path, string Content, string Sha);
+/// (needed to update it in place). <see cref="Content"/> is null when the file exists but has no text to
+/// give: the host would not return it (GitHub, over 1 MB) or it is not UTF-8. An empty string there would
+/// read as an empty file, and a fix written over it would replace the real one.</summary>
+public sealed record RepoFile(string Path, string? Content, string Sha);
 
 /// <summary>The commit most likely to have introduced an error (#144): the last commit that touched the
 /// culprit file at or before a release commit — its sha, subject line, author (null when the commit has no
 /// associated account), and URL. A "suspect commit" hint for the fix.</summary>
 public sealed record SuspectCommit(string Sha, string Subject, string? Author, string HtmlUrl);
+
+/// <summary>A pull request found by its head branch: its URL, and when it was merged, null if it was not.</summary>
+public sealed record FoundPullRequest(string Url, DateTimeOffset? MergedAt);
 
 /// <summary>
 /// The git operations a Conductor fix run needs, over one hosted source provider — GitHub today, GitLab
@@ -61,4 +66,9 @@ public interface ISourceHostClient
     Task<string> OpenDraftPullRequestAsync(
         string token, string repoFullName, string headBranch, string baseBranch, string title, string body,
         CancellationToken ct = default);
+
+    /// <summary>A pull request opened from <paramref name="headBranch"/> in this repository, whatever its
+    /// state now, or null when there is none.</summary>
+    Task<FoundPullRequest?> FindPullRequestAsync(
+        string token, string repoFullName, string headBranch, CancellationToken ct = default);
 }

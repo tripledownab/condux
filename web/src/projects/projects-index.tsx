@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useListProjects } from "@/src/api/generated/condux";
 import type { ProjectRecord } from "@/src/api/generated/model";
 import { Notice } from "@/src/components/notice";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { usePlatformLabel } from "@/src/projects/platforms";
 import { projectDetailPath } from "@/src/routes";
 import { CreateProjectForm } from "@/src/settings/create-project-form";
@@ -26,7 +26,7 @@ export function ProjectsIndex() {
     return <Notice>{translate("noOrg")}</Notice>;
   }
 
-  const canManage = current.role === "owner" || current.role === "admin";
+  const canManage = canManageOrg(current.role);
   return (
     <div className="flex flex-col gap-8">
       <div>

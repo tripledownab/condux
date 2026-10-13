@@ -8,27 +8,30 @@ import {
   getListProjectFixesQueryKey,
   getUnviewedFixCountQueryKey,
   useArchiveFix,
+  useCancelFix,
   useGetFix,
   useMarkFixViewed,
 } from "@/src/api/generated/condux";
-import type { FixAuditEntry } from "@/src/api/generated/model";
 import { Markdown } from "@/src/components/markdown";
 import { Notice } from "@/src/components/notice";
 import { Button } from "@/src/components/ui/button";
 import { ProjectStatus, useCurrentProject } from "@/src/issues/current-project";
-import { FixStatus, fixStatusMeta, isFixInFlight, verifyStatusMeta } from "@/src/issues/fix-format";
+import { canOfferCancel, FixStatus, isFixInFlight } from "@/src/issues/fix-format";
 import { formatCompactNumber, formatUsd } from "@/src/lib/format";
 import { formatRelativeTime, formatTimestamp } from "@/src/lib/time";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { issueDetailPath } from "@/src/routes";
+import { CancelRunButton } from "./cancel-run-button";
+import { AuditTimeline } from "./fix-audit-timeline";
+import { FixFailureNotice } from "./fix-failure-notice";
+import { FixStatusLabel } from "./fix-status-label";
 
 // A single fix run: the layout-30 detail (title + hairline meta row, main column, fixed right rail),
 // populated with fix content — summary, the draft PR, provider/model + token usage, the audit
-// timeline, and a link back to the originating issue. Opening it marks it viewed (clearing it from
-// the nav badge); the run polls while it is still in flight.
+// timeline, and a link back to the originating issue. Opening it marks it viewed (clearing it from the
+// nav badge); the run polls while in flight, and an admin may cancel it while nothing holds it.
 export function FixDetail({ fixId }: { fixId: string }) {
   const translate = useTranslations("fixes.detail");
-  const translateStatus = useTranslations("issues.fix.status");
-  const translateVerify = useTranslations("issues.fix.verify");
   const queryClient = useQueryClient();
   const current = useCurrentProject();
   const ready = current.status === ProjectStatus.Ready;
@@ -42,6 +45,9 @@ export function FixDetail({ fixId }: { fixId: string }) {
         q.state.data?.data && isFixInFlight(q.state.data.data.status) ? 2000 : false,
     },
   });
+
+  const org = useCurrentOrg();
+  const canManage = org.status === OrgStatus.Ready && canManageOrg(org.role);
 
   const markViewed = useMarkFixViewed();
   // Opening the detail marks it viewed once and refreshes the badge. Idempotent server-side, so a
@@ -70,6 +76,17 @@ export function FixDetail({ fixId }: { fixId: string }) {
     },
   });
 
+  // A run nothing holds can be cancelled, which hands its allowance back; afterwards the issue accepts a
+  // new request. canOfferCancel decides whether to offer it, and the server decides whether it lands.
+  const cancel = useCancelFix({
+    mutation: {
+      onSettled: () => {
+        queryClient.invalidateQueries({ queryKey: getListProjectFixesQueryKey(projectId) });
+        query.refetch();
+      },
+    },
+  });
+
   if (current.status === ProjectStatus.Loading || query.isPending) {
     return (
       <Shell>
@@ -86,8 +103,6 @@ export function FixDetail({ fixId }: { fixId: string }) {
   }
 
   const fix = query.data.data;
-  const statusMeta = fixStatusMeta(fix.status);
-  const verifyMeta = verifyStatusMeta(fix.verifyStatus);
   const hasPr = fix.status === FixStatus.Succeeded && fix.prUrl !== "";
   const hasTokens = fix.inputTokens > 0 || fix.outputTokens > 0;
 
@@ -96,17 +111,11 @@ export function FixDetail({ fixId }: { fixId: string }) {
       <div className="min-w-0 flex-1 overflow-y-auto p-6">
         <h1 className="font-heading text-xl font-semibold text-foreground">{fix.issueTitle}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          {/* Once merged the verification state is the true status; "Draft PR ready" would be stale,
-              so the verify badge replaces the run status rather than joining it. */}
-          {verifyMeta ? (
-            <span className={`uppercase ${verifyMeta.className}`}>
-              {translateVerify(verifyMeta.key)}
-            </span>
-          ) : (
-            <span className={`uppercase ${statusMeta.className}`}>
-              {translateStatus(statusMeta.key)}
-            </span>
-          )}
+          <FixStatusLabel
+            status={fix.status}
+            verifyStatus={fix.verifyStatus}
+            className="uppercase"
+          />
           <span className="text-muted-foreground">{fix.repoFullName}</span>
           <span className="text-muted-foreground">
             {translate("requested")} {formatRelativeTime(fix.createdAt)}
@@ -119,12 +128,18 @@ export function FixDetail({ fixId }: { fixId: string }) {
             {translate("branch")}: <code className="text-foreground">{fix.branch}</code>
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              {translate("provider")}: <span className="text-foreground">{fix.provider}</span>
-            </span>
-            <span>
-              {translate("model")}: <span className="text-foreground">{fix.model}</span>
-            </span>
+            {/* Empty until known: a queued hosted run has no provider until the Conductor takes it, and a
+                runner's run has no model until the runner reports it. */}
+            {fix.provider ? (
+              <span>
+                {translate("provider")}: <span className="text-foreground">{fix.provider}</span>
+              </span>
+            ) : null}
+            {fix.model ? (
+              <span>
+                {translate("model")}: <span className="text-foreground">{fix.model}</span>
+              </span>
+            ) : null}
             {hasTokens ? (
               <span>
                 {translate("tokens")}:{" "}
@@ -158,6 +173,8 @@ export function FixDetail({ fixId }: { fixId: string }) {
           </div>
         </section>
 
+        <FixFailureNotice reason={fix.failureReason} />
+
         {fix.summary ? (
           <div className="mt-4">
             <Markdown>{fix.summary}</Markdown>
@@ -179,6 +196,13 @@ export function FixDetail({ fixId }: { fixId: string }) {
             </a>
           </Button>
         ) : null}
+        {canManage && canOfferCancel(fix.status, fix.provider) ? (
+          <CancelRunButton
+            onCancel={() => cancel.mutate({ projectId, fixId })}
+            pending={cancel.isPending}
+            error={cancel.error}
+          />
+        ) : null}
         <Button
           variant="secondary"
           onClick={() => archive.mutate({ projectId, fixId, data: { archived: !fix.archived } })}
@@ -188,34 +212,6 @@ export function FixDetail({ fixId }: { fixId: string }) {
         </Button>
       </aside>
     </div>
-  );
-}
-
-function AuditTimeline({ audit }: { audit: FixAuditEntry[] }) {
-  const translate = useTranslations("fixes.detail");
-  if (audit.length === 0) {
-    return null;
-  }
-  // The trail is append-only and ordered, so a row's position is part of its identity; the key is
-  // stamped here rather than from the map callback (an index key in JSX is a lint smell).
-  const rows = audit.map((entry, index) => ({ entry, key: `${index}-${entry.event}` }));
-  return (
-    <section className="mt-5">
-      <h2 className="text-xs font-medium uppercase text-muted-foreground">
-        {translate("timeline")}
-      </h2>
-      <ol className="mt-2 flex flex-col gap-2">
-        {rows.map(({ entry, key }) => (
-          <li key={key} className="flex items-baseline gap-2 text-xs">
-            <span className="text-foreground">{translate(`audit.${entry.event}`)}</span>
-            <span className="text-muted-foreground">{entry.actor}</span>
-            <span className="ml-auto text-muted-foreground">
-              {formatRelativeTime(entry.createdAt)}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </section>
   );
 }
 

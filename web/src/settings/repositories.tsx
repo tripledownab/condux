@@ -365,7 +365,8 @@ function CodeMappings({
           {list.map((mapping) => (
             <li key={mapping.id} className="flex items-center justify-between gap-2 text-xs">
               <code className="text-foreground">
-                {mapping.stackRoot} → {mapping.sourceRoot || translate("repoRoot")}
+                {mapping.stackRoot || translate("anyPath")} →{" "}
+                {mapping.sourceRoot || translate("repoRoot")}
               </code>
               {canManage ? (
                 <button
@@ -427,7 +428,8 @@ function CodeMappings({
                   className="flex items-center justify-between gap-2 text-xs"
                 >
                   <code className="text-muted-foreground">
-                    {suggestion.stackRoot} → {suggestion.sourceRoot || translate("repoRoot")}
+                    {suggestion.stackRoot || translate("anyPath")} →{" "}
+                    {suggestion.sourceRoot || translate("repoRoot")}
                   </code>
                   <span className="flex items-center gap-2">
                     <span className="text-muted-foreground">

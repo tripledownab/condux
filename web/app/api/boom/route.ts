@@ -1,5 +1,5 @@
 // The dogfood lever: forces a genuine server error so Condux reports on itself end to end.
-// Hit http://localhost:3000/api/boom and watch the issue land in the Issues surface (requires
+// Hit http://localhost:3200/api/boom and watch the issue land in the Issues surface (requires
 // CONDUX_DSN to be set for the dashboard server, pointing at a project you can watch).
 export function GET(): Response {
   chargeOrder({ id: "ord-dogfood-1" });

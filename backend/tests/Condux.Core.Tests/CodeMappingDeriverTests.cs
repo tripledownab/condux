@@ -6,6 +6,21 @@ namespace Condux.Core.Tests;
 public class CodeMappingDeriverTests
 {
     [Fact]
+    public void A_resolved_flutter_frame_names_its_build_path_and_derives_the_rule_back_to_the_repo()
+    {
+        // Native symbolication names a Dart frame by the absolute path the app was built from.
+        const string Built = "/home/runner/work/shop/shop/lib/screens/cart.dart";
+        var derived = CodeMappingDeriver.Derive(
+            [Built, "/home/runner/work/shop/shop/lib/main.dart"],
+            ["lib/screens/cart.dart", "lib/main.dart", "pubspec.yaml"]);
+
+        var rule = derived[0];
+        var mapping = new CodeMapping(Guid.NewGuid(), Guid.NewGuid(), rule.StackRoot, rule.SourceRoot);
+        Assert.Equal("lib/screens/cart.dart", CodeMapper.Resolve(Built, [mapping]));
+        Assert.Equal(2, rule.MatchCount);
+    }
+
+    [Fact]
     public void Derives_ThePrefixRewrite_FromASharedFileSuffix()
     {
         var derived = CodeMappingDeriver.Derive(
@@ -95,6 +110,16 @@ public class CodeMappingDeriverTests
     public void SkipsFramesThatAreAlreadyRepoRelative()
     {
         Assert.Empty(CodeMappingDeriver.Derive(["src/app.js"], ["src/app.js", "src/other.js"]));
+    }
+
+    [Fact]
+    public void SuggestsNothingForAFrameThatNamesARepoFile_EvenWhenOtherFilesShareItsName()
+    {
+        // A symbolicated Next.js frame is already repo-relative, and a Next app has many files named
+        // page.tsx. Pairing the frame with a different one would map it to the wrong file.
+        Assert.Empty(CodeMappingDeriver.Derive(
+            ["web/app/settings/general/page.tsx"],
+            ["web/app/settings/general/page.tsx", "web/app/page.tsx", "web/app/login/page.tsx"]));
     }
 
     [Fact]

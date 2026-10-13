@@ -16,7 +16,17 @@ import { Combobox } from "@/src/components/ui/combobox";
 // Releases (#89/#144): map a deployed version to its commit, so the Conductor can fix against the exact
 // ref and issues can show the release they first appeared in. A release is normally POSTed from CI on
 // deploy; this is the manual dashboard path. Recording is admin+; viewing is member+ (the API enforces it).
-export function Releases({ projectId, canManage }: { projectId: number; canManage: boolean }) {
+// needsGithub: GitHub is configured but not connected, so with no repo linked the record form says to
+// connect it first rather than to link a repository it cannot yet link.
+export function Releases({
+  projectId,
+  canManage,
+  needsGithub = false,
+}: {
+  projectId: number;
+  canManage: boolean;
+  needsGithub?: boolean;
+}) {
   const translate = useTranslations("settings.releases");
   const format = useFormatter();
   const releases = useListReleases(projectId);
@@ -30,7 +40,9 @@ export function Releases({ projectId, canManage }: { projectId: number; canManag
       <h2 className="font-heading text-lg font-semibold text-foreground">{translate("title")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{translate("description")}</p>
 
-      {canManage ? <RecordForm projectId={projectId} repos={linked} /> : null}
+      {canManage ? (
+        <RecordForm projectId={projectId} repos={linked} needsGithub={needsGithub} />
+      ) : null}
 
       <div className="mt-4">
         {list.length === 0 ? (
@@ -62,7 +74,15 @@ export function Releases({ projectId, canManage }: { projectId: number; canManag
   );
 }
 
-function RecordForm({ projectId, repos }: { projectId: number; repos: RepoLink[] }) {
+function RecordForm({
+  projectId,
+  repos,
+  needsGithub,
+}: {
+  projectId: number;
+  repos: RepoLink[];
+  needsGithub: boolean;
+}) {
   const translate = useTranslations("settings.releases");
   const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
@@ -71,8 +91,14 @@ function RecordForm({ projectId, repos }: { projectId: number; repos: RepoLink[]
   const [commitSha, setCommitSha] = useState("");
   const [repoLinkId, setRepoLinkId] = useState("");
 
+  // Recording needs a linked repository and nothing else (the server checks only that), and linking one
+  // needs GitHub connected when the App is configured, so the hint names the step that is missing.
   if (repos.length === 0) {
-    return <p className="mt-3 text-xs text-muted-foreground">{translate("needRepo")}</p>;
+    return (
+      <p className="mt-3 text-xs text-muted-foreground">
+        {translate(needsGithub ? "needGithub" : "needRepo")}
+      </p>
+    );
   }
 
   // Default to the sole/first linked repo until the user picks another.

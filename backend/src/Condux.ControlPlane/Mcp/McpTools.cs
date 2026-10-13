@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Condux.ControlPlane.Contracts;
 using Condux.ControlPlane.Issues;
-using Condux.ControlPlane.SourceMaps;
+using Condux.Storage.SourceMaps;
 using Condux.Core.Auth;
 using Condux.Core.Issues;
 using Condux.Storage.ClickHouse;

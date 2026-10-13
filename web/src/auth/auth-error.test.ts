@@ -40,8 +40,9 @@ describe("authErrorKey", () => {
 });
 
 describe("redirectErrorKey", () => {
-  it("maps the SSO membership refusal to its own message, not the generic one", () => {
+  it("maps each SSO refusal to its own message, not the generic one", () => {
     expect(redirectErrorKey("sso_invite_required")).toBe("errors.ssoInviteRequired");
+    expect(redirectErrorKey("sso_platform_admin")).toBe("errors.ssoPlatformAdmin");
   });
 
   it("falls back to the generic failure for an unknown code", () => {
@@ -62,6 +63,7 @@ describe("redirectErrorKey", () => {
       "sso_not_available",
       "sso_domain_mismatch",
       "sso_invite_required",
+      "sso_platform_admin",
       "anything_unmapped",
     ];
     for (const code of codes) {
@@ -69,5 +71,13 @@ describe("redirectErrorKey", () => {
       expect(key, code).toBeDefined();
       expect(Object.keys(messages.auth.errors), code).toContain(key);
     }
+  });
+});
+
+describe("redirectErrorKey on a code nobody issued", () => {
+  it("falls back for a code that names an inherited property", () => {
+    // The code is a query value anyone can type into a URL; it must never resolve to a function.
+    expect(redirectErrorKey("constructor")).toBe("errors.signInFailed");
+    expect(redirectErrorKey("toString")).toBe("errors.signInFailed");
   });
 });

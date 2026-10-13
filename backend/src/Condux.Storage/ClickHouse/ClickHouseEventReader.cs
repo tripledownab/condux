@@ -25,7 +25,7 @@ public sealed class ClickHouseEventReader(HttpClient http)
 
     // Bound params ({name:Type}) keep the query injection-safe over the HTTP interface.
     private const string RecentSql = """
-        SELECT event_id, timestamp, level, message, exception_type, exception_value, payload
+        SELECT event_id, toTimeZone(timestamp, 'UTC') AS timestamp, level, message, exception_type, exception_value, payload
         FROM condux.events
         WHERE project_id = {pid:String} AND issue_id = {iid:UInt64}
         ORDER BY timestamp DESC
@@ -36,7 +36,7 @@ public sealed class ClickHouseEventReader(HttpClient http)
     // A page of an issue's events (newest-first), offset-paginated so the detail loads older events on
     // demand rather than all at once.
     private const string PageSql = """
-        SELECT event_id, timestamp, level, message, exception_type, exception_value, payload
+        SELECT event_id, toTimeZone(timestamp, 'UTC') AS timestamp, level, message, exception_type, exception_value, payload
         FROM condux.events
         WHERE project_id = {pid:String} AND issue_id = {iid:UInt64}
         ORDER BY timestamp DESC
@@ -47,7 +47,7 @@ public sealed class ClickHouseEventReader(HttpClient http)
     // Recent events across a whole project (any issue), for deriving code mappings from a representative
     // sample of stack frames (#113).
     private const string RecentByProjectSql = """
-        SELECT event_id, timestamp, level, message, exception_type, exception_value, payload
+        SELECT event_id, toTimeZone(timestamp, 'UTC') AS timestamp, level, message, exception_type, exception_value, payload
         FROM condux.events
         WHERE project_id = {pid:String}
         ORDER BY timestamp DESC
@@ -90,7 +90,7 @@ public sealed class ClickHouseEventReader(HttpClient http)
         SELECT uniqExact(user_key) AS c
         FROM condux.events
         WHERE project_id = {pid:String} AND user_key != ''
-          AND timestamp >= toDateTime({start:Int64}) AND timestamp < toDateTime({end:Int64})
+          AND timestamp >= toDateTime({start:Int64}, 'UTC') AND timestamp < toDateTime({end:Int64}, 'UTC')
         FORMAT JSON
         """;
 

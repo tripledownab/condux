@@ -51,7 +51,7 @@ internal static class SamlSsoEndpoints
         app.MapPost("/api/auth/sso/saml/acs",
                 async Task<Results<RedirectHttpResult, NotFound>> (
                     SecretsConfig secrets, UserRepository users, OrgMemberRepository members,
-                    SessionRepository sessions, IConfiguration cfg,
+                    SessionRepository sessions, EmailAllowlist platformAdmins, IConfiguration cfg,
                     ILoggerFactory loggerFactory, HttpContext http) =>
                 {
                     if (!secrets.Enabled)
@@ -97,7 +97,7 @@ internal static class SamlSsoEndpoints
                             return TypedResults.Redirect(OidcFlow.LoginUrl(cfg, "sso_failed"));
                         }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (Exception ex) when (ex is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested)
                     {
                         // Signature/audience/conditions failures all surface as library exceptions.
                         loggerFactory.CreateLogger(nameof(SamlSsoEndpoints))
@@ -112,7 +112,7 @@ internal static class SamlSsoEndpoints
                     }
 
                     return TypedResults.Redirect(await SsoSignIn.CompleteAsync(
-                        config, email, users, members, sessions, cfg, http));
+                        config, email, users, members, sessions, platformAdmins, cfg, http));
                 })
             .WithName("ssoSamlAcs").WithTags("Auth").ExcludeFromDescription();
     }

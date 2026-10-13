@@ -5,7 +5,6 @@ using Condux.Conductor;
 using Condux.Core.CveFix;
 using Condux.Core.Llm;
 using Condux.Core.FixEngine;
-using Condux.Core.Quotas;
 using Condux.Core.SourceControl;
 using Condux.GitHub;
 using Condux.Storage.ClickHouse;
@@ -29,8 +28,6 @@ builder.AddConduxSelfReporting(); // Condux on Condux (#75): the conductor worke
 // Config is env-driven — no hardcoded credentials, even for dev (compose supplies them). Fail fast.
 var postgres = builder.Configuration.Require("CONDUX_POSTGRES");
 builder.Services.AddSingleton<IFixStore>(new PostgresFixStore(postgres));
-// The org allowance counter: a failed run refunds the reservation RequestFix took (#100, ADR-0017).
-builder.Services.AddSingleton<IAiFixQuota>(new PostgresAiFixQuota(postgres));
 
 // Provider selection (CONDUX_CONDUCTOR_PROVIDER, default "fake"). The two defaults open no real PR and
 // call no LLM, so CI and a bare install stay safe:
@@ -59,14 +56,13 @@ switch (providerKind)
         AddAnthropicStack(builder, postgres,
             out var byoInner, out var cmaTokens, out var cmaRepo, out var routedConfigs);
         var cmaOptions = ManagedAgentsOptions.FromEnv(builder.Configuration);
+        // Control calls only (the vendor runs the long work), but session creation uploads the prompt, so
+        // give it headroom over the 100s default.
+        var cmaClient = new ManagedAgentsClient(new HttpClient { Timeout = TimeSpan.FromMinutes(2) }, cmaOptions);
+        builder.Services.AddSingleton(new ManagedAgentsSessionSweeper(cmaClient, cmaOptions));
         builder.Services.AddSingleton<IAgentGateway>(sp => new RoutingAgentGateway(
             byoInner(sp),
-            new ManagedAgentsGateway(
-                new ManagedAgentsClient(
-                    // Control calls only (the vendor runs the long work), but session creation uploads
-                    // the prompt, so give it headroom over the 100s default.
-                    new HttpClient { Timeout = TimeSpan.FromMinutes(2) }, cmaOptions),
-                cmaTokens, cmaRepo, cmaOptions),
+            new ManagedAgentsGateway(cmaClient, cmaTokens, cmaRepo, cmaOptions),
             routedConfigs));
         break;
     default:
@@ -74,9 +70,11 @@ switch (providerKind)
             $"Unknown CONDUX_CONDUCTOR_PROVIDER '{providerKind}'. Use 'fake', 'simulated-agent', 'anthropic' or 'managed-agents'.");
 }
 
+// Read for every provider, since the stale-run sweep sizes its cutoff from it too.
+var pollOptions = ConductorPollOptions.FromEnv(builder.Configuration, providerKind);
+builder.Services.AddSingleton(pollOptions);
 if (providerKind != "fake")
 {
-    var pollOptions = ConductorPollOptions.FromEnv(builder.Configuration, providerKind);
     builder.Services.AddSingleton<IFixProvider>(sp =>
         new ManagedAgentFixProvider(sp.GetRequiredService<IAgentGateway>(), pollOptions));
 }
@@ -132,14 +130,16 @@ void AddAnthropicStack(
         // A turn can take minutes, same as the single-shot call, so this bypasses the short default.
         new HttpClient { Timeout = TimeSpan.FromMinutes(10) },
         agentic,
-        sandbox);
+        sandbox,
+        sp.GetRequiredService<ILogger<AnthropicAgentGateway>>());
 }
 
 builder.Services.AddSingleton<FixOrchestrator>();
 
 // The supply-chain CVE-bump path (#117): a separate domain + topic + worker that reuses the same
-// IFixProvider + IAiFixQuota registered above. Its runs live in cve_fix_runs, keyed on the repo +
-// advisory (never an issue), so it does not touch the issue-fix verification loop.
+// IFixProvider registered above. Its runs live in cve_fix_runs, keyed on the repo +
+// advisory (never an issue), so it does not touch the issue-fix verification loop; a merged bump has
+// its own (ADR-0051), below.
 builder.Services.AddSingleton<ICveFixStore>(new PostgresCveFixStore(postgres));
 builder.Services.AddSingleton<CveFixOrchestrator>();
 
@@ -150,6 +150,14 @@ builder.Services.AddClickHouseReader<ClickHouseIssueStatsReader>(
     builder.Configuration.Require("CONDUX_CLICKHOUSE_USER"),
     builder.Configuration.Require("CONDUX_CLICKHOUSE_PASSWORD"));
 builder.Services.AddSingleton(new PostgresFixVerification(postgres));
+// The CVE bump watch (ADR-0051) reads the runtime dependency inventory, on the same timer.
+builder.Services.AddClickHouseReader<ClickHouseReleaseModuleReader>(
+    builder.Configuration.Require("CONDUX_CLICKHOUSE_URL"),
+    builder.Configuration.Require("CONDUX_CLICKHOUSE_USER"),
+    builder.Configuration.Require("CONDUX_CLICKHOUSE_PASSWORD"));
+builder.Services.AddSingleton(new PostgresCveFixVerification(postgres));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<CveFixVerifier>();
 builder.Services.AddSingleton(new IssueRepository(postgres));
 
 // Live dashboard nudges (ADR-0030): a hosted run concluding, a verification verdict and a CVE bump
@@ -161,6 +169,12 @@ builder.Services.AddSingleton(new RepoLinkRepository(postgres));
 builder.Services.AddHostedService<ConductorWorker>();
 builder.Services.AddHostedService<CveFixWorker>();
 builder.Services.AddHostedService<VerificationWorker>();
+// Fails and refunds the runs a stop or crash left in progress, since their jobs are never redelivered.
+builder.Services.AddSingleton(new PostgresStaleRunSweep(postgres));
+// Asks GitHub whether a stopped run opened its pull request; the source host is registered only by the
+// providers that can open one, and without it the check clears every run.
+builder.Services.AddSingleton<UnrecordedPullRequests>();
+builder.Services.AddHostedService<StaleRunSweeper>();
 builder.Build().Run();
 
 // The GitHub App private key, through the one resolver both deployments share, which is where the

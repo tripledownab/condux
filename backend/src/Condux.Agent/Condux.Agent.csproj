@@ -6,6 +6,9 @@
     <!-- Sandbox settings are read from the environment, in both deployments. Abstractions only: this
          project describes how to read config, never how a host is built. -->
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+    <!-- Each tool call of an agentic run is logged, or a run that did the wrong thing cannot be audited
+         afterwards. Abstractions only, for the same reason as above: the host picks the logger. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
   </ItemGroup>
   <ItemGroup>
     <!-- Docker's exec stream framing and the sandbox tar writer are worth testing without a daemon. -->

@@ -14,12 +14,25 @@ internal static class SsoSignIn
 {
     public static async Task<string> CompleteAsync(
         StoredSsoConfig config, string rawEmail, UserRepository users, OrgMemberRepository members,
-        SessionRepository sessions, IConfiguration cfg, HttpContext http)
+        SessionRepository sessions, EmailAllowlist platformAdmins, IConfiguration cfg, HttpContext http)
     {
         var email = Emails.Normalize(rawEmail);
         if (!string.Equals(Emails.Domain(email), config.EmailDomain, StringComparison.OrdinalIgnoreCase))
         {
             return OidcFlow.LoginUrl(cfg, "sso_domain_mismatch");
+        }
+
+        // A platform-admin address never signs in through an organisation's IdP, member or not, and is
+        // never created through one. That account gets the cross-tenant console, while an IdP is chosen by
+        // one tenant, speaks for its domain only as far as the domain was proved (which a deployment may
+        // skip), and is trusted to have applied its own second factor. The console's login stays with the
+        // platform: Google, which proves the mailbox, or a password, with this product's second factor
+        // when enrolled. The reason is named only for an account the org already holds as a member; any
+        // other address gets the answer every address the org has no claim to gets.
+        if (platformAdmins.Contains(email))
+        {
+            var member = await FindMemberAsync(email, config, users, members, http) is not null;
+            return OidcFlow.LoginUrl(cfg, member ? "sso_platform_admin" : "sso_invite_required");
         }
 
         // An org chooses its own identity provider and names its own email domain. It must now prove
@@ -35,19 +48,24 @@ internal static class SsoSignIn
         // grounds that the org's provider enforces its own. That is only sound while the account being
         // signed in belongs to the org, which is what this rule establishes.
         var user = await users.TryCreateFederatedMemberAsync(
-            email, config.OrgId, OrgRole.Member, http.RequestAborted);
+                email, config.OrgId, OrgRole.Member, http.RequestAborted)
+            ?? await FindMemberAsync(email, config, users, members, http);
         if (user is null)
         {
-            user = await users.GetByEmailAsync(email, http.RequestAborted);
-            if (user is null
-                || await members.GetRoleAsync(config.OrgId, user.Id, http.RequestAborted) is null)
-            {
-                return OidcFlow.LoginUrl(cfg, "sso_invite_required");
-            }
+            return OidcFlow.LoginUrl(cfg, "sso_invite_required");
         }
 
         await users.MarkOnboardedAsync(user.Id, http.RequestAborted);
         await Sessions.IssueAsync(user, sessions, http);
         return OidcFlow.DashboardUrl(cfg);
     }
+
+    // The account holding this address, when it is a member of the org; null when nobody holds it or the
+    // holder is not one of the org's members.
+    private static async Task<User?> FindMemberAsync(
+        string email, StoredSsoConfig config, UserRepository users, OrgMemberRepository members, HttpContext http) =>
+        await users.GetByEmailAsync(email, http.RequestAborted) is { } user
+            && await members.GetRoleAsync(config.OrgId, user.Id, http.RequestAborted) is not null
+            ? user
+            : null;
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
+using Condux.Core.Http;
 using Condux.Storage.Postgres;
 
 namespace Condux.ControlPlane.Mcp;
@@ -14,6 +15,12 @@ namespace Condux.ControlPlane.Mcp;
 /// The token resolves to a project AND a capability (ADR-0046), which is what decides whether the caller
 /// sees the triage tools at all. A token minted before that change reads as <c>read</c>, so it behaves
 /// exactly as it did.
+///
+/// Two transport rules. Before the token is read, a request carrying a browser <c>Origin</c> that is
+/// not this deployment's own is refused with 403, since MCP 2025-06-18 (basic/transports, "Security
+/// Warning") requires the server to validate it. An agent outside a browser sends none, so absence
+/// passes. And a 401 carries a <c>Bearer</c> challenge, since RFC 9110 15.5.2 requires a
+/// <c>WWW-Authenticate</c> on every 401; it names no OAuth metadata because this server does not do OAuth.
 /// </summary>
 internal static class McpEndpoints
 {
@@ -21,17 +28,30 @@ internal static class McpEndpoints
     private static readonly JsonSerializerOptions JsonOpts =
         new(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
 
-    public static void MapMcpEndpoints(this IEndpointRouteBuilder app) =>
-        app.MapPost("/api/mcp", HandleAsync).WithName("mcp").ExcludeFromDescription();
-
-    private static async Task HandleAsync(HttpContext http, McpTokenRepository tokens, McpTools tools)
+    public static void MapMcpEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapPost("/api/mcp", HandleAsync).WithName("mcp").ExcludeFromDescription();
+        app.MapMcpServerCard();
+    }
+
+    private static async Task HandleAsync(
+        HttpContext http, McpTokenRepository tokens, McpTools tools, IConfiguration config)
+    {
+        if (!IsAllowedOrigin(http.Request.Headers.Origin, config))
+        {
+            http.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
         // Auth is the tenant boundary: a live per-project MCP token presented as a bearer resolves to the
         // one project every tool then reads. No/invalid token → 401, before any method runs.
         if (BearerToken.From(http) is not { } raw ||
             await tokens.ResolveIdentityAsync(McpTokens.HashToken(raw), http.RequestAborted) is not { } token)
         {
+            // RFC 6750 3.1: a token that was sent and refused is named as invalid; a missing one is not.
             http.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            http.Response.Headers.WWWAuthenticate = BearerToken.From(http) is null
+                ? "Bearer realm=\"condux\""
+                : "Bearer realm=\"condux\", error=\"invalid_token\"";
             return;
         }
         var context = new McpCallContext(
@@ -68,7 +88,7 @@ internal static class McpEndpoints
                 {
                     protocolVersion = ProtocolVersion,
                     capabilities = new { tools = new { } },
-                    serverInfo = new { name = "condux", title = "Condux", version = "1.0.0" },
+                    serverInfo = McpServerCard.ServerInfo,
                 });
                 break;
             case "ping":
@@ -113,6 +133,27 @@ internal static class McpEndpoints
             // A tool-level failure is reported inside the result (isError), per MCP, not as a protocol error.
             await WriteResult(http, id, new { content = new[] { Text(ex.Message) }, isError = true });
         }
+    }
+
+    /// <summary>
+    /// True when the request names no origin, or names one this deployment serves the dashboard from.
+    /// Compared as scheme, host and port, which is all an <c>Origin</c> header carries, with a domain in
+    /// the punycode form a browser sends. IdnHost alone would drop an IPv6 address's brackets.
+    /// </summary>
+    private static bool IsAllowedOrigin(string? origin, IConfiguration config)
+    {
+        if (string.IsNullOrEmpty(origin))
+            return true;
+        var own = AppOrigins.Parse(config["CONDUX_CORS_ORIGINS"])
+            .Append(config["CONDUX_APP_BASE_URL"] ?? string.Empty);
+        return own.Any(url => Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
+            && string.Equals(ToOrigin(uri), origin, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ToOrigin(Uri uri)
+    {
+        var host = uri.HostNameType == UriHostNameType.Dns ? uri.IdnHost : uri.Host;
+        return uri.IsDefaultPort ? $"{uri.Scheme}://{host}" : $"{uri.Scheme}://{host}:{uri.Port}";
     }
 
     private static async Task<JsonDocument?> TryParseAsync(HttpContext http)

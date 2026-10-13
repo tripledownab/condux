@@ -50,11 +50,7 @@ internal static class ReleaseTokenEndpoints
                     HttpContext http, RecordReleaseViaTokenRequest req,
                     ReleaseTokenRepository tokens, RepoLinkRepository repos, ReleaseRepository releases) =>
                 {
-                    if (BearerToken.From(http) is not { } raw)
-                    {
-                        return TypedResults.Unauthorized();
-                    }
-                    if (await tokens.ResolveProjectAsync(ReleaseTokens.HashToken(raw)) is not { } projectId)
+                    if (await ReleaseTokenAuth.ResolveProjectAsync(http, tokens) is not { } projectId)
                     {
                         return TypedResults.Unauthorized();
                     }

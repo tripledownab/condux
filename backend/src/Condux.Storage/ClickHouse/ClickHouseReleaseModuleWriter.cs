@@ -1,4 +1,3 @@
-using System.Globalization;
 using Condux.Core.CveScanning;
 
 namespace Condux.Storage.ClickHouse;
@@ -13,7 +12,7 @@ public sealed record ReleaseModuleRow(
     string ecosystem,
     string package,
     string version,
-    string last_seen,
+    long last_seen,
     int retention_days);
 
 /// <summary>
@@ -50,6 +49,7 @@ public sealed class ClickHouseReleaseModuleWriter(HttpClient http)
             module.Ecosystem,
             module.Package,
             module.Version,
-            seenAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            // A unix number, never text (see ClickHouseInsert).
+            seenAt.ToUnixTimeSeconds(),
             retentionDays);
 }

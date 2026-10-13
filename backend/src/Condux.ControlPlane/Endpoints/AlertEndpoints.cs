@@ -166,9 +166,13 @@ internal static class AlertEndpoints
     private static bool ValidEvents(IReadOnlyList<int> events) =>
         events.Count > 0 && events.All(e => Enum.IsDefined((AlertEventType)e));
 
-    // A rule must fire on at least one level, and each must be a defined severity.
+    // A rule must fire on at least one level, and each must be a severity an event can be stored at.
+    // Unspecified is defined but refused: no ingest path stores an event at it (an unlevelled Sentry event
+    // or OTLP exception is an error), and issues stored at it before were moved to Error, so a rule on it
+    // would look like it caught level-less crashes and match nothing.
     private static bool ValidLevels(IReadOnlyList<int> levels) =>
-        levels.Count > 0 && levels.All(level => Enum.IsDefined((Level)level));
+        levels.Count > 0
+        && levels.All(level => Enum.IsDefined((Level)level) && (Level)level != Level.Unspecified);
 
     // A channel template (null = built-in default) must use only known placeholders and stay bounded.
     private static bool ValidTemplate(string? template) =>

@@ -3,10 +3,10 @@
 # yours, and set an email for ACME notifications.
 #
 # app.condux.ai serves the dashboard AND the control-plane API on ONE origin, so the session cookie and
-# the Google OAuth callback stay first-party. Requests under /api and /openapi go to the control-plane;
-# everything else to the Next.js dashboard. (The dashboard's own /api/boom dogfood route is superseded by
+# the Google OAuth callback stay first-party. Requests under /api and /openapi go to the control-plane,
+# and so does /.well-known/mcp, the MCP server card that directories read; everything else to the
+# Next.js dashboard. (The dashboard's own /api/boom dogfood route is superseded by
 # this routing in prod, which is fine — it is a dev-only "throw an error" endpoint.)
-
 {
 	# ACME contact for expiry / issuance notices. Set to a real inbox.
 	email ops@condux.ai
@@ -15,6 +15,10 @@
 	# does. `per_host` adds the host label: without it every series carries only Caddy's internal
 	# server name (srv0, srv1), so a request rate cannot say which site it belongs to, and this edge
 	# serves the dashboard and the relay from one process.
+	#
+	# `host="_other"` is expected and is not a fault. It is a plain-HTTP request whose Host is not one
+	# of the sites in this file: the scrapes of the `:2020` site below, and redirects to HTTPS for a
+	# Host that is not one of these sites (a bare IP, for example).
 	#
 	# DO NOT PUT A BARE `metrics` INSIDE A SITE BLOCK. It reads like "record this site" and it is not:
 	# `metrics` is a terminal HANDLER that SERVES the Prometheus endpoint, and with no path matcher it
@@ -37,7 +41,7 @@
 app.condux.ai {
 	encode zstd gzip
 
-	@backend path /api/* /openapi/*
+	@backend path /api/* /openapi/* /.well-known/mcp/*
 	handle @backend {
 		reverse_proxy controlplane:8080
 	}

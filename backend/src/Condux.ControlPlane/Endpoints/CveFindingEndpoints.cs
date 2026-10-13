@@ -19,6 +19,12 @@ namespace Condux.ControlPlane.Endpoints;
 public sealed record CveFindingWithExposure(CveFinding Finding, ModuleExposure Exposure);
 
 /// <summary>
+/// A repo's findings, and whether the scan stopped before the end. The list is not the total when
+/// <see cref="Truncated"/> is set, and the dashboard says so rather than showing the count as complete.
+/// </summary>
+public sealed record CveFindingsResponse(IReadOnlyList<CveFindingWithExposure> Findings, bool Truncated);
+
+/// <summary>
 /// The read side of the supply-chain surface (#117 slice 1): a linked repo's open CVE findings,
 /// annotated with the runtime dependency inventory. Split from <c>RepoEndpoints</c> because CVE
 /// scanning is its own domain, the same seam that already separates <see cref="CveFixEndpoints"/>.
@@ -30,10 +36,11 @@ internal static class CveFindingEndpoints
     public static void MapCveFindingEndpoints(this IEndpointRouteBuilder app)
     {
         // Open CVE findings for a linked repo (#117): the repo's open Dependabot alerts, fetched with the
-        // org's GitHub installation token. Returns empty when GitHub is not connected, the App lacks the
-        // Dependabot-alerts permission, or the repo has none.
+        // org's GitHub installation token. Returns empty when GitHub is not connected or the repo has none,
+        // and empty but truncated when the scan failed (for instance the App lacks the Dependabot-alerts
+        // permission).
         app.MapGet("/api/projects/{projectId:long}/repos/{repoId:guid}/cve-findings",
-                async Task<Results<Ok<IReadOnlyList<CveFindingWithExposure>>, NotFound>> (
+                async Task<Results<Ok<CveFindingsResponse>, NotFound>> (
                     long projectId, Guid repoId, HttpContext http, RepoLinkRepository repos,
                     ProjectRepository projects, GithubInstallationRepository installations,
                     ClickHouseReleaseModuleReader modules, ILoggerFactory loggerFactory) =>
@@ -52,25 +59,28 @@ internal static class CveFindingEndpoints
                     var installs = await installations.GetByOrgAsync(project.OrgId, http.RequestAborted);
                     if (tokens is null || scanner is null || installs.Count == 0)
                     {
-                        return TypedResults.Ok<IReadOnlyList<CveFindingWithExposure>>([]);
+                        return TypedResults.Ok(new CveFindingsResponse([], Truncated: false));
                     }
 
-                    IReadOnlyList<CveFinding> findings;
+                    CveScan scan;
                     try
                     {
                         var token = await tokens.GetAsync(installs[0].InstallationId, http.RequestAborted);
-                        findings = await scanner.ScanAsync(token, repo.RepoFullName, http.RequestAborted);
+                        scan = await scanner.ScanAsync(token, repo.RepoFullName, http.RequestAborted);
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (Exception ex) when (ex is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested)
                     {
                         // Advisory feature: a GitHub hiccup or a missing permission yields no findings, not a 500.
+                        // But not a complete answer either: the read stopped before it saw any alert, so the
+                        // empty list is marked truncated and the dashboard says it could not read them all.
                         logger.LogWarning(
                             ex, "cve-findings failed project={ProjectId} repo={RepoId}", projectId, repoId);
-                        return TypedResults.Ok<IReadOnlyList<CveFindingWithExposure>>([]);
+                        return TypedResults.Ok(new CveFindingsResponse([], Truncated: true));
                     }
 
-                    return TypedResults.Ok(
-                        await WithExposureAsync(projectId, findings, modules, logger, http.RequestAborted));
+                    var findings = await WithExposureAsync(
+                        projectId, scan.Findings, modules, logger, http.RequestAborted);
+                    return TypedResults.Ok(new CveFindingsResponse(findings, scan.Truncated));
                 })
             .WithName("cveFindings").WithTags("Repos")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));
@@ -99,7 +109,7 @@ internal static class CveFindingEndpoints
                 [.. findings.Select(finding => finding.Package)],
                 cancellationToken);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(
                 ex, "release-module exposure lookup failed project={ProjectId}", projectId);

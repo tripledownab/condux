@@ -10,7 +10,7 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   use: {
-    baseURL: process.env.CONDUX_E2E_BASE_URL ?? "http://localhost:3000",
+    baseURL: process.env.CONDUX_E2E_BASE_URL ?? "http://localhost:3200",
     trace: "on-first-retry",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

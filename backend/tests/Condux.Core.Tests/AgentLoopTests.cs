@@ -68,6 +68,25 @@ public class AgentLoopTests
     private static AgentTurn WriteThenFinish() =>
         AgentTurn.Calls([Call(AgentToolNames.WriteFile, ("path", "src/cart.ts"), ("contents", "fixed"))]);
 
+    // Every executed call is reported with how it went, in order, so a run can be audited afterwards.
+    [Fact]
+    public async Task Reports_each_tool_call_and_whether_it_failed()
+    {
+        var workspace = new InMemoryWorkspace(Repo);
+        var conversation = new ScriptedConversation(
+            AgentTurn.Calls([Call(AgentToolNames.ReadFile, ("path", "src/missing.ts"))]),
+            AgentTurn.Calls([Call(AgentToolNames.WriteFile, ("path", "src/cart.ts"), ("contents", "fixed"))]),
+            AgentTurn.Calls([Call(AgentToolNames.Finish, ("summary", "Done."))]));
+        var seen = new List<(string Tool, string Path, bool Failed)>();
+
+        await new AgentLoop(conversation, workspace,
+            onToolCall: (call, result) => seen.Add((call.Name, call.Argument("path"), result.IsError))).RunAsync();
+
+        Assert.Equal(
+            [(AgentToolNames.ReadFile, "src/missing.ts", true), (AgentToolNames.WriteFile, "src/cart.ts", false)],
+            seen);
+    }
+
     [Fact]
     public async Task Reads_a_file_then_writes_a_fix_and_finishes()
     {
@@ -181,12 +200,13 @@ public class AgentLoopTests
         var conversation = new ScriptedConversation(
             AgentTurn.Calls([Call(AgentToolNames.Finish, ("summary", "Nothing to do."))]));
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => new AgentLoop(conversation, workspace).RunAsync());
 
         // Still a failure, so no empty draft PR — but the agent is asked to change nothing when it finds
         // the code already correct, so the reason it gave has to survive into what the reviewer reads.
         Assert.Contains("Nothing to do.", error.Message, StringComparison.Ordinal);
+        Assert.Equal(FixFailureReason.NoUsableFix, error.Reason);
     }
 
     [Fact]
@@ -196,10 +216,11 @@ public class AgentLoopTests
         var conversation = new ScriptedConversation(
             AgentTurn.Calls([Call(AgentToolNames.Finish, ("summary", ""))]));
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => new AgentLoop(conversation, workspace).RunAsync());
 
         Assert.Contains("without changing any file", error.Message, StringComparison.Ordinal);
+        Assert.Equal(FixFailureReason.NoUsableFix, error.Reason);
     }
 
     [Fact]
@@ -209,10 +230,11 @@ public class AgentLoopTests
         var conversation = new ScriptedConversation(
             AgentTurn.Calls([Call(AgentToolNames.ListFiles)]));
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => new AgentLoop(conversation, workspace, new AgentLoopOptions(MaxSteps: 3)).RunAsync());
 
         Assert.Contains("within 3 steps", error.Message, StringComparison.Ordinal);
+        Assert.Equal(FixFailureReason.NoUsableFix, error.Reason);
     }
 
     [Fact]
@@ -222,11 +244,12 @@ public class AgentLoopTests
         var conversation = new ScriptedConversation(
             AgentTurn.Calls([Call(AgentToolNames.ListFiles)], 400, 100));
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => new AgentLoop(conversation, workspace,
                 new AgentLoopOptions(MaxSteps: 50, MaxTotalTokens: 600)).RunAsync());
 
         Assert.Contains("token budget", error.Message, StringComparison.Ordinal);
+        Assert.Equal(FixFailureReason.NoUsableFix, error.Reason);
     }
 
     [Fact]
@@ -234,8 +257,10 @@ public class AgentLoopTests
     {
         var workspace = new InMemoryWorkspace(Repo);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var error = await Assert.ThrowsAsync<FixFailedException>(
             () => new AgentLoop(new ScriptedConversation(AgentTurn.Calls([])), workspace).RunAsync());
+
+        Assert.Equal(FixFailureReason.NoUsableFix, error.Reason);
     }
 
     /// <summary>

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import messages from "@/messages/en.json";
+import { PLATFORM_KEYS } from "@/src/projects/platforms";
 import { defaultPlatform, PLATFORMS } from "./platforms";
 
 const DSN = "http://pub123@localhost:9010/proj-uuid";
@@ -38,6 +40,40 @@ describe("platforms catalog", () => {
     const nextjs = PLATFORMS.find((platform) => platform.id === "nextjs");
     const sourcemaps = nextjs?.snippets.find((snippet) => snippet.titleKey === "sourcemaps");
     expect(sourcemaps?.code(DSN)).toContain("condux-sourcemaps");
+  });
+
+  it("the Flutter build splits its debug info into the directory the CI step uploads from", () => {
+    const flutter = PLATFORMS.find((platform) => platform.id === "flutter");
+    const build =
+      flutter?.snippets.find((snippet) => snippet.titleKey === "build")?.code(DSN) ?? "";
+    const upload =
+      flutter?.snippets.find((snippet) => snippet.titleKey === "symbols")?.code(DSN) ?? "";
+
+    const directory = /--split-debug-info=(\S+)/.exec(build)?.[1];
+    expect(directory).toBeTruthy();
+    expect(upload).toContain(`for file in ${directory}/*.symbols`);
+    expect(upload).toContain('-H "Authorization: Bearer $CONDUX_RELEASE_TOKEN"');
+    expect(upload).toContain("/api/debug-files");
+    // GitHub's own expression syntax, written out rather than interpolated by the template literal.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal GitHub Actions syntax is the point.
+    expect(upload).toContain("${{ secrets.CONDUX_RELEASE_TOKEN }}");
+  });
+
+  it("every snippet title and every project platform has its label", () => {
+    const titles = new Set(
+      PLATFORMS.flatMap((platform) => platform.snippets.map((s) => s.titleKey)),
+    );
+    for (const title of titles) {
+      expect(messages.developer.snippets).toHaveProperty(title);
+    }
+    for (const key of PLATFORM_KEYS) {
+      expect(messages.platforms).toHaveProperty(key);
+    }
+  });
+
+  it("a Flutter project can be created and opens the guide on its Flutter entry", () => {
+    expect(PLATFORM_KEYS).toContain("flutter");
+    expect(defaultPlatform("flutter").id).toBe("flutter");
   });
 
   it("defaultPlatform matches the project's platform, else falls back to the first", () => {

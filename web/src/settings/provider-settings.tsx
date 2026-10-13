@@ -20,7 +20,7 @@ import {
 } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
-import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
+import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 // The BYO providers, matching the backend LlmProviders. OpenAI-compatible covers OpenAI, Azure OpenAI,
@@ -110,7 +110,7 @@ export function ProviderSettings() {
     return <Notice>{translate("loading")}</Notice>;
   }
 
-  const canManage = current.role === "owner" || current.role === "admin";
+  const canManage = canManageOrg(current.role);
   // A 404 means no config yet (or the feature is off); either way there is nothing to show, so fall
   // through to the form and let a save clarify with the specific message.
   const existing = config.data?.status === 200 ? config.data.data : null;

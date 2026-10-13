@@ -6,42 +6,24 @@ namespace Condux.Agent.ManagedAgents;
 
 /// <summary>
 /// The vendor-hosted fix backend (ADR-0038): Anthropic Managed Agents runs the loop and the sandbox with
-/// the whole repository mounted, and this gateway only starts a session, polls it, and turns its
-/// structured final answer into a draft PR. Safety is by construction: the session's repo mount uses a
-/// READ-ONLY single-repo token (a push from the sandbox is refused by the source host), and all git
-/// runs host-side via the shared <see cref="DraftPrPublisher"/> — the write-capable token never leaves
-/// this process. Poll-driven and nearly stateless: the vendor session id IS the run id, so this process
-/// holds only the per-run spec and a memo of finalized results.
+/// the whole repository mounted, and this gateway starts a session, polls it, turns its final answer into a
+/// draft PR, and interrupts it when the run is stopped. Safety is by construction: the session's repo mount
+/// uses a READ-ONLY single-repo token (the source host refuses a push from the sandbox), and all git runs
+/// host-side via the shared <see cref="DraftPrPublisher"/>, so the write-capable token never leaves this
+/// process. The vendor session id IS the run id, so this holds only the runs it started and a memo of results.
 /// </summary>
-public sealed class ManagedAgentsGateway(
+public sealed partial class ManagedAgentsGateway(
     ManagedAgentsClient client, ISourceHostTokens tokens, ISourceHostClient repo,
     ManagedAgentsOptions options) : IAgentGateway
 {
-    // The persisted agent config's system text. The final-answer contract is the same JSON the one-shot
-    // path uses, so FixPlanParser is reused verbatim on the way out.
-    private const string SystemPrompt =
-        "You are the Condux Conductor, a senior engineer fixing a production error. The repository is "
-        + "mounted READ-ONLY in your workspace (the user message names the path) — explore it freely, "
-        + "run the tests if the environment allows, and edit your working copy to develop the fix, but "
-        + "never attempt git push or any other remote write; the checkout cannot accept one. Address the "
-        + "root cause, change only what the fix requires, and keep the existing code style. Add or update "
-        + "a test that fails without your change and passes with it. If you conclude the code is already "
-        + "correct and no such test can be written, say so in the summary and change nothing. Change at "
-        + "most 10 files; if a correct fix needs more, stop and explain in the summary instead. End your "
-        + "final message with ONLY a JSON object, no code fences and no prose after it: {\"summary\": "
-        + "\"what the fix does and why\", \"files\": [{\"path\": \"repo/relative/path\", \"contents\": "
-        + "\"the COMPLETE new file contents\"}]}. Every entry in files must contain the full file, not a diff.";
-
     private const string MountPath = "/workspace/repo";
+    // Every session's title starts with this, which is how the session sweep tells ours from others.
+    internal const string SessionTitlePrefix = "condux fix ";
 
-    private readonly ConcurrentDictionary<string, AgentRunSpec> specs = new();
+    private readonly ConcurrentDictionary<string, StartedRun> runs = new();
     private readonly ConcurrentDictionary<string, AgentRunProgress> finalized = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> finalizing = new();
-    private readonly ConcurrentDictionary<string, string> agentIds = new();
-    // One at a time through vendor-object provisioning: the fix and CVE workers share this singleton,
-    // and a concurrent first run must not create the same agent or environment twice.
-    private readonly SemaphoreSlim provisioning = new(1, 1);
-    private string? environmentId;
+    private readonly ManagedAgentsProvisioner provisioner = new(client, options);
 
     public string BackendName => "anthropic-managed-agents";
 
@@ -49,26 +31,30 @@ public sealed class ManagedAgentsGateway(
     {
         SourceHostGuards.RequireInstallation(tokens, spec);
 
-        var agentId = options.AgentId ?? await GetOrCreateAgentAsync(spec.Model, ct);
-        var envId = options.EnvironmentId ?? await GetOrCreateEnvironmentAsync(ct);
+        var agent = await provisioner.GetAgentAsync(spec.Model, ct);
+        var envId = await provisioner.GetEnvironmentIdAsync(ct);
         // Read-only by construction: the sandbox can clone this one repo and nothing else — a push is
         // refused by the source host itself, which is what makes draft-PR-only structural here.
         var readOnlyToken = await tokens.GetReadOnlyAsync(spec.InstallationId, spec.RepoFullName, ct);
+        // The session clones this exact commit rather than the branch, and the run keeps it: the session can
+        // take most of an hour, and a file changed on the branch meanwhile would otherwise be published as
+        // the session's version, quietly undoing the change. The read-only token is enough to read it.
+        var baseCommit = await repo.GetBranchHeadShaAsync(readOnlyToken, spec.RepoFullName, spec.BaseBranch, ct);
 
         // The repo name and the branch go into a URL the vendor clones, and neither is validated where it
         // is stored, so both go through the same rule the source-host client applies rather than being
         // interpolated. Without it a name carrying a `..` segment would resolve to a different repository.
         var cloneUrl = $"https://github.com/{RepoPaths.EscapeSegments(spec.RepoFullName)}";
         var session = await client.CreateSessionAsync(new WireSessionCreate(
-            agentId, envId, $"condux fix {spec.IssueId}",
+            agent, envId, $"{SessionTitlePrefix}{spec.IssueId}",
             [new WireRepositoryResource(
                 cloneUrl, readOnlyToken,
-                new WireCheckout("branch", spec.BaseBranch), MountPath)],
-            [new WireUserMessage([new WireTextContent(BuildUserMessage(spec))])],
+                new WireCheckout("commit", Sha: baseCommit), MountPath)],
+            [new WireUserMessage([new WireTextContent(BuildUserMessage(spec, baseCommit))])],
             new WireBudget(new WireMoney(
                 ManagedAgentsClient.MinorUnits(options.MaxSessionUsd), "USD"))), ct);
 
-        specs[session.Id] = spec;
+        runs[session.Id] = new StartedRun(spec, baseCommit);
         return new AgentRun(session.Id);
     }
 
@@ -78,7 +64,7 @@ public sealed class ManagedAgentsGateway(
         {
             return done;
         }
-        if (!specs.TryGetValue(runId, out var spec))
+        if (!runs.TryGetValue(runId, out var started))
         {
             throw new KeyNotFoundException($"Unknown agent run '{runId}'.");
         }
@@ -88,20 +74,25 @@ public sealed class ManagedAgentsGateway(
         {
             session = await client.GetSessionAsync(runId, ct);
         }
-        catch (ManagedAgentsApiException ex) when (ex.IsRateLimit)
+        catch (Exception ex) when (IsTransient(ex, ct))
         {
-            // The provider's poll interval is the backoff; a throttled poll is not a failed run.
             return AgentRunProgress.StillRunning;
         }
 
-        if (session.Status == "running")
+        if (WireSessionStatus.Working.Contains(session.Status))
         {
             return AgentRunProgress.StillRunning;
         }
-        // "idle" means the agent finished its turn (sessions are conversational); anything else —
-        // failed, expired, a budget stop — ends the run with the vendor's word for why.
-        if (session.Status != "idle")
+        // "idle" is decided by FinalizeAsync from why the session stopped. Anything else ends the run with
+        // the vendor's word for it, and a status this version does not know may mean a session still
+        // working and spending, so that one is stopped too; failing the run does not stop it, and the
+        // session sweep would reach it only past its cutoff.
+        if (session.Status != WireSessionStatus.Idle)
         {
+            if (session.Status != WireSessionStatus.Terminated)
+            {
+                await StopSessionAsync(runId, ct);
+            }
             return Remember(runId, AgentRunProgress.Failed($"Managed Agents session ended: {session.Status}."));
         }
 
@@ -113,12 +104,12 @@ public sealed class ManagedAgentsGateway(
             {
                 return done;
             }
-            var progress = await FinalizeAsync(runId, spec, session, ct);
-            return Remember(runId, progress);
+            var progress = await FinalizeAsync(runId, started, session, ct);
+            return progress.Status == AgentRunStatus.Running ? progress : Remember(runId, progress);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return Remember(runId, AgentRunProgress.Failed(ex.Message));
+            return Remember(runId, AgentRunProgress.Failed(ex));
         }
         finally
         {
@@ -126,106 +117,76 @@ public sealed class ManagedAgentsGateway(
         }
     }
 
-    private async Task<AgentRunProgress> FinalizeAsync(
-        string runId, AgentRunSpec spec, WireSession session, CancellationToken ct)
+    public async Task<AgentRunProgress> CancelAsync(
+        string runId, CancellationToken ct = default, bool publishFinished = false)
     {
-        var events = await client.GetSessionEventsAsync(runId, ct);
-        var finalText = events
-            .Where(e => e.Type == "agent.message")
-            .SelectMany(e => e.Content ?? [])
-            .Select(c => c.Text)
-            .LastOrDefault(t => !string.IsNullOrWhiteSpace(t))
-            ?? throw new InvalidOperationException("The agent session produced no final message.");
-
-        // The plan comes from an agent that browsed a whole repository, so its paths are untrusted input
-        // to the git tail. The check that keeps them inside the repo is DraftPrPublisher's, below, which
-        // the single-shot gateway shares: this gateway used to hold its own copy and was therefore the
-        // only one of the two that had it.
-        var plan = FixPlanParser.Parse(finalText);
-        var token = await tokens.GetAsync(spec.InstallationId, ct);
-        var (branch, prUrl, summary) = await DraftPrPublisher.PublishAsync(
-            repo, token, spec, runId,
-            plan.Files.ToDictionary(change => change.Path, change => change.Contents, StringComparer.Ordinal),
-            plan.Summary, prefetched: null, ct: ct);
-
-        // Cache tokens dominate a CMA session (probed live), so raw input alone would misrepresent the
-        // work; fold them into the input count until actual-cost reporting lands (ADR-0038 slice 6).
-        var usage = session.Usage;
-        var progress = AgentRunProgress.Done(branch, prUrl, summary) with
+        // Only a session this gateway started. Any other id would be an interrupt sent to someone
+        // else's session, and a memo kept for it for ever.
+        if (!runs.ContainsKey(runId) && !finalized.ContainsKey(runId))
         {
-            InputTokens = usage is null
-                ? 0
-                : usage.InputTokens + usage.CacheReadInputTokens
-                    + (usage.CacheCreation?.Ephemeral5mInputTokens ?? 0)
-                    + (usage.CacheCreation?.Ephemeral1hInputTokens ?? 0),
-            OutputTokens = usage?.OutputTokens ?? 0,
-        };
+            return AgentRunProgress.Failed(new KeyNotFoundException($"Unknown agent run '{runId}'."));
+        }
 
+        // When the caller allows it, a session that already finished its turn is finalized here as a poll
+        // would finalize it, since its answer is paid for and a success wins on every path. Otherwise the
+        // session is stopped: it does not stop by itself, and runs and spends up to its budget.
+        var gate = finalizing.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
         try
         {
-            await client.DeleteSessionAsync(runId, ct);
+            if (finalized.TryGetValue(runId, out var done))
+            {
+                return done;
+            }
+            if (publishFinished && runs.TryGetValue(runId, out var started)
+                && await TryFinalizeIdleAsync(runId, started, ct) is { } ended)
+            {
+                return ended;
+            }
+            await StopSessionAsync(runId, ct);
+            return Remember(runId, AgentRunProgress.Failed(
+                new TimeoutException("The run was stopped before it finished.")));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            // Cleanup only — the run already concluded; an undeleted session is vendor-side clutter.
+            gate.Release();
         }
-        return progress;
     }
+
+    // Interrupt, then delete, each best effort: the run is over for Condux whatever the vendor answers. The
+    // delete is usually refused while an interrupted session winds down, and a stop must not wait, since it
+    // can run on shutdown. ManagedAgentsSessionSweeper deletes what is left once nothing polls it.
+    private async Task StopSessionAsync(string runId, CancellationToken ct)
+    {
+        try
+        {
+            await client.InterruptSessionAsync(runId, ct);
+        }
+        catch (Exception)
+        {
+        }
+        await TryDeleteSessionAsync(runId, ct);
+    }
+
+    // The provider's poll interval is the backoff and its poll ceiling the limit, so a throttled or
+    // timed-out read is not a failed run. Failing it would also abandon a session still spending, or
+    // throw away one that has finished. A server error is not retried: it fails the run at once with the
+    // vendor's answer, where retrying it would report an outage as a timeout at the poll budget.
+    private static bool IsTransient(Exception ex, CancellationToken ct) =>
+        ex is ManagedAgentsApiException { IsRateLimit: true }
+            || (ex is OperationCanceledException && !ct.IsCancellationRequested);
 
     private AgentRunProgress Remember(string runId, AgentRunProgress progress)
     {
         finalized[runId] = progress;
-        specs.TryRemove(runId, out _);
+        runs.TryRemove(runId, out _);
         return progress;
     }
 
-    private async Task<string> GetOrCreateAgentAsync(string model, CancellationToken ct)
-    {
-        if (agentIds.TryGetValue(model, out var cached))
-        {
-            return cached;
-        }
-        await provisioning.WaitAsync(ct);
-        try
-        {
-            if (agentIds.TryGetValue(model, out cached))
-            {
-                return cached;
-            }
-            var name = $"condux-conductor-{model}";
-            var existing = (await client.ListAgentsAsync(ct))
-                .FirstOrDefault(a => a.Name == name && a.ArchivedAt is null);
-            var id = existing?.Id ?? (await client.CreateAgentAsync(name, model, SystemPrompt, ct)).Id;
-            agentIds[model] = id;
-            return id;
-        }
-        finally
-        {
-            provisioning.Release();
-        }
-    }
+    /// <summary>A run this gateway started, and the commit its session cloned.</summary>
+    private sealed record StartedRun(AgentRunSpec Spec, string BaseCommit);
 
-    private async Task<string> GetOrCreateEnvironmentAsync(CancellationToken ct)
-    {
-        if (environmentId is not null)
-        {
-            return environmentId;
-        }
-        await provisioning.WaitAsync(ct);
-        try
-        {
-            environmentId ??= (await client.ListEnvironmentsAsync(ct))
-                    .FirstOrDefault(e => e.Name == "condux-conductor" && e.ArchivedAt is null)?.Id
-                ?? (await client.CreateEnvironmentAsync("condux-conductor", ct)).Id;
-            return environmentId;
-        }
-        finally
-        {
-            provisioning.Release();
-        }
-    }
-
-    private static string BuildUserMessage(AgentRunSpec spec)
+    private static string BuildUserMessage(AgentRunSpec spec, string baseCommit)
     {
         // spec.Prompt arrives already fenced from the assembler. What is added here is not our text
         // either: a scoped path only ever passed a CONTAINMENT check, and RepoEndpoints stores a
@@ -236,7 +197,7 @@ public sealed class ManagedAgentsGateway(
             ? $"\n\nStart with these files (from the error's stack trace): {string.Join(", ", scoped)}"
             : "";
         return $"{spec.Prompt}\n\nRepository: {UntrustedText.Neutralize(spec.RepoFullName)} "
-            + $"(base branch: {UntrustedText.Neutralize(spec.BaseBranch)}), "
+            + $"(base branch: {UntrustedText.Neutralize(spec.BaseBranch)}, checked out at commit {baseCommit}), "
             + $"mounted read-only at {MountPath}.{paths}";
     }
 }

@@ -93,6 +93,27 @@ public sealed class FixVerificationWorkerTest(PostgresFixture pg, ClickHouseFixt
         Assert.Null(await GetLatestAuditDetailAsync(fixId, "fix_verified"));
     }
 
+    /// <summary>
+    /// The worker's own tick runs the issue half, beside the CVE half it shares the timer with: a merged
+    /// fix concludes through <see cref="VerificationWorker.TickBothAsync"/>, not only when
+    /// <see cref="VerificationWorker.ConcludeAsync"/> is driven directly.
+    /// </summary>
+    [Fact]
+    public async Task The_worker_tick_concludes_issue_fixes()
+    {
+        var mergedAt = FloorHour(DateTimeOffset.UtcNow.AddHours(-80)).AddMinutes(30);
+        var (fixId, _, _) = await SeedMergedFixAsync("fp-tick", mergedAt);
+        var services = new ServiceCollection().AddLogging();
+        services.AddClickHouseReader<ClickHouseIssueStatsReader>(ch.BaseUrl, ch.ChUser, ch.ChPassword);
+        services.AddClickHouseReader<ClickHouseReleaseModuleReader>(ch.BaseUrl, ch.ChUser, ch.ChPassword);
+        await using var provider = services.BuildServiceProvider();
+        var scopes = provider.GetRequiredService<IServiceScopeFactory>();
+
+        Assert.True(await Worker(scopes).TickBothAsync(default));
+
+        Assert.Equal(VerifyStatus.Held, (await GetFixAsync(fixId)).VerifyStatus);
+    }
+
     // Stands up an org/project/issue + a succeeded fix whose draft PR merged, flipping it to watching the
     // way the webhook does (MarkMergedAsync on repo + branch). Returns the ids the assertions need.
     private async Task<(Guid FixId, UpsertResult Issue, long ProjectId)> SeedMergedFixAsync(
@@ -124,18 +145,27 @@ public sealed class FixVerificationWorkerTest(PostgresFixture pg, ClickHouseFixt
         var stats = new ClickHouseIssueStatsReader(http);
 
         var verification = new PostgresFixVerification(pg.ConnectionString);
-        var worker = new VerificationWorker(
-            new ConfigurationBuilder().Build(),
-            NullLogger<VerificationWorker>.Instance,
-            new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-            verification,
-            new IssueRepository(pg.ConnectionString),
-            new PostgresFixStore(pg.ConnectionString),
-            new ProjectEventNotifier(pg.ConnectionString),
-            new Condux.Telemetry.ConduxSelfReporter(null));
+        var worker = Worker(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
 
         await worker.ConcludeAsync(await verification.ListWatchingAsync(), stats, now, default);
     }
+
+    private VerificationWorker Worker(IServiceScopeFactory scopes) =>
+        new(
+            new ConfigurationBuilder().Build(),
+            NullLogger<VerificationWorker>.Instance,
+            scopes,
+            new PostgresFixVerification(pg.ConnectionString),
+            new IssueRepository(pg.ConnectionString),
+            new PostgresFixStore(pg.ConnectionString),
+            new ProjectEventNotifier(pg.ConnectionString),
+            new Condux.Telemetry.ConduxSelfReporter(null),
+            new CveFixVerifier(
+                new PostgresCveFixVerification(pg.ConnectionString),
+                scopes,
+                new ProjectEventNotifier(pg.ConnectionString),
+                TimeProvider.System,
+                NullLogger<CveFixVerifier>.Instance));
 
     private async Task WriteOccurrencesAsync(long projectId, long issueId, params DateTimeOffset[] at)
     {

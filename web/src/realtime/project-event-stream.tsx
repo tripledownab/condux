@@ -9,6 +9,26 @@ import { ProjectStatus, useCurrentProject } from "@/src/issues/current-project";
 // ping it invalidates every query for that project so open surfaces refetch at once; the counts also poll
 // slowly on their own, so a dropped stream is self-healing. Opened once (via <ProjectEventStream/> in the
 // sidebar) and shared by everything.
+
+/**
+ * Whether a ping refreshes this query: every query for the project, except the CVE findings. Those are
+ * read live from GitHub, up to ten pages a time, and nothing a ping announces (an issue, a fix run) can
+ * change them. Refreshing them on every ping spent the installation's GitHub rate limit, which the
+ * Conductor's own runs share, on reads that could only return the same list. A CVE bump's status is a
+ * different query (cve-fixes) and is still refreshed.
+ */
+export function isRefreshedByProjectEvent(
+  queryKey: readonly unknown[],
+  projectId: number,
+): boolean {
+  const key = queryKey[0];
+  return (
+    typeof key === "string" &&
+    key.startsWith(`/api/projects/${projectId}/`) &&
+    !key.endsWith("/cve-findings")
+  );
+}
+
 export function useProjectEventStream(projectId: number | null) {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -22,15 +42,14 @@ export function useProjectEventStream(projectId: number | null) {
     // A message means "something changed, refetch". onopen fires on every (re)connect, so it also catches
     // anything that landed while the stream was down.
     //
-    // Every project-scoped query, not a curated list of keys: this started as the two badge counts, and
-    // the lists were left out — so a fix finished by a runner (or an issue landed by another user) moved
-    // the badge while the list beside it sat stale until reload. A ping is rare (a new or regressed
-    // issue, a fix run changing state) and invalidation only marks; TanStack refetches what is mounted.
+    // Every project-scoped query bar the one isRefreshedByProjectEvent names, not a curated list of keys:
+    // this started as the two badge counts, and the lists were left out, so a fix finished by a runner
+    // (or an issue landed by another user) moved the badge while the list beside it sat stale until
+    // reload. A ping is rare (a new or regressed issue, a fix run changing state) and invalidation only
+    // marks; TanStack refetches what is mounted.
     const refresh = () => {
       queryClient.invalidateQueries({
-        predicate: (query) =>
-          typeof query.queryKey[0] === "string" &&
-          query.queryKey[0].startsWith(`/api/projects/${projectId}/`),
+        predicate: (query) => isRefreshedByProjectEvent(query.queryKey, projectId),
       });
     };
     source.onmessage = refresh;

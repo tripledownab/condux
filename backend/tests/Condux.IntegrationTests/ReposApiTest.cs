@@ -132,7 +132,9 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
         // No GitHub installation → nothing to scan, but a clean 200 (not a 500).
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repoId}/cve-findings");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-        Assert.Empty((await resp.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray());
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(body.GetProperty("findings").EnumerateArray());
+        Assert.False(body.GetProperty("truncated").GetBoolean());
     }
 
     [Fact]

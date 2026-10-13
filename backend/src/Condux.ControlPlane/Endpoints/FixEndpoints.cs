@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
 using Condux.Core.Events;
@@ -12,6 +11,7 @@ using Condux.Storage.ClickHouse;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection;
+using Condux.Storage.SourceMaps;
 
 namespace Condux.ControlPlane.Endpoints;
 
@@ -34,7 +34,8 @@ internal static class FixEndpoints
                     GithubInstallationRepository installations,
                     ClickHouseEventReader events, IAiFixQuota quota, IAiFixSpend spend,
                     IFixRequestPublisher publisher, PostgresJobLeaseStore leases, IFixStore fixes,
-                    ProjectEventNotifier projectEvents, ILoggerFactory loggerFactory) =>
+                    ProjectEventNotifier projectEvents, EventSymbolication symbolication,
+                    ILoggerFactory loggerFactory) =>
                 {
                     if (await issues.GetByPublicIdAsync(projectId, issueId) is not { } issue)
                     {
@@ -97,91 +98,76 @@ internal static class FixEndpoints
                     // lifetime path is dormant, ADR-0035). Reserving at request time counts
                     // in-flight runs too, so rapid requests cannot over-consume; a failed run is refunded.
                     // Checked last so a rejected request (no repo) never burns allowance.
+                    var reservedAt = DateTimeOffset.UtcNow;
                     var reserved = onLifetimeGrant
                         ? await quota.TryConsumeLifetimeAsync(
-                            org.Id, limits.AiFixesLifetime, DateTimeOffset.UtcNow, http.RequestAborted)
+                            org.Id, limits.AiFixesLifetime, reservedAt, http.RequestAborted)
                         : await quota.TryConsumeAsync(
-                            org.Id, limits.AiFixesPerMonth, DateTimeOffset.UtcNow, http.RequestAborted);
+                            org.Id, limits.AiFixesPerMonth, reservedAt, http.RequestAborted);
                     if (!reserved)
                     {
                         return TypedResults.Conflict(new ErrorResponse("ai_fix_quota_exceeded"));
                     }
 
                     var actor = OrgAuthorization.CurrentUserId(http.User).ToString(CultureInfo.InvariantCulture);
-                    // The org's GitHub App installation (0 when GitHub is not connected): a real provider
-                    // mints a repo-scoped token from it, and the suspect-commit lookup below needs it too.
-                    var installs = await installations.GetByOrgAsync(org.Id, http.RequestAborted);
-                    var installationId = installs.Count > 0 ? installs[0].InstallationId : 0;
-
-                    // Release attribution + suspect commit (#144): resolve the release the issue was first
-                    // seen in → its commit (a bisect hint), then blame the culprit file at that commit for the
-                    // change that most likely introduced the bug. Both best-effort — GitHub off or an
-                    // unrecorded release simply drops the respective hint.
                     var logger = loggerFactory.CreateLogger(nameof(FixEndpoints));
-                    var release = await ResolveReleaseAsync(
-                        projectId, issue.Summary.FirstRelease, releases, http.RequestAborted);
-                    var context = await AssembleContextAsync(
-                        projectId, issue.InternalId, repo, release, installationId,
-                        http.RequestServices.GetService<ISourceHostTokens>(),
-                        http.RequestServices.GetService<ISourceHostClient>(),
-                        events, repos, logger, http.RequestAborted);
+                    // Hands the reservation back: the lifetime grant or the month, whichever it came from.
+                    Task RefundAsync() => onLifetimeGrant
+                        ? quota.RefundLifetimeAsync(org.Id, CancellationToken.None)
+                        : quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+
+                    // The run is reserved before the context is built, so an org with none left costs no
+                    // GitHub or source-map call. No job is sent while the context is built, so any failure
+                    // there hands the run back.
+                    FixContext context;
+                    long installationId;
+                    try
+                    {
+                        (context, installationId) = await FixRequestContext.BuildAsync(
+                            projectId, issue.InternalId, issue.Summary.FirstRelease, repo, org.Id,
+                            installations, releases, events, symbolication, repos, http.RequestServices, logger,
+                            http.RequestAborted);
+                    }
+                    catch
+                    {
+                        await RefundAsync();
+                        throw;
+                    }
+
                     var job = new FixJob(issue.InternalId, repo.RepoFullName, baseBranch, actor, ModelDefaults.Fix)
                     {
                         Prompt = context.Prompt,
                         ScopedPaths = context.ScopedPaths,
                         InstallationId = installationId,
                         OrgId = org.Id,
+                        JobId = Guid.CreateVersion7(),
+                        ReservedAt = reservedAt,
                     };
 
-                    // The reservation is already taken; if the job never reaches the queue the run will
-                    // never happen, so refund it here (the orchestrator only refunds runs it actually
-                    // started). A broker outage then surfaces as a clear 503, not a silently burnt fix.
-                    try
+                    // The run is reserved, so whatever stops it reaching the queue hands it back, and a
+                    // broker outage surfaces as a clear 503, not a silently burnt fix. A request refused
+                    // because the issue has a run in progress gets its reservation back too.
+                    var enqueued = await FixEnqueue.EnqueueAsync(
+                        (FixExecution)org.FixExecution, job, context, leases, fixes, publisher, logger,
+                        http.RequestAborted);
+                    if (enqueued.Failure is not null)
                     {
-                        // Where it goes is the org's choice (ADR-0033 slice 4c). A self-hosting org gets a
-                        // leasable row its own runner takes; everyone else gets the Kafka topic our
-                        // Conductor drains. Everything above this line — the context, the double scrub, the
-                        // cost cap, the allowance — is identical either way, which is the point.
-                        if ((FixExecution)org.FixExecution == FixExecution.Runner)
-                        {
-                            var fixId = Guid.CreateVersion7();
-                            await leases.EnqueueAsync(
-                                fixId, issue.InternalId, repo.RepoFullName,
-                                new RunnerJobContext(baseBranch, context.Prompt, context.ScopedPaths),
-                                DateTimeOffset.UtcNow, http.RequestAborted);
-
-                            // The hosted orchestrator writes this when it starts the run; a run we hand to
-                            // a runner never reaches it, so without this the trail begins at "leased" and
-                            // nothing records who asked for the fix — fix_suggestions has no actor column,
-                            // so that fact would exist nowhere. Best-effort, because the row is committed:
-                            // failing here would 503 and refund a run that is going to happen anyway.
-                            await FixAudit.TryWriteAsync(
-                                fixes, logger, fixId, actor, "requested",
-                                new
-                                {
-                                    repo = repo.RepoFullName,
-                                    model = "",
-                                    provider = PostgresJobLeaseStore.RunnerProvider,
-                                    promptHash = FixOrchestrator.PromptHash(context.Prompt),
-                                },
-                                http.RequestAborted);
-                        }
-                        else
-                        {
-                            await publisher.PublishAsync(job, http.RequestAborted);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
+                        // Logged even when the run went ahead: a publish can fail after the job arrived.
                         logger.LogError(
-                            ex, "fix enqueue failed org={OrgId} issue={IssueId}", org.Id, issue.InternalId);
-                        if (onLifetimeGrant)
+                            enqueued.Failure, "fix enqueue failed org={OrgId} issue={IssueId} outcome={Outcome}",
+                            org.Id, issue.InternalId, enqueued.Outcome);
+                    }
+                    if (enqueued.Outcome == FixQueueOutcome.InProgress)
+                    {
+                        await RefundAsync();
+                        return TypedResults.Conflict(new ErrorResponse("fix_in_progress"));
+                    }
+                    if (enqueued.Outcome != FixQueueOutcome.Queued)
+                    {
+                        // An unsettled reservation is kept; FixQueueOutcome.Unsettled says how it is settled.
+                        if (enqueued.Outcome == FixQueueOutcome.Withdrawn)
                         {
-                            await quota.RefundLifetimeAsync(org.Id, http.RequestAborted);
-                        }
-                        else
-                        {
-                            await quota.RefundAsync(org.Id, DateTimeOffset.UtcNow, http.RequestAborted);
+                            await RefundAsync();
                         }
                         return TypedResults.Json(
                             new ErrorResponse("fix_enqueue_failed"),
@@ -209,88 +195,5 @@ internal static class FixEndpoints
                 })
             .WithName("listFixes").WithTags("Conductor")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));
-    }
-
-    // Default options match the ClickHouse writer's JsonSerializer.Serialize(event) (PascalCase, integer
-    // enums), so the stored payload round-trips back to an Event here.
-    private static readonly JsonSerializerOptions PayloadJson = new();
-
-    // The release the issue was first seen in, resolved to its recorded commit (#144). Null when the issue
-    // has no first_release; a version with no recorded release still attributes the version (commit null).
-    private static async Task<ReleaseContext?> ResolveReleaseAsync(
-        long projectId, string? firstRelease, ReleaseRepository releases, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(firstRelease))
-        {
-            return null;
-        }
-
-        var release = await releases.GetByVersionAsync(projectId, firstRelease, cancellationToken);
-        return new ReleaseContext(firstRelease, release?.CommitSha);
-    }
-
-    // Assemble the scoped, double-scrubbed fix context from the issue's latest stored event + the repo's
-    // code mappings (#63) + the release attribution and suspect commit (#144). Best-effort: with no event
-    // yet (or an unreadable payload), return an empty context so the run falls back to a minimal prompt.
-    private static async Task<FixContext> AssembleContextAsync(
-        long projectId, long issueId, RepoLink repo, ReleaseContext? release, long installationId,
-        ISourceHostTokens? tokens, ISourceHostClient? github, ClickHouseEventReader events,
-        RepoLinkRepository repos, ILogger logger, CancellationToken cancellationToken)
-    {
-        // Context assembly is best-effort by design (#63): no sampled event degrades to the minimal
-        // prompt, and an unreachable event store must degrade the same way, not fail the request.
-        IReadOnlyList<StoredEvent> recent;
-        try
-        {
-            recent = await events.RecentByIssueAsync(
-                projectId.ToString(CultureInfo.InvariantCulture), (ulong)issueId, 1, cancellationToken);
-        }
-        catch (HttpRequestException ex)
-        {
-            logger.LogWarning(ex, "fix context assembly skipped: event store unreachable issue={IssueId}", issueId);
-            recent = [];
-        }
-
-        if (recent.Count == 0
-            || JsonSerializer.Deserialize<Event>(recent[0].Payload, PayloadJson) is not { } sample)
-        {
-            return new FixContext("", []);
-        }
-
-        var mappings = await repos.ListCodeMappingsAsync(repo.Id, cancellationToken);
-        var suspect = await ResolveSuspectAsync(
-            repo, release, installationId, tokens, github, sample, mappings, logger, cancellationToken);
-        return FixContextAssembler.Assemble(sample, mappings, release, suspect);
-    }
-
-    // The commit that most likely introduced the error (#144): the last change to the culprit file as of the
-    // first-seen release commit, via GitHub blame-by-file. Needs GitHub connected + a release commit + an
-    // in-app culprit frame; best-effort, so any gap or a GitHub hiccup just drops the hint (never fails).
-    private static async Task<SuspectCommitContext?> ResolveSuspectAsync(
-        RepoLink repo, ReleaseContext? release, long installationId,
-        ISourceHostTokens? tokens, ISourceHostClient? github,
-        Event sample, IReadOnlyList<CodeMapping> mappings, ILogger logger, CancellationToken cancellationToken)
-    {
-        if (release?.CommitSha is not { } sha || tokens is null || github is null || installationId == 0
-            || FixContextAssembler.CulpritPath(sample, mappings) is not { } culprit)
-        {
-            return null;
-        }
-
-        try
-        {
-            var token = await tokens.GetAsync(installationId, cancellationToken);
-            if (await github.GetLatestCommitTouchingAsync(token, repo.RepoFullName, culprit, sha, cancellationToken)
-                is { } commit)
-            {
-                return new SuspectCommitContext(commit.Sha, commit.Subject, commit.Author);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "suspect-commit lookup skipped repo={Repo}", repo.RepoFullName);
-        }
-
-        return null;
     }
 }

@@ -1,13 +1,15 @@
 using System.Globalization;
 using Condux.Core.Quotas;
+using Condux.Storage.Valkey;
 using StackExchange.Redis;
 
 namespace Condux.Storage.Quotas;
 
 /// <summary>
 /// Cross-instance monthly quota meter backed by Valkey (Redis-compatible). Every relay replica shares one
-/// counter per (project, month). A Lua script makes the read-limit-then-increment atomic, so concurrent
-/// events across replicas can't over-admit, and only an admitted event increments (usage never overshoots).
+/// counter per (quota key, month), and the relay passes the org's key. A Lua script makes the
+/// read-limit-then-increment atomic, so concurrent events across replicas can't over-admit, and only an
+/// admitted event increments (usage never overshoots).
 /// On a Valkey outage it <b>fails open</b> — a metering blip must never drop ingest.
 /// </summary>
 public sealed class ValkeyQuotaMeter : IQuotaMeter
@@ -89,7 +91,7 @@ public sealed class ValkeyQuotaMeter : IQuotaMeter
 
             return new QuotaDecision((long)result[0], (long)result[1], (long)result[2]);
         }
-        catch (RedisException)
+        catch (Exception ex) when (ValkeyOutages.IsOutage(ex))
         {
             // Fail open: a metering outage must not become an ingest outage.
             return new QuotaDecision(count, 0, long.MaxValue);
@@ -105,11 +107,10 @@ public sealed class ValkeyQuotaMeter : IQuotaMeter
         {
             await _db.ScriptEvaluateAsync(RefundScript, [monthKey], [count]);
         }
-        catch (RedisException)
+        catch (Exception ex) when (ValkeyOutages.IsOutage(ex))
         {
             // Swallowed for the same reason TryConsumeAsync fails open, but the direction differs and is
-            // worth naming: this loses the caller its refund rather than granting anyone extra quota, and
-            // the caller is already on its way to answering an error for the failure that led here.
+            // worth naming: this loses the caller its refund rather than granting anyone extra quota.
         }
     }
 }

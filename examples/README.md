@@ -10,7 +10,7 @@ relay listens on `localhost:9010` in the local compose stack, so a DSN looks lik
 `http://<key>@localhost:9010/<projectId>`.
 
 Run the full stack first (`docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`),
-then a sample app, then refresh the Issues page at http://localhost:3000.
+then a sample app, then refresh the Issues page at http://localhost:3200.
 
 ## Node — checkout service (`node-checkout/`)
 

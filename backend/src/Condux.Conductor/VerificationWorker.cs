@@ -15,13 +15,14 @@ namespace Condux.Conductor;
 /// The fix-verification watcher (ADR-0019): periodically checks every merged, watching fix against
 /// the issue's exact hourly stats. A silent 72h window resolves the issue and records the evidence;
 /// any occurrence marks the fix as not holding, leaving the issue open. The evaluation itself is the
-/// pure <see cref="FixVerification"/> policy; this worker is only the clock and the plumbing.
-/// Resilient — a failing tick is logged and retried on the next interval.
+/// pure <see cref="FixVerification"/> policy; this worker is only the clock and the plumbing. The same
+/// clock drives <see cref="CveFixVerifier"/>, the CVE bump watch (ADR-0051). Resilient: each half's failing
+/// tick is logged and retried on the next interval without stopping the other half.
 /// </summary>
 public sealed class VerificationWorker(
     IConfiguration config, ILogger<VerificationWorker> logger, IServiceScopeFactory scopes,
     PostgresFixVerification verification, IssueRepository issues, IFixStore fixes,
-    ProjectEventNotifier projectEvents, ConduxSelfReporter selfReport)
+    ProjectEventNotifier projectEvents, ConduxSelfReporter selfReport, CveFixVerifier cveFixes)
     : BackgroundService
 {
     private const int ResolvedStatus = 2;
@@ -35,29 +36,46 @@ public sealed class VerificationWorker(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
-            {
-                await TickAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
+            if (!await TickBothAsync(stoppingToken))
             {
                 break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "verification tick error");
-                selfReport.Report(ex); // Condux on Condux (#75)
             }
 
             try
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
         }
+    }
+
+    /// <summary>One tick of both halves, issue fixes then CVE bumps. False when the host is stopping.
+    /// Internal for the test that runs the CVE half through it.</summary>
+    internal async Task<bool> TickBothAsync(CancellationToken stoppingToken) =>
+        await TryTickAsync(TickAsync, "verification", stoppingToken)
+        && await TryTickAsync(cveFixes.TickAsync, "cve bump verification", stoppingToken);
+
+    // False when the host is stopping; any other failure, a timeout's cancellation included, is logged and
+    // reported, and the loop goes on. Internal for the test that holds each half's failure apart.
+    internal async Task<bool> TryTickAsync(Func<CancellationToken, Task> tick, string name, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await tick(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "{Name} tick error", name);
+            selfReport.Report(ex); // Condux on Condux (#75)
+        }
+        return true;
     }
 
     private async Task TickAsync(CancellationToken ct)

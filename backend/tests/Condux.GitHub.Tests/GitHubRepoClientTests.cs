@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Condux.Core.CveFix;
 using Condux.Core.SourceControl;
 using Condux.GitHub;
 using Xunit;
@@ -48,19 +49,100 @@ public class GitHubRepoClientTests
     [Fact]
     public async Task Reads_and_decodes_a_file_and_returns_null_when_absent()
     {
-        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes("const x = 1;\n"));
+        var bytes = Encoding.UTF8.GetBytes("const x = 1;\n");
+        var sha = GitBlobs.ToSha(bytes);
         var (client, handler) = Create(new()
         {
             [$"GET /repos/{Repo}/contents/src/x.js?ref=main"] =
-                (HttpStatusCode.OK, $$"""{"content":"{{encoded}}","sha":"abc123"}"""),
+                (HttpStatusCode.OK, $$"""{"type":"file","encoding":"base64","content":"{{Convert.ToBase64String(bytes)}}","sha":"{{sha}}"}"""),
         });
 
         var file = await client.GetFileAsync(Token, Repo, "src/x.js", "main");
         Assert.Equal("const x = 1;\n", file!.Content);
-        Assert.Equal("abc123", file.Sha);
+        Assert.Equal(sha, file.Sha);
         Assert.Equal("Bearer", handler.Requests[0].Request.Headers.Authorization?.Scheme);
 
         Assert.Null(await client.GetFileAsync(Token, Repo, "src/missing.js", "main"));
+    }
+
+    // GitHub's answer for vercel/next.js pnpm-lock.yaml (1,256,297 bytes) on 2026-10-10: 200, content
+    // empty, encoding "none". Decoded as before it read as an empty file, which a fix could replace.
+    [Fact]
+    public async Task A_file_github_will_not_return_has_no_contents_rather_than_empty_ones()
+    {
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/contents/pnpm-lock.yaml?ref=main"] =
+                (HttpStatusCode.OK, """{"size":1256297,"content":"","encoding":"none","sha":"lock-sha"}"""),
+        });
+
+        var file = await client.GetFileAsync(Token, Repo, "pnpm-lock.yaml", "main");
+
+        Assert.NotNull(file);
+        Assert.Null(file.Content);
+        Assert.Equal("lock-sha", file.Sha);
+    }
+
+    // The same route answers for things that are not files. A model can now ask for any path, so each of
+    // these must come back as a wrong path it can correct, not an exception that ends the run.
+    [Theory]
+    [InlineData("""[{"type":"file","name":"a.rs","path":"src/a.rs"}]""")]
+    [InlineData("""{"type":"submodule","name":"vendor","sha":"sub-sha","submodule_git_url":"https://x"}""")]
+    [InlineData("""{"type":"symlink","target":"../elsewhere","sha":"link-sha"}""")]
+    public async Task A_path_that_is_not_a_file_is_refused_as_one(string answer)
+    {
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/contents/src?ref=main"] = (HttpStatusCode.OK, answer),
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetFileAsync(Token, Repo, "src", "main"));
+    }
+
+    // Decoded leniently, bytes that are not UTF-8 became replacement characters that read as the file's
+    // contents and, written back, would corrupt it.
+    [Fact]
+    public async Task A_file_that_is_not_text_has_no_contents_rather_than_mangled_ones()
+    {
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0x00];
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/contents/logo.png?ref=main"] =
+                (HttpStatusCode.OK, $$"""{"type":"file","encoding":"base64","content":"{{Convert.ToBase64String(png)}}","sha":"{{GitBlobs.ToSha(png)}}"}"""),
+        });
+
+        var file = await client.GetFileAsync(Token, Repo, "logo.png", "main");
+
+        Assert.Null(file!.Content);
+        Assert.Equal(GitBlobs.ToSha(png), file.Sha);
+    }
+
+    // git/git's RelNotes is a symlink (tree mode 120000) to Documentation/RelNotes/2.98.0.adoc. On
+    // 2026-10-10 the contents API answered it as "type": "file" with the TARGET's text and the LINK's own
+    // blob sha 513bc0b..., whose contents are the target path. Taken at its word, a run would count the
+    // link as read and replace it with a copy of the target.
+    [Fact]
+    public async Task A_symlink_github_answers_as_a_file_is_refused_as_not_one()
+    {
+        var target = Convert.ToBase64String(Encoding.UTF8.GetBytes("Git v2.98 Release Notes\n"));
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/contents/RelNotes?ref=main"] =
+                (HttpStatusCode.OK, $$"""{"type":"file","encoding":"base64","content":"{{target}}","sha":"513bc0bea80652bcd4583ea0071b5cb96d172fa0"}"""),
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetFileAsync(Token, Repo, "RelNotes", "main"));
+    }
+
+    // Anchored on real blobs rather than on the formula restated: the link above, and the empty blob,
+    // e69de29..., which is the sha git gives any empty file.
+    [Fact]
+    public void A_blob_sha_is_git_s_own()
+    {
+        Assert.Equal(
+            "513bc0bea80652bcd4583ea0071b5cb96d172fa0",
+            GitBlobs.ToSha(Encoding.UTF8.GetBytes("Documentation/RelNotes/2.98.0.adoc")));
+        Assert.Equal("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", GitBlobs.ToSha([]));
     }
 
     [Fact]
@@ -162,7 +244,13 @@ public class GitHubRepoClientTests
                 [{
                   "security_advisory": {
                     "ghsa_id": "GHSA-jf85-cpcp-j695", "cve_id": "CVE-2019-10744",
-                    "severity": "high", "summary": "Prototype pollution in lodash"
+                    "severity": "high", "summary": "Prototype pollution in lodash",
+                    "vulnerabilities": [
+                      { "package": { "ecosystem": "npm", "name": "lodash" }, "vulnerable_version_range": "< 4.17.12",
+                        "first_patched_version": { "identifier": "4.17.12" } },
+                      { "package": { "ecosystem": "npm", "name": "lodash-es" }, "vulnerable_version_range": "< 4.17.12",
+                        "first_patched_version": null }
+                    ]
                   },
                   "security_vulnerability": {
                     "package": { "ecosystem": "npm", "name": "lodash" },
@@ -186,7 +274,9 @@ public class GitHubRepoClientTests
                 """),
         });
 
-        var alerts = await client.ListDependabotAlertsAsync(Token, Repo);
+        var list = await client.ListDependabotAlertsAsync(Token, Repo);
+        Assert.False(list.Truncated); // one page, no next link
+        var alerts = list.Alerts;
         var alert = alerts[0];
         Assert.Equal("GHSA-jf85-cpcp-j695", alert.GhsaId);
         Assert.Equal("CVE-2019-10744", alert.CveId);
@@ -199,7 +289,75 @@ public class GitHubRepoClientTests
         // alert without the optional dependency block reads as unknown, never as an error.
         Assert.Equal("web/package.json", alert.ManifestPath);
         Assert.Null(alerts[1].ManifestPath);
+        // Every package and range the advisory lists, which a merged bump is verified against (ADR-0051).
+        // An advisory without the list reads as no list at all, not as an empty one, so a bump is never
+        // judged on its own range alone.
+        Assert.Equal(
+            [new AdvisoryRange("npm", "lodash", "< 4.17.12"), new AdvisoryRange("npm", "lodash-es", "< 4.17.12")],
+            alert.AdvisoryRanges);
+        Assert.Null(alerts[1].AdvisoryRanges);
         Assert.Equal("Bearer", handler.Requests[0].Request.Headers.Authorization?.Scheme);
+    }
+
+    /// <summary>
+    /// An advisory range list with an entry missing its package, ecosystem or range reads as no list:
+    /// skipping the entry could drop a range of the bumped package, and a bump with no ranges cannot be
+    /// verified rather than being judged on fewer ranges than the advisory has.
+    /// </summary>
+    [Theory]
+    [InlineData("""{ "package": null, "vulnerable_version_range": "< 1.0.0" }""")]
+    [InlineData("""{ "package": { "ecosystem": null, "name": "lodash" }, "vulnerable_version_range": "< 1.0.0" }""")]
+    [InlineData("""{ "package": { "ecosystem": "npm", "name": null }, "vulnerable_version_range": "< 1.0.0" }""")]
+    [InlineData("""{ "package": { "ecosystem": "npm", "name": "lodash" }, "vulnerable_version_range": null }""")]
+    public async Task Reads_an_advisory_range_list_with_an_unreadable_entry_as_none(string entry)
+    {
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/dependabot/alerts?state=open&per_page=100"] = (HttpStatusCode.OK, $$"""
+                [{
+                  "security_advisory": {
+                    "ghsa_id": "GHSA-jf85-cpcp-j695", "cve_id": null, "severity": "high", "summary": "s",
+                    "vulnerabilities": [
+                      { "package": { "ecosystem": "npm", "name": "lodash" }, "vulnerable_version_range": "< 4.17.12" },
+                      {{entry}}
+                    ]
+                  },
+                  "security_vulnerability": {
+                    "package": { "ecosystem": "npm", "name": "lodash" },
+                    "vulnerable_version_range": "< 4.17.12",
+                    "first_patched_version": { "identifier": "4.17.12" }
+                  },
+                  "html_url": "https://gh.test/acme/api/security/dependabot/1"
+                }]
+                """),
+        });
+
+        Assert.Null(Assert.Single((await client.ListDependabotAlertsAsync(Token, Repo)).Alerts).AdvisoryRanges);
+    }
+
+    /// <summary>An empty range list reads as none too: the alert's own package must be one of its entries.</summary>
+    [Fact]
+    public async Task Reads_an_empty_advisory_range_list_as_none()
+    {
+        var (client, _) = Create(new()
+        {
+            [$"GET /repos/{Repo}/dependabot/alerts?state=open&per_page=100"] = (HttpStatusCode.OK, """
+                [{
+                  "security_advisory": {
+                    "ghsa_id": "GHSA-jf85-cpcp-j695", "cve_id": null, "severity": "high", "summary": "s",
+                    "vulnerabilities": []
+                  },
+                  "security_vulnerability": {
+                    "package": { "ecosystem": "npm", "name": "lodash" },
+                    "vulnerable_version_range": "< 4.17.12",
+                    "first_patched_version": { "identifier": "4.17.12" }
+                  },
+                  "html_url": "https://gh.test/acme/api/security/dependabot/1"
+                }]
+                """),
+        });
+
+        Assert.Null(Assert.Single((await client.ListDependabotAlertsAsync(Token, Repo)).Alerts).AdvisoryRanges);
     }
 
     [Fact]
@@ -291,6 +449,70 @@ public class GitHubRepoClientTests
         Assert.True(body.RootElement.GetProperty("draft").GetBoolean()); // draft-only, never ready-for-review
         Assert.Equal("condux/fix-1", body.RootElement.GetProperty("head").GetString());
         Assert.Equal("main", body.RootElement.GetProperty("base").GetString());
+    }
+
+    // The stale-run sweep asks this before it fails a run, so the filter has to be one GitHub applies:
+    // it reads head only as owner:branch, and lists open pull requests only unless told otherwise.
+    [Fact]
+    public async Task Finds_a_pull_request_by_its_head_branch_in_any_state()
+    {
+        var handler = new AnsweringHandler(
+            """[{"html_url":"https://gh.test/acme/api/pull/7","merged_at":"2026-06-15T10:00:00Z","head":{"ref":"condux/fix-42-abc"}}]""");
+        var client = new GitHubRepoClient(new HttpClient(handler), "https://gh.test");
+
+        var found = await client.FindPullRequestAsync(Token, Repo, "condux/fix-42-abc");
+
+        Assert.Equal("https://gh.test/acme/api/pull/7", found!.Url);
+        Assert.Equal(new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.Zero), found.MergedAt);
+        var uri = handler.Requests.Single();
+        Assert.Equal($"/repos/{Repo}/pulls", uri.AbsolutePath);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        Assert.Equal("acme:condux/fix-42-abc", query["head"]);
+        Assert.Equal("all", query["state"]);
+    }
+
+    [Fact]
+    public async Task Answers_null_when_no_pull_request_has_that_head()
+    {
+        var client = new GitHubRepoClient(new HttpClient(new AnsweringHandler("[]")), "https://gh.test");
+
+        Assert.Null(await client.FindPullRequestAsync(Token, Repo, "condux/fix-42-abc"));
+    }
+
+    [Fact]
+    public async Task A_pull_request_from_another_branch_is_refused_rather_than_returned()
+    {
+        // That answer means the filter was not applied, and returning it would record somebody else's
+        // pull request as a stopped run's success.
+        var client = new GitHubRepoClient(new HttpClient(new AnsweringHandler(
+            """[{"html_url":"https://gh.test/acme/api/pull/3","merged_at":null,"head":{"ref":"feature/other"}}]""")),
+            "https://gh.test");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.FindPullRequestAsync(Token, Repo, "condux/fix-42-abc"));
+    }
+
+    [Fact]
+    public async Task A_failed_lookup_throws_rather_than_reading_as_no_pull_request()
+    {
+        // The sweep fails and refunds a run the host says opened nothing, so an error must not say that.
+        var client = new GitHubRepoClient(
+            new HttpClient(new AnsweringHandler("{}", HttpStatusCode.InternalServerError)), "https://gh.test");
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.FindPullRequestAsync(Token, Repo, "condux/fix-42-abc"));
+    }
+
+    // Answers every request the same way and records the URI it was sent to.
+    private sealed class AnsweringHandler(string body, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests.Add(request.RequestUri!);
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
+        }
     }
 
     // ---- What reaches the URL -------------------------------------------------------------------

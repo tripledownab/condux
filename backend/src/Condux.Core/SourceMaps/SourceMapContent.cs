@@ -6,7 +6,7 @@ namespace Condux.Core.SourceMaps;
 /// A cheap sanity check that an uploaded blob is actually a JSON source map (ADR-0028), so the store
 /// rejects mistakes and abuse early rather than accepting arbitrary bytes as a "source map". Follows the
 /// Source Map v3 spec: a JSON object with <c>version: 3</c> and either <c>mappings</c> (a plain map) or
-/// <c>sections</c> (an index map), and for a plain map a mappings string the decoder will accept. Not a
+/// <c>sections</c> (an index map), and mappings the decoder will accept. Not a
 /// full validation, just enough to reject what could never be read back.
 /// </summary>
 public static class SourceMapContent
@@ -30,15 +30,17 @@ public static class SourceMapContent
                 return false;
             }
 
-            if (root.TryGetProperty("mappings", out var mappings) && mappings.ValueKind == JsonValueKind.String)
+            // The one thing here that is not a shape check, and the reason is that the caller is not asking
+            // a question about shape: mappings the decoder will refuse make a map that uploads, stores and
+            // then silently symbolicates nothing. The decoder owns the rule, and as in the decoder, a
+            // "sections" field makes it an index map whatever else it holds.
+            if (root.TryGetProperty("sections", out var sections))
             {
-                // The one thing here that is not a shape check, and the reason is that the caller is not
-                // asking a question about shape: a mappings string the decoder will refuse is a map that
-                // uploads, stores and then silently symbolicates nothing. The decoder owns the rule.
-                return SourceMapMappings.IsDecodable(mappings.GetString()!);
+                return SourceMapSections.IsDecodable(sections);
             }
 
-            return root.TryGetProperty("sections", out var sections) && sections.ValueKind == JsonValueKind.Array;
+            return root.TryGetProperty("mappings", out var mappings) && mappings.ValueKind == JsonValueKind.String
+                && SourceMapMappings.IsDecodable(mappings.GetString()!);
         }
         catch (JsonException)
         {

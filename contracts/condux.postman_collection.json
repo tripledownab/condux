@@ -1873,55 +1873,6 @@
           }
         },
         {
-          "name": "suggested Mappings",
-          "request": {
-            "name": "suggested Mappings",
-            "description": {},
-            "url": {
-              "path": [
-                "api",
-                "projects",
-                ":projectId",
-                "repos",
-                ":repoId",
-                "suggested-mappings"
-              ],
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "query": [],
-              "variable": [
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<long>",
-                  "key": "projectId",
-                  "description": "(Required) "
-                },
-                {
-                  "disabled": false,
-                  "type": "any",
-                  "value": "<uuid>",
-                  "key": "repoId",
-                  "description": "(Required) "
-                }
-              ]
-            },
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "method": "GET",
-            "auth": null
-          },
-          "event": [],
-          "protocolProfileBehavior": {
-            "disableBodyPruning": true
-          }
-        },
-        {
           "name": "record Release",
           "request": {
             "name": "record Release",
@@ -1996,6 +1947,55 @@
                   "type": "any",
                   "value": "<long>",
                   "key": "projectId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "GET",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "suggested Mappings",
+          "request": {
+            "name": "suggested Mappings",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "repos",
+                ":repoId",
+                "suggested-mappings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "repoId",
                   "description": "(Required) "
                 }
               ]
@@ -2606,6 +2606,46 @@
       "event": []
     },
     {
+      "name": "DebugFiles",
+      "description": {
+        "content": "",
+        "type": "text/plain"
+      },
+      "item": [
+        {
+          "name": "upload Debug File",
+          "request": {
+            "name": "upload Debug File",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "debug-files"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        }
+      ],
+      "event": []
+    },
+    {
       "name": "Conductor",
       "description": {
         "content": "",
@@ -3108,6 +3148,113 @@
                 }
               ]
             },
+            "method": "POST",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "cancel Fix",
+          "request": {
+            "name": "cancel Fix",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "fixes",
+                ":fixId",
+                "cancel"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "fixId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "auth": null
+          },
+          "event": [],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          }
+        },
+        {
+          "name": "cancel Cve Fix",
+          "request": {
+            "name": "cancel Cve Fix",
+            "description": {},
+            "url": {
+              "path": [
+                "api",
+                "projects",
+                ":projectId",
+                "repos",
+                ":repoId",
+                "cve-fixes",
+                ":runId",
+                "cancel"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<long>",
+                  "key": "projectId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "repoId",
+                  "description": "(Required) "
+                },
+                {
+                  "disabled": false,
+                  "type": "any",
+                  "value": "<uuid>",
+                  "key": "runId",
+                  "description": "(Required) "
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
             "method": "POST",
             "auth": null
           },

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { findSourceMaps, uploadSourceMaps } from "../src/sourcemaps.ts";
+import { findSourceMaps } from "../src/map-files.ts";
+import { uploadSourceMaps } from "../src/sourcemaps.ts";
 
 // A build-output fixture: two .js.map files nested in a chunks dir, plus non-maps that must be ignored.
 async function buildFixture() {
@@ -80,4 +81,41 @@ test("uploadSourceMaps reports a failed upload without throwing", async () => {
   assert.equal(result.failed, 2);
   assert.equal(result.files[0].ok, false);
   assert.equal(result.files[0].status, 401);
+});
+
+test("a Next build's server output uploads through the server half, never under a bare file name", async () => {
+  const dir = await buildFixture();
+  await writeFile(join(dir, "BUILD_ID"), "b1");
+  await mkdir(join(dir, "server", "chunks", "ssr"), { recursive: true });
+  // The same file name in two directories, as Turbopack writes its runtime.
+  for (const sub of ["chunks", "chunks/ssr"]) {
+    await writeFile(join(dir, "server", sub, "[turbopack]_runtime.js"), "rt();\n//# sourceMappingURL=rt.js.map\n");
+    await writeFile(join(dir, "server", sub, "rt.js.map"), '{"version":3,"sources":[],"mappings":"AAAA"}');
+  }
+  const { fetch, calls } = recordingFetch(201);
+
+  const result = await uploadSourceMaps({ dir, url: "https://c.test", token: "t", release: "1", fetch });
+
+  const filenames = calls.map((c) => new URL(c.url).searchParams.get("filename"));
+  assert.ok(!filenames.includes("[turbopack]_runtime.js"));
+  assert.ok(!filenames.includes("rt.js"));
+  assert.deepEqual(
+    filenames.filter((f) => f?.startsWith("server/")).sort(),
+    ["server/chunks/[turbopack]_runtime.js", "server/chunks/ssr/[turbopack]_runtime.js"],
+  );
+  assert.ok(calls.filter((c) => c.url.includes("filename=server")).every((c) => c.url.includes("debugId=")));
+  assert.equal(result.uploaded, calls.length);
+});
+
+test("another framework's server/ directory keeps the generic handling and is not stamped", async () => {
+  const dir = await buildFixture();
+  await mkdir(join(dir, "server"), { recursive: true });
+  await writeFile(join(dir, "server", "entry.js"), "e();\n//# sourceMappingURL=entry.js.map\n");
+  await writeFile(join(dir, "server", "entry.js.map"), '{"version":3,"sources":[],"mappings":"AAAA"}');
+  const { fetch, calls } = recordingFetch(201);
+
+  await uploadSourceMaps({ dir, url: "https://c.test", token: "t", release: "1", fetch });
+
+  assert.ok(calls.some((c) => new URL(c.url).searchParams.get("filename") === "entry.js"));
+  assert.ok(!(await readFile(join(dir, "server", "entry.js"), "utf8")).includes("debugId"));
 });

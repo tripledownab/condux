@@ -109,6 +109,18 @@ public class PackageEcosystemsTests
     }
 
     /// <summary>
+    /// OSV's own spelling folds from any case, like Dependabot's, so a scanner or caller that lowercases
+    /// "PyPI" still lines up with what we record. Remove the OSV entries from the fold and these stay
+    /// as written.
+    /// </summary>
+    [Theory]
+    [InlineData("pypi", "PyPI")]
+    [InlineData("PACKAGIST", "Packagist")]
+    [InlineData("Crates.IO", "crates.io")]
+    public void FoldsAnOsvNameInAnyCase(string spelled, string osv) =>
+        Assert.Equal(osv, PackageEcosystems.Canonical(spelled));
+
+    /// <summary>
     /// An unrecognised name is passed through trimmed rather than dropped or defaulted, so two
     /// spellings we do not know still compare equal to each other and neither is quietly turned into
     /// an ecosystem we do know.

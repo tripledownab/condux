@@ -5,7 +5,10 @@ namespace Condux.Core.Tests;
 
 public class SimulatedAgentGatewayTests
 {
-    private static readonly AgentRunSpec Spec = new("42", "acme/api", "main", "Fix issue 42.", "claude-opus-4-8");
+    private static readonly AgentRunSpec Spec = new("42", "acme/api", "main", "Fix issue 42.", "claude-opus-4-8")
+    {
+        RunId = Guid.CreateVersion7(),
+    };
 
     [Fact]
     public async Task Reports_running_then_succeeds_with_a_non_routable_pr()
@@ -21,6 +24,18 @@ public class SimulatedAgentGatewayTests
         Assert.Equal("condux/fix-42", done.Branch);
         Assert.Contains("example.invalid", done.PrUrl); // never a routable, real-looking PR
         Assert.Equal("simulated-agent", gateway.BackendName);
+    }
+
+    [Fact]
+    public async Task A_stopped_run_is_forgotten()
+    {
+        var gateway = new SimulatedAgentGateway(pollsWhileRunning: 2);
+        var run = await gateway.StartAsync(Spec);
+
+        var stopped = await gateway.CancelAsync(run.RunId);
+
+        Assert.Equal(AgentRunStatus.Failed, stopped.Status);
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => gateway.PollAsync(run.RunId));
     }
 
     [Fact]

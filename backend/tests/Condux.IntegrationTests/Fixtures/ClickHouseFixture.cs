@@ -10,19 +10,30 @@ namespace Condux.IntegrationTests.Fixtures;
 /// Uses the same condux/condux credentials the compose stack does, and reaches the
 /// server over its HTTP interface (port 8123) — the same interface the writer/reader use.
 /// </summary>
-public sealed class ClickHouseFixture : IAsyncLifetime
+public class ClickHouseFixture : IAsyncLifetime
 {
     private const string User = "condux";
     private const string Password = "condux";
 
-    private readonly IContainer _container = new ContainerBuilder()
-        .WithImage("clickhouse/clickhouse-server:24.8")
-        .WithEnvironment("CLICKHOUSE_USER", User)
-        .WithEnvironment("CLICKHOUSE_PASSWORD", Password)
-        .WithPortBinding(8123, true)
-        .WithWaitStrategy(Wait.ForUnixContainer()
-            .UntilHttpRequestIsSucceeded(r => r.ForPort(8123).ForPath("/ping")))
-        .Build();
+    private readonly IContainer _container;
+
+    public ClickHouseFixture()
+        : this(null)
+    {
+    }
+
+    /// <summary>A server whose own timezone is <paramref name="timezone"/>; null keeps the image's UTC.</summary>
+    protected ClickHouseFixture(string? timezone)
+    {
+        var builder = new ContainerBuilder()
+            .WithImage("clickhouse/clickhouse-server:24.8")
+            .WithEnvironment("CLICKHOUSE_USER", User)
+            .WithEnvironment("CLICKHOUSE_PASSWORD", Password)
+            .WithPortBinding(8123, true)
+            .WithWaitStrategy(Wait.ForUnixContainer()
+                .UntilHttpRequestIsSucceeded(r => r.ForPort(8123).ForPath("/ping")));
+        _container = (timezone is null ? builder : builder.WithEnvironment("TZ", timezone)).Build();
+    }
 
     public string BaseUrl => $"http://{_container.Hostname}:{_container.GetMappedPublicPort(8123)}";
     public string ChUser => User;

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Condux.Agent;
 using Xunit;
+using Condux.Core.FixEngine;
 
 namespace Condux.Conductor.Tests;
 
@@ -53,13 +54,15 @@ public class AnthropicMessagesClientTests
     {
         var error = new StubHandler(
             HttpStatusCode.Unauthorized, """{"error":{"type":"authentication_error"}}""");
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var rejected = await Assert.ThrowsAsync<FixFailedException>(
             () => Create(error).CreateAsync("m", "s", "u", "k", ""));
+        Assert.Equal(FixFailureReason.ModelKeyRejected, rejected.Reason);
 
         var empty = new StubHandler(HttpStatusCode.OK, """{"content":[],"stop_reason":"refusal"}""");
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<FixFailedException>(
             () => Create(empty).CreateAsync("m", "s", "u", "k", ""));
         Assert.Contains("refusal", ex.Message);
+        Assert.Equal(FixFailureReason.NoUsableFix, ex.Reason);
     }
 
     [Fact]
@@ -73,10 +76,11 @@ public class AnthropicMessagesClientTests
              "request_id":"req_test"}
             """);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<FixFailedException>(
             () => Create(handler).CreateAsync("m", "s", "u", "k", ""));
 
         Assert.Equal("Anthropic API returned 401: authentication_error: invalid x-api-key", ex.Message);
+        Assert.Equal(FixFailureReason.ModelKeyRejected, ex.Reason);
     }
 
     [Fact]
@@ -88,9 +92,10 @@ public class AnthropicMessagesClientTests
         // carry that column. If that ever changes, this test is the one that should stop being true.
         var handler = new StubHandler(HttpStatusCode.BadGateway, "<html>upstream timeout</html>");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<FixFailedException>(
             () => Create(handler).CreateAsync("m", "s", "u", "k", ""));
 
         Assert.Contains("upstream timeout", ex.Message);
+        Assert.Equal(FixFailureReason.ModelUnavailable, ex.Reason);
     }
 }

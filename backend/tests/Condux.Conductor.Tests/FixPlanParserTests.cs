@@ -1,5 +1,6 @@
 using Condux.Agent;
 using Xunit;
+using Condux.Core.FixEngine;
 
 namespace Condux.Conductor.Tests;
 
@@ -36,10 +37,13 @@ public class FixPlanParserTests
     [Fact]
     public void Rejects_output_without_usable_changes()
     {
-        Assert.Throws<InvalidOperationException>(() => FixPlanParser.Parse("no json here"));
-        Assert.Throws<InvalidOperationException>(() => FixPlanParser.Parse("""{"summary":"s","files":[]}"""));
-        Assert.Throws<InvalidOperationException>(
-            () => FixPlanParser.Parse("""{"files":[{"path":"","contents":"x"}]}"""));
-        Assert.Throws<InvalidOperationException>(() => FixPlanParser.Parse("{not valid json}"));
+        Assert.Equal(FixFailureReason.NoUsableFix,
+            Assert.Throws<FixFailedException>(() => FixPlanParser.Parse("no json here")).Reason);
+        Assert.Equal(FixFailureReason.NoUsableFix,
+            Assert.Throws<FixFailedException>(() => FixPlanParser.Parse("""{"summary":"s","files":[]}""")).Reason);
+        Assert.Equal(FixFailureReason.NoUsableFix, Assert.Throws<FixFailedException>(
+            () => FixPlanParser.Parse("""{"files":[{"path":"","contents":"x"}]}""")).Reason);
+        Assert.Equal(FixFailureReason.NoUsableFix,
+            Assert.Throws<FixFailedException>(() => FixPlanParser.Parse("{not valid json}")).Reason);
     }
 }

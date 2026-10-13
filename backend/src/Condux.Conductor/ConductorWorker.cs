@@ -31,12 +31,8 @@ public sealed class ConductorWorker(
 
         await EnsureTopicAsync(bootstrap, topic, stoppingToken);
 
-        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = bootstrap,
-            GroupId = "condux-conductor",
-            AutoOffsetReset = AutoOffsetReset.Earliest,
-        }).Build();
+        using var consumer = new ConsumerBuilder<string, string>(
+            ConsumerPolling.CreateConfig(bootstrap, "condux-conductor")).Build();
 
         consumer.Subscribe(topic);
         logger.LogInformation("conductor subscribed bootstrap={Bootstrap} topic={Topic}", bootstrap, topic);
@@ -45,17 +41,25 @@ public sealed class ConductorWorker(
         {
             try
             {
-                var result = consumer.Consume(TimeSpan.FromSeconds(1));
+                var result = ConsumerPolling.ConsumeAndStore(consumer, TimeSpan.FromSeconds(1));
                 if (result?.Message?.Value is { } value && JsonSerializer.Deserialize<FixJob>(value) is { } job)
                 {
-                    var suggestion = await orchestrator.RunAsync(job, stoppingToken);
+                    var suggestion = await ConsumerPolling.RunWhilePollingAsync(
+                        consumer, () => orchestrator.RunAsync(job, stoppingToken), TimeSpan.FromSeconds(1));
+                    if (suggestion is null)
+                    {
+                        logger.LogWarning(
+                            "fix job not run: delivered again, its run already concluded or cancelled, or its issue has a run in progress issue={IssueId} job={JobId}",
+                            job.IssueId, job.JobId);
+                        continue;
+                    }
                     logger.LogInformation(
                         "fix run issue={IssueId} id={FixId} status={Status} pr={PrUrl}",
                         job.IssueId, suggestion.Id, suggestion.Status, suggestion.PrUrl);
                     await NotifyProjectAsync(job.IssueId, stoppingToken);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -67,7 +71,7 @@ public sealed class ConductorWorker(
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -91,7 +95,7 @@ public sealed class ConductorWorker(
                     projectEvents, logger, summary.ProjectId, cancellationToken);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(ex, "project lookup for nudge failed issue={IssueId}", issueId);
         }

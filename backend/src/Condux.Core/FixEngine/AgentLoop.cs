@@ -50,7 +50,8 @@ public sealed record AgentLoopResult(
 /// from: no progress, no edits, or an exhausted budget.
 /// </summary>
 public sealed class AgentLoop(
-    IAgentConversation conversation, IAgentWorkspace workspace, AgentLoopOptions? options = null)
+    IAgentConversation conversation, IAgentWorkspace workspace, AgentLoopOptions? options = null,
+    Action<AgentToolCall, AgentToolResult>? onToolCall = null)
 {
     private readonly AgentLoopOptions limits = options ?? AgentLoopOptions.Default;
 
@@ -68,8 +69,8 @@ public sealed class AgentLoop(
 
             if (inputTokens + outputTokens > limits.MaxTotalTokens)
             {
-                throw new InvalidOperationException(
-                    $"Agent run exceeded its token budget of {limits.MaxTotalTokens}.");
+                throw new FixFailedException(
+                    FixFailureReason.NoUsableFix, $"Agent run exceeded its token budget of {limits.MaxTotalTokens}.");
             }
 
             if (turn.FinalText is { } answered)
@@ -79,7 +80,7 @@ public sealed class AgentLoop(
 
             if (turn.ToolCalls.Count == 0)
             {
-                throw new InvalidOperationException("Agent returned neither a tool call nor an answer.");
+                throw new FixFailedException(FixFailureReason.NoUsableFix, "Agent returned neither a tool call nor an answer.");
             }
 
             var executed = new List<AgentToolResult>(turn.ToolCalls.Count);
@@ -90,13 +91,17 @@ public sealed class AgentLoop(
                     return Complete(call.Argument("summary"), inputTokens, outputTokens, step);
                 }
 
-                executed.Add(await ExecuteAsync(call, cancellationToken));
+                var result = await ExecuteAsync(call, cancellationToken);
+                // Told every call that returned and how it went, so a run can be audited afterwards: what it
+                // read before it wrote is otherwise recorded nowhere. A call that throws ends the run instead.
+                onToolCall?.Invoke(call, result);
+                executed.Add(result);
             }
 
             results = executed;
         }
 
-        throw new InvalidOperationException($"Agent did not finish within {limits.MaxSteps} steps.");
+        throw new FixFailedException(FixFailureReason.NoUsableFix, $"Agent did not finish within {limits.MaxSteps} steps.");
     }
 
     private async Task<AgentToolResult> ExecuteAsync(AgentToolCall call, CancellationToken cancellationToken)
@@ -184,7 +189,7 @@ public sealed class AgentLoop(
         {
             // The agent is asked to change nothing when it finds the code already correct, so its
             // reasoning is the useful half of this failure rather than a footnote to it.
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(summary)
+            throw new FixFailedException(FixFailureReason.NoUsableFix, string.IsNullOrWhiteSpace(summary)
                 ? "Agent finished without changing any file."
                 : $"The agent proposed no change: {summary.Trim()}");
         }

@@ -43,4 +43,14 @@ internal static class SsoFlow
         cmd.Parameters.AddWithValue("email", email);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
+
+    /// <summary>How many accounts hold this email at all, in any org or none: the "was it created?" probe.</summary>
+    public static async Task<int> CountUsersAsync(string connectionString, string email)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT count(*) FROM users WHERE email = @email", conn);
+        cmd.Parameters.AddWithValue("email", email);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
 }

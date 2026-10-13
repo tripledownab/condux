@@ -6,7 +6,7 @@ using Condux.Notifications;
 //
 //   dotnet run --project backend/tools/Condux.EmailPreview [recipient@example.com]
 //
-// Set CONDUX_APP_BASE_URL=http://localhost:3000 to make the digest's issue links point at your local
+// Set CONDUX_APP_BASE_URL=http://localhost:3200 to make the digest's issue links point at your local
 // dashboard instead of production.
 //
 // Needs a Mailpit (or any SMTP) reachable at MAILPIT_SMTP_HOST:MAILPIT_SMTP_PORT (default localhost:1025).
@@ -24,7 +24,7 @@ using var sender = new SystemSmtpSender(options);
 // A realistic weekly digest, rendered through the real builders (ADR-0031) so the preview exercises the
 // actual subject/body/HTML, not a hand-written mock.
 // The digest links each top issue, so this decides where those links land. Overridable because the
-// default sends you to production: set CONDUX_APP_BASE_URL=http://localhost:3000 to click through to the
+// default sends you to production: set CONDUX_APP_BASE_URL=http://localhost:3200 to click through to the
 // dashboard you are actually running.
 var weeklyUrl = Environment.GetEnvironmentVariable("CONDUX_APP_BASE_URL") ?? "https://app.condux.ai";
 var weekly = new WeeklySummary(

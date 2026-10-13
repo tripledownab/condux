@@ -88,7 +88,7 @@ cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-The dashboard listens on port 3000 and the API on 8080.
+The dashboard is at http://localhost:3200 and the API on 8080.
 
 Building and testing from source:
 

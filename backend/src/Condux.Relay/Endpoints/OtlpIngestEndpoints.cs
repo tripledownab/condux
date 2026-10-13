@@ -1,5 +1,6 @@
 using System.Globalization;
 using Condux.Core.Events;
+using Condux.Core.Http;
 using Condux.Core.Messaging;
 using Condux.Core.Plans;
 using Condux.Core.Projects;
@@ -77,7 +78,7 @@ internal static class OtlpIngestEndpoints
             // Bounded like the Sentry path: UseRequestDecompression has already expanded the body, and
             // Kestrel's own limit bounds the compressed request, so an unbounded read here has no ceiling
             // at all.
-            var body = await IngestRequest.ReadBoundedAsync(ctx.Request.Body, options.MaxIngestBytes, ctx.RequestAborted);
+            var body = await RequestBodies.ReadBoundedAsync(ctx.Request.Body, options.MaxIngestBytes, ctx.RequestAborted);
             if (body is null)
             {
                 ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
@@ -124,7 +125,7 @@ internal static class OtlpIngestEndpoints
                 // per record made the amount of metering a stranger's to size, and against the Valkey meter
                 // that is a network round trip each.
                 var quota = await quotaMeter.TryConsumeAsync(
-                    projectKey, limits.MonthlyEvents, storable.Count, ctx.RequestAborted);
+                    project.QuotaKey, limits.MonthlyEvents, storable.Count, ctx.RequestAborted);
                 if (limits.MonthlyEvents > 0)
                 {
                     ctx.Response.Headers["X-Condux-Quota-Remaining"] = quota.Remaining.ToString(CultureInfo.InvariantCulture);
@@ -157,7 +158,7 @@ internal static class OtlpIngestEndpoints
                 var unused = admitted - published;
                 if (limits.MonthlyEvents > 0 && unused > 0)
                 {
-                    await quotaMeter.RefundAsync(projectKey, unused, CancellationToken.None);
+                    await quotaMeter.RefundAsync(project.QuotaKey, unused, CancellationToken.None);
                 }
                 throw;
             }
@@ -200,11 +201,11 @@ internal static class OtlpIngestEndpoints
     /// </summary>
     private static string RejectionReason(long overQuota, long overflow) => (overQuota, overflow) switch
     {
-        ( > 0, > 0) => "the project's monthly event quota is exhausted and the export carried more error "
-            + "records than one request accepts, so raise the plan's event limit and lower the exporter's "
-            + "batch size",
-        ( > 0, _) => "the project's monthly event quota is exhausted, so raise the plan's event limit or "
-            + "export fewer records",
+        ( > 0, > 0) => "the organization's monthly event quota is exhausted and the export carried more "
+            + "error records than one request accepts, so raise the plan's event limit and lower the "
+            + "exporter's batch size",
+        ( > 0, _) => "the organization's monthly event quota is exhausted, so raise the plan's event limit "
+            + "or export fewer records",
         _ => "the export carried more error records than one request accepts, so lower the exporter's "
             + "batch size",
     };

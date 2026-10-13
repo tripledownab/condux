@@ -7,6 +7,7 @@ using Condux.Core.Grouping;
 using Condux.Core.Plans;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.Postgres;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -21,21 +22,10 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
 {
-    private sealed class CapturingPublisher : IFixRequestPublisher
-    {
-        public FixJob? Job { get; private set; }
-
-        public Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
-        {
-            Job = job;
-            return Task.CompletedTask;
-        }
-    }
-
-    private async Task<(HttpClient Client, CapturingPublisher Publisher, long ProjectId, string IssuePublicId)>
+    private async Task<(HttpClient Client, CapturingFixPublisher Publisher, long ProjectId, string IssuePublicId)>
         ProvisionWithIssueAsync(string fingerprint, int tier = 2)
     {
-        var publisher = new CapturingPublisher();
+        var publisher = new CapturingFixPublisher();
         var client = ControlPlaneApp.Create(pg.ConnectionString)
             .WithWebHostBuilder(b => b.ConfigureTestServices(s => s.AddSingleton<IFixRequestPublisher>(publisher)))
             .CreateClient();
@@ -72,6 +62,75 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         Assert.NotNull(publisher.Job);
         Assert.Equal("acme/api", publisher.Job!.RepoFullName);
         Assert.Equal("main", publisher.Job.BaseBranch); // the linked repo's base branch (defaulted)
+    }
+
+    [Fact]
+    public async Task RequestFix_WritesThePendingRunBeforeItPublishes()
+    {
+        // The run exists before the job can reach the worker, so the issue reads as taken from the moment
+        // the request is accepted, in every tab and for every admin, and the worker claims that run.
+        var publisher = new RunCheckingPublisher(new PostgresFixStore(pg.ConnectionString));
+        var (client, _, projectId, issueId) = await SeedFixableIssueAsync(
+            s => s.AddSingleton<IFixRequestPublisher>(publisher), "fp-fix-queued-first");
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
+        var queued = Assert.Single(publisher.RunsAtPublish);
+        Assert.Equal(FixStatus.Pending, queued.Status);
+        // And it is the run the job names, which is what the worker claims.
+        Assert.Equal(queued.Id, await new PostgresFixStore(pg.ConnectionString).TryClaimAsync(
+            publisher.Job!.ToPendingRun("anthropic", DateTimeOffset.UtcNow)));
+    }
+
+    [Fact]
+    public async Task RequestFix_ASecondRequestWhileTheFirstIsQueued_IsRefusedAndRefunded()
+    {
+        // Before the run was written at request time, the second request reserved and published too, and
+        // the worker ran both one after the other, opening two draft PRs for one issue.
+        var (client, orgId, projectId, issueId) = await SeedFixableIssueAsync(
+            s => s.AddSingleton<IFixRequestPublisher>(new CapturingFixPublisher()), "fp-fix-second-request");
+        var first = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+
+        var second = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal("fix_in_progress",
+            (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        Assert.Equal(1, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        Assert.Single((await client.GetFromJsonAsync<JsonElement[]>(
+            $"/api/projects/{projectId}/issues/{issueId}/fixes"))!);
+    }
+
+    [Fact]
+    public async Task RequestFix_OnARunnerOrg_ASecondRequestWhileTheFirstIsQueued_IsRefusedAndRefunded()
+    {
+        var (client, orgId, projectId, issueId) = await SeedFixableIssueAsync(
+            s => s.AddSingleton<IFixRequestPublisher>(new ThrowingPublisher()), "fp-fix-second-runner");
+        await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
+            orgId, mode: 0, costCapUsd: null, fixExecution: (int)FixExecution.Runner);
+        var first = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+
+        var second = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal(1, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+    }
+
+    // Records the issue's runs as they stood when the job was published.
+    private sealed class RunCheckingPublisher(PostgresFixStore fixes) : IFixRequestPublisher
+    {
+        public FixJob? Job { get; private set; }
+
+        public IReadOnlyList<FixSuggestion> RunsAtPublish { get; private set; } = [];
+
+        public async Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
+        {
+            Job = job;
+            RunsAtPublish = await fixes.ListByIssueAsync(job.IssueId, cancellationToken);
+        }
     }
 
     [Fact]
@@ -120,14 +179,18 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var (client, publisher, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-free", tier: 0);
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
 
+        // Each request is for its own issue: an issue holds one run in progress at a time, and this test is
+        // about the allowance running out, not that.
         for (var i = 0; i < allowance; i++)
         {
-            var ok = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+            var target = i == 0 ? issueId : await SeedAnotherIssueAsync(client, projectId);
+            var ok = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{target}/fix", new { });
             Assert.Equal(HttpStatusCode.Accepted, ok.StatusCode);
         }
         Assert.NotNull(publisher.Job);
 
-        var over = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+        var over = await client.PostAsJsonAsync(
+            $"/api/projects/{projectId}/issues/{await SeedAnotherIssueAsync(client, projectId)}/fix", new { });
         Assert.Equal(HttpStatusCode.Conflict, over.StatusCode);
         Assert.Equal("ai_fix_quota_exceeded",
             (await over.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
@@ -137,6 +200,18 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         Assert.Equal(0, await new PostgresAiFixQuota(pg.ConnectionString).GetLifetimeUsedAsync(
             (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
                 .GetProperty("org").GetProperty("id").GetInt64()));
+    }
+
+    // A further open issue in the project, by its public id.
+    private async Task<string> SeedAnotherIssueAsync(HttpClient client, long projectId)
+    {
+        var title = $"TypeError: boom {Guid.NewGuid():N}";
+        await new IssueRepository(pg.ConnectionString).UpsertAsync(
+            projectId, new Grouping($"fp-{Guid.NewGuid():N}", title, "run"), Level.Error, DateTimeOffset.UtcNow);
+        var issues = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/issues"))
+            .GetProperty("issues");
+        return issues.EnumerateArray().Single(i => i.GetProperty("title").GetString() == title)
+            .GetProperty("id").GetString()!;
     }
 
     [Fact]
@@ -258,9 +333,12 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var claimed = await leases.TryClaimAsync(orgId, DateTimeOffset.UtcNow);
         // The claim and the report both name the run's project (the live-badge nudge needs it, ADR-0030).
         Assert.Equal(projectId, claimed!.ProjectId);
-        Assert.Equal(new ReportedJob(projectId, JobKind.IssueFix), await leases.TryReportAsync(
+        var reported = await leases.TryReportAsync(
             claimed.FixId, claimed.LeaseId, FixStatus.Succeeded, "b", "https://example.invalid/p/1", "s",
-            "claude-opus-4-8", 1_000_000, 1_000_000, DateTimeOffset.UtcNow));
+            "claude-opus-4-8", 1_000_000, 1_000_000, DateTimeOffset.UtcNow);
+        var stored = await new PostgresFixStore(pg.ConnectionString).GetAsync(claimed.FixId);
+        Assert.Equal(new ReportedJob(projectId, JobKind.IssueFix), reported);
+        Assert.Equal(FixStatus.Succeeded, stored!.Status);
 
         // Now back on our compute with a $10 ceiling. Their own $30 must not be counted against it.
         await new OrgRepository(pg.ConnectionString).UpdateSettingsAsync(
@@ -342,7 +420,78 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         // ADR-0017: no PR delivered means no allowance spent. The hosted orchestrator refunds in its
         // catch; a runner's failure arrives as a report instead, and the first real runner failure burned
         // its reservation because the report path had no refund.
-        var (client, _, projectId, issueId) = await ProvisionWithIssueAsync("fp-fix-refund");
+        var (client, orgId, runner, job) = await LeaseARunnerJobAsync("fp-fix-refund");
+
+        async Task<int> RemainingAsync() =>
+            (await client.GetFromJsonAsync<JsonElement>($"/api/orgs/{orgId}/ai-fix-usage"))
+                .GetProperty("remainingFixes").GetInt32();
+
+        var before = await RemainingAsync();
+        var report = await ReportAsync(runner, job, FixStatus.Failed, failureReason: null);
+        Assert.Equal(HttpStatusCode.NoContent, report.StatusCode);
+
+        Assert.Equal(before + 1, await RemainingAsync()); // the failed run is free again
+    }
+
+    [Fact]
+    public async Task ARunnerRunQueuedLastMonthDoesNotRefundThisMonthsAllowance()
+    {
+        // The counter holds one month. A run reserved before it rolled over came out of a month that is
+        // gone, so a failure reported now must not hand this month a run it never reserved.
+        var (client, orgId, runner, job) = await LeaseARunnerJobAsync("fp-fix-refund-month");
+        await using (var conn = new Npgsql.NpgsqlConnection(pg.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await using var cmd = new Npgsql.NpgsqlCommand(
+                "UPDATE fix_suggestions SET reserved_at = reserved_at - interval '40 days' WHERE id = @id", conn);
+            cmd.Parameters.AddWithValue("id", Guid.Parse(job.GetProperty("fixId").GetString()!));
+            Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
+        }
+
+        async Task<int> RemainingAsync() =>
+            (await client.GetFromJsonAsync<JsonElement>($"/api/orgs/{orgId}/ai-fix-usage"))
+                .GetProperty("remainingFixes").GetInt32();
+
+        var before = await RemainingAsync();
+        Assert.Equal(HttpStatusCode.NoContent, (await ReportAsync(runner, job, FixStatus.Failed, null)).StatusCode);
+
+        Assert.Equal(before, await RemainingAsync());
+    }
+
+    [Theory]
+    [InlineData((int)FixStatus.Failed, (int)FixFailureReason.NoSourceFiles, (int)FixFailureReason.NoSourceFiles)]
+    [InlineData((int)FixStatus.Failed, 99, (int)FixFailureReason.Unknown)]
+    [InlineData((int)FixStatus.Failed, null, (int)FixFailureReason.Unknown)]
+    [InlineData((int)FixStatus.Succeeded, (int)FixFailureReason.NoSourceFiles, null)]
+    [InlineData((int)FixStatus.Cancelled, (int)FixFailureReason.NoSourceFiles, null)]
+    public async Task ARunnersFailureReasonIsNarrowedToWhatTheDashboardCanExplain(
+        int status, int? sent, int? stored)
+    {
+        // The reason comes from a machine outside our control. A number this version does not know, or
+        // none from an older runner, reads as Unknown, and a success never carries one.
+        var (client, _, runner, job) = await LeaseARunnerJobAsync("fp-fix-reason-" + status + sent);
+        var projectId = job.GetProperty("projectId").GetInt64();
+        var fixId = job.GetProperty("fixId").GetString();
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await ReportAsync(runner, job, (FixStatus)status, (FixFailureReason?)sent)).StatusCode);
+
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/fixes/{fixId}");
+        var reason = detail.GetProperty("failureReason");
+        Assert.Equal(stored, reason.ValueKind == JsonValueKind.Null ? null : reason.GetInt32());
+        // A failure's summary is the runner's error text, which members are never shown; a cancelled
+        // run's is dropped too, since only a success has a summary worth reading.
+        Assert.Equal(
+            status == (int)FixStatus.Succeeded ? "Guarded the null cart." : "",
+            detail.GetProperty("summary").GetString());
+    }
+
+    // An org on its own runner, with one fix requested and claimed over the real protocol. The job
+    // JSON gains the project id, which the lease response does not carry, for the detail read.
+    private async Task<(HttpClient Client, long OrgId, HttpClient Runner, JsonElement Job)> LeaseARunnerJobAsync(
+        string fingerprint)
+    {
+        var (client, _, projectId, issueId) = await ProvisionWithIssueAsync(fingerprint);
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
         var orgId = (await client.GetFromJsonAsync<JsonElement>("/api/orgs"))[0]
             .GetProperty("org").GetProperty("id").GetInt64();
@@ -351,41 +500,37 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var mintResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/runner-tokens", new { label = "r" });
         var runnerToken = (await mintResp.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("token").GetString()!;
-
-        async Task<int> RemainingAsync() =>
-            (await client.GetFromJsonAsync<JsonElement>($"/api/orgs/{orgId}/ai-fix-usage"))
-                .GetProperty("remainingFixes").GetInt32();
-
-        var before = await RemainingAsync();
         Assert.Equal(HttpStatusCode.Accepted,
-            (await client.PostAsJsonAsync(
-                $"/api/projects/{projectId}/issues/{issueId}/fix", new { })).StatusCode);
-        Assert.Equal(before - 1, await RemainingAsync()); // reserved at request time
+            (await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { })).StatusCode);
 
-        // The runner claims and reports failure over the real protocol.
         var runner = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         runner.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", runnerToken);
         var lease = await runner.PostAsync("/api/runner/lease", content: null);
         Assert.Equal(HttpStatusCode.OK, lease.StatusCode);
-        var job = await lease.Content.ReadFromJsonAsync<JsonElement>();
-        var report = await runner.PostAsJsonAsync(
+        var job = System.Text.Json.Nodes.JsonNode.Parse(await lease.Content.ReadAsStringAsync())!.AsObject();
+        job["projectId"] = projectId;
+        return (client, orgId, runner, JsonSerializer.SerializeToElement(job));
+    }
+
+    private static Task<HttpResponseMessage> ReportAsync(
+        HttpClient runner, JsonElement job, FixStatus status, FixFailureReason? failureReason) =>
+        runner.PostAsJsonAsync(
             $"/api/runner/jobs/{job.GetProperty("fixId").GetString()}/result",
             new
             {
                 leaseId = job.GetProperty("leaseId").GetString(),
-                status = (int)FixStatus.Failed,
+                status = (int)status,
                 branch = "",
-                prUrl = "",
-                summary = "the model endpoint was unreachable",
+                prUrl = status == FixStatus.Succeeded ? "https://example.invalid/p/1" : "",
+                summary = status == FixStatus.Succeeded
+                    ? "Guarded the null cart."
+                    : "Anthropic API returned 401: authentication_error: invalid x-api-key",
                 model = "",
                 inputTokens = 0,
                 outputTokens = 0,
+                failureReason = (int?)failureReason,
             });
-        Assert.Equal(HttpStatusCode.NoContent, report.StatusCode);
-
-        Assert.Equal(before, await RemainingAsync()); // the failed run is free again
-    }
 
     [Fact]
     public async Task TheExecutionSettingRoundTripsThroughTheOrgListTheDashboardReads()
@@ -437,18 +582,120 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         Assert.Null(publisher.Job);
     }
 
+    // Fails the way a delivery timeout does, which cannot say whether the broker wrote the job, and keeps
+    // the job so a test can deliver it after all.
     private sealed class ThrowingPublisher : IFixRequestPublisher
     {
-        public Task PublishAsync(FixJob job, CancellationToken cancellationToken = default) =>
+        public FixJob? Job { get; private set; }
+
+        public Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
+        {
+            Job = job;
             throw new InvalidOperationException("broker unreachable");
+        }
     }
 
     [Fact]
     public async Task RequestFix_WhenPublishFails_Returns503AndRefundsTheReservation()
     {
+        var publisher = new ThrowingPublisher();
+        var (client, orgId, projectId, issueId) = await SeedFixableIssueAsync(
+            s => s.AddSingleton<IFixRequestPublisher>(publisher), "fp-fix-publish-fail");
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, resp.StatusCode);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("fix_enqueue_failed", body.GetProperty("error").GetString());
+        // The reservation the request took was refunded, so the failed enqueue burned no allowance.
+        var quota = new PostgresAiFixQuota(pg.ConnectionString);
+        Assert.Equal(0, await quota.GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        // Its run is cancelled, which frees the issue for another request.
+        var runs = await client.GetFromJsonAsync<JsonElement[]>($"/api/projects/{projectId}/issues/{issueId}/fixes");
+        Assert.Equal((int)FixStatus.Cancelled, Assert.Single(runs!).GetProperty("status").GetInt32());
+    }
+
+    [Fact]
+    public async Task RequestFix_AJobThatArrivesAfterItsPublishWasReportedFailed_NeitherRunsNorIsRefundedAgain()
+    {
+        // A delivery timeout cannot say whether the broker wrote the job, so the request refunded it. If it
+        // arrives after all, behind a retry the 503 invited, it meets its own run, cancelled, and stops.
+        var publisher = new ThrowingPublisher();
+        var (client, orgId, projectId, issueId) = await SeedFixableIssueAsync(
+            s => s.AddSingleton<IFixRequestPublisher>(publisher), "fp-fix-late-job");
+        await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
+        var lateJob = publisher.Job!;
+        var store = new PostgresFixStore(pg.ConnectionString);
+        var retry = (lateJob with { JobId = Guid.CreateVersion7() }).ToPendingRun(provider: "", DateTimeOffset.UtcNow);
+        Assert.True(await store.TryQueueAsync(retry));
+        await new PostgresAiFixQuota(pg.ConnectionString).TryConsumeAsync(orgId, 25, DateTimeOffset.UtcNow);
+
+        var provider = new CountingProvider();
+        Assert.Null(await new FixOrchestrator(store, provider).RunAsync(lateJob));
+
+        Assert.Equal(0, provider.Runs);
+        Assert.Equal(1, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        Assert.Equal(FixStatus.Pending, (await store.GetAsync(retry.Id))!.Status);
+    }
+
+    private sealed class CountingProvider : IFixProvider
+    {
+        public int Runs { get; private set; }
+
+        public string Name => "counting";
+
+        public Task<FixResult> GenerateFixAsync(FixRequest request, CancellationToken cancellationToken = default)
+        {
+            Runs++;
+            return Task.FromResult(new FixResult("b", "https://example.invalid/p/1", "s"));
+        }
+    }
+
+    [Fact]
+    public async Task RequestFix_WhenTheClientHangsUpDuringPublish_WithdrawsTheRunAndRefunds()
+    {
+        // A cancelled produce stops the wait, not the send, so the job may still arrive. Its run is cancelled
+        // first, so if it does it finds the run no longer pending and does not run: the refund is safe.
+        var publisher = new HangingPublisher();
+        var handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (client, orgId, projectId, issueId) = await SeedFixableIssueAsync(
+            s =>
+            {
+                s.AddSingleton<IFixRequestPublisher>(publisher);
+                s.AddSingleton<IStartupFilter>(new SignalWhenHandled(handled, "/fix"));
+            },
+            "fp-fix-publish-hangup");
+        using var hangUp = new CancellationTokenSource();
+
+        var request = client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { }, hangUp.Token);
+        await publisher.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await hangUp.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        await handled.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(0, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        var runs = await client.GetFromJsonAsync<JsonElement[]>($"/api/projects/{projectId}/issues/{issueId}/fixes");
+        Assert.Equal((int)FixStatus.Cancelled, Assert.Single(runs!).GetProperty("status").GetInt32());
+    }
+
+    private sealed class HangingPublisher : IFixRequestPublisher
+    {
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task PublishAsync(FixJob job, CancellationToken cancellationToken = default)
+        {
+            Reached.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+    }
+
+    // A Business org with one project, a linked repo and one open issue, on a control-plane with the
+    // given test services.
+    private async Task<(HttpClient Client, long OrgId, long ProjectId, string IssueId)> SeedFixableIssueAsync(
+        Action<IServiceCollection> services, string fingerprint)
+    {
         var client = ControlPlaneApp.Create(pg.ConnectionString)
-            .WithWebHostBuilder(b => b.ConfigureTestServices(
-                s => s.AddSingleton<IFixRequestPublisher>(new ThrowingPublisher())))
+            .WithWebHostBuilder(b => b.ConfigureTestServices(services))
             .CreateClient();
 
         await ApiAuth.SignUpAsync(client);
@@ -461,20 +708,12 @@ public sealed class FixApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("project").GetProperty("id").GetInt64();
         await new IssueRepository(pg.ConnectionString).UpsertAsync(
-            projectId, new Grouping("fp-fix-publish-fail", "TypeError: boom", "run"), Level.Error, DateTimeOffset.UtcNow);
+            projectId, new Grouping(fingerprint, "TypeError: boom", "run"), Level.Error, DateTimeOffset.UtcNow);
         var issues = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/issues"))
             .GetProperty("issues");
         var issueId = issues[0].GetProperty("id").GetString()!;
         await client.PostAsJsonAsync($"/api/projects/{projectId}/repos", new { repoFullName = "acme/api" });
-
-        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/issues/{issueId}/fix", new { });
-
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, resp.StatusCode);
-        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("fix_enqueue_failed", body.GetProperty("error").GetString());
-        // The reservation the request took was refunded, so the failed enqueue burned no allowance.
-        var quota = new PostgresAiFixQuota(pg.ConnectionString);
-        Assert.Equal(0, await quota.GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+        return (client, orgId, projectId, issueId);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using Condux.Core.Events;
 using Condux.Core.Messaging;
+using Condux.Core.Projects;
 using Condux.Core.Quotas;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -56,7 +57,8 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     }
 
     private WebApplicationFactory<Program> With(
-        IEventPublisher publisher, IQuotaMeter? quota = null, int? maxRecords = null) =>
+        IEventPublisher publisher, IQuotaMeter? quota = null, int? maxRecords = null,
+        IProjectStore? projects = null) =>
         factory.WithWebHostBuilder(b =>
         {
             // The per-export ceiling defaults to 20,000, so a test drives it down rather than building a
@@ -69,6 +71,7 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
             {
                 s.AddSingleton(publisher);
                 if (quota is not null) s.AddSingleton(quota);
+                if (projects is not null) s.AddSingleton(projects);
             });
         });
 
@@ -79,17 +82,20 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     {
         public List<long> Requested { get; } = [];
         public List<long> Refunded { get; } = [];
+        public List<string> Keys { get; } = [];
 
         public ValueTask<QuotaDecision> TryConsumeAsync(
             string key, long monthlyLimit, long count = 1, CancellationToken ct = default)
         {
             Requested.Add(count);
+            Keys.Add(key);
             return ValueTask.FromResult(decision);
         }
 
         public ValueTask RefundAsync(string key, long count, CancellationToken ct = default)
         {
             Refunded.Add(count);
+            Keys.Add(key);
             return ValueTask.CompletedTask;
         }
     }
@@ -192,9 +198,12 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Equal(2, pub.Published.Count);
         Assert.Equal(["one", "two"], pub.Published.Select(p => p.Event.Message));
-        var content = await resp.Content.ReadAsStringAsync();
-        Assert.Contains("rejectedLogRecords", content);
-        Assert.Contains("monthly event quota is exhausted", content);
+        // Read through a JSON parser, as a sender does: the serializer escapes the apostrophe as \u0027.
+        using var body = System.Text.Json.JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var partial = body.RootElement.GetProperty("partialSuccess");
+        Assert.True(partial.TryGetProperty("rejectedLogRecords", out _));
+        Assert.Contains("organization's monthly event quota is exhausted",
+            partial.GetProperty("errorMessage").GetString());
     }
 
     // The body cap bounds the bytes an export may carry, not the records inside them (see RelayOptions).
@@ -238,6 +247,21 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
         Assert.Equal(HttpStatusCode.InternalServerError, resp.StatusCode);
         Assert.Equal(1, pub.Published);
         Assert.Equal(2L, Assert.Single(quota.Refunded)); // the 2 of 3 that never reached the broker
+    }
+
+    // The charge and the refund both go to the org's allowance, never the project's, or a refund would
+    // credit a counter the charge never touched.
+    [Fact]
+    public async Task Otlp_ChargesAndRefundsTheOrgsAllowance()
+    {
+        var pub = new FailAfterPublisher(succeed: 1);
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 3, Used: 3, Remaining: 7));
+        var client = With(pub, quota, projects: new TwoOrgProjectStore()).CreateClient();
+
+        var resp = await client.SendAsync(OtlpPost("12", ThreeErrorBatch));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, resp.StatusCode);
+        Assert.Equal(["org:900", "org:900"], quota.Keys);
     }
 
     // Only storable records are metered: an export of pure INFO costs nothing, and must not ask the meter
@@ -354,7 +378,7 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Equal("application/x-protobuf", resp.Content.Headers.ContentType?.MediaType);
         var bytes = await resp.Content.ReadAsByteArrayAsync();
-        Assert.Contains("monthly event quota is exhausted", Encoding.UTF8.GetString(bytes));
+        Assert.Contains("organization's monthly event quota is exhausted", Encoding.UTF8.GetString(bytes));
         Assert.Empty(pub.Published);
     }
 

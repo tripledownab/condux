@@ -261,6 +261,19 @@ describe("Repositories", () => {
     );
   });
 
+  it("names an empty stack root, which a JVM project's suggestion has", () => {
+    useSuggestedMappingsMock.mockReturnValue({
+      data: { data: [{ stackRoot: "", sourceRoot: "src/main/java/", matchCount: 2 }] },
+      isFetched: true,
+      isFetching: false,
+      refetch: vi.fn(),
+    });
+    renderWithIntl(<Repositories projectId={7} projectName="web-app" canManage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Suggest from errors" }));
+    expect(screen.getByText("(any path) → src/main/java/")).toBeInTheDocument();
+  });
+
   it("hides the add-repo form until GitHub is connected", () => {
     useGithubConnectionMock.mockReturnValue({
       orgId: 1,

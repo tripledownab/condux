@@ -171,7 +171,7 @@ public sealed class WeeklySummaryComposerTest(PostgresFixture pg, ClickHouseFixt
     private async Task WriteEventsAsync(long projectId, long issueId, DateTimeOffset at, params string[] userKeys)
     {
         using var http = Http();
-        var ts = at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+        var ts = at.ToUnixTimeMilliseconds();
         var rows = userKeys.Select(userKey => new EventRow(
             projectId.ToString(CultureInfo.InvariantCulture), (ulong)issueId, Guid.NewGuid().ToString("N"), ts,
             "error", "", "", "", "", "", "boom", "", "", "fp", new Dictionary<string, string>(), "{}", 90,

@@ -47,31 +47,32 @@ export function EventsTable({
   return (
     <section className="mt-8">
       <h2 className="font-heading text-lg font-semibold text-foreground">{translate("title")}</h2>
-      <ul className="mt-3 divide-y divide-border/50">
+      {/* Each row is a subgrid of the list, so a column is as wide as its widest value in any row:
+          a fixed width let a long level or timestamp paint over the column beside it. */}
+      <ul className="mt-3 grid grid-cols-[auto_auto_minmax(0,1fr)_auto] divide-y divide-border/50">
         {events.map((event) => (
-          <li key={event.eventId} className="flex items-center gap-3 py-2 text-xs">
+          <li
+            key={event.eventId}
+            className="col-span-full grid grid-cols-subgrid items-center gap-x-3 py-2 text-xs"
+          >
             <span
-              className={`w-12 shrink-0 font-medium uppercase ${
+              className={`whitespace-nowrap font-medium uppercase ${
                 LEVEL_CLASS[event.level] ?? "text-muted-foreground"
               }`}
             >
               {event.level}
             </span>
-            <span className="w-36 shrink-0 whitespace-nowrap text-muted-foreground tabular-nums">
+            <span className="whitespace-nowrap text-muted-foreground tabular-nums">
               {formatTimestamp(event.timestamp)}
             </span>
-            <span className="min-w-0 flex-1 truncate font-mono text-foreground">
+            <span className="min-w-0 truncate font-mono text-foreground">
               {event.exceptionType
                 ? `${event.exceptionType}: ${event.exceptionValue}`
                 : event.message}
             </span>
-            <button
-              type="button"
-              onClick={() => onShowRaw(event)}
-              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <Button type="button" variant="secondary" size="xs" onClick={() => onShowRaw(event)}>
               {translate("raw")}
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

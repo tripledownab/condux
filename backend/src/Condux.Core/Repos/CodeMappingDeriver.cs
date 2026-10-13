@@ -25,10 +25,19 @@ public static class CodeMappingDeriver
             .Select(path => (Path: path, Segments: path.Split('/')))
             .ToList();
 
+        var repoFiles = repoSegments.Select(repo => repo.Path).ToHashSet(StringComparer.Ordinal);
         var support = new Dictionary<(string Stack, string Source), int>();
         foreach (var raw in stackPaths)
         {
-            if (BestMatch(Normalize(raw), repoSegments) is { } rule)
+            var stackPath = Normalize(raw);
+            // A frame that already names a file in the repo needs no rule. Scanning on would pair it with
+            // another file of the same name (every page.tsx, route.ts, index.ts) and propose a rule that
+            // points it at the wrong file.
+            if (repoFiles.Contains(stackPath))
+            {
+                continue;
+            }
+            if (BestMatch(stackPath, repoSegments) is { } rule)
             {
                 support[rule] = support.GetValueOrDefault(rule) + 1;
             }
@@ -42,7 +51,8 @@ public static class CodeMappingDeriver
     }
 
     // The rewrite (stackRoot, sourceRoot) for the repo path sharing the longest trailing-segment suffix
-    // with the frame, or null when nothing matches or the paths are already identical (no mapping needed).
+    // with the frame, or null when nothing matches. The caller has already skipped a frame that names a repo
+    // file exactly, so the two roots always differ here.
     private static (string Stack, string Source)? BestMatch(
         string stackPath, IReadOnlyList<(string Path, string[] Segments)> repos)
     {
@@ -67,10 +77,6 @@ public static class CodeMappingDeriver
             var suffix = string.Join('/', stackSegments[^depth..]);
             var stackRoot = stackPath[..^suffix.Length];
             var sourceRoot = repoPath[..^suffix.Length];
-            if (stackRoot == sourceRoot)
-            {
-                continue; // already repo-relative for this frame; nothing to rewrite
-            }
             // Prefer the deepest (most specific) match; break ties on the shorter, then lexicographically
             // smaller, source root so the result is deterministic.
             if (depth > bestDepth

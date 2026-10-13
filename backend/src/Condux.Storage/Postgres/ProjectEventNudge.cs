@@ -21,7 +21,7 @@ public static class ProjectEventNudge
         {
             await projectEvents.NotifyAsync(projectId, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "project event notify failed project={ProjectId}", projectId);
         }

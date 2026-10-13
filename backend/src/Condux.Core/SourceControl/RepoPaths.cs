@@ -32,6 +32,9 @@ public static class RepoPaths
     /// The model chooses these paths, so they are untrusted input. Reject anything that could escape the
     /// repo root (absolute paths, drive letters, or a parent-directory segment) rather than normalizing it
     /// away, so a traversal attempt fails loudly as a tool error instead of silently writing elsewhere.
+    /// An empty segment (<c>a//b</c>, or a trailing slash) is refused too, and a <c>.</c> segment dropped,
+    /// so the result names the file the source host acts on: GitHub redirects <c>x/</c> elsewhere and the
+    /// URI stack collapses <c>a/./b</c>, and a check keyed on the spelling would compare a different file.
     /// </summary>
     public static string Normalize(string path)
     {
@@ -51,7 +54,16 @@ public static class RepoPaths
             throw new ArgumentException($"Path must not leave the repo root: {path}", nameof(path));
         }
 
-        return trimmed.StartsWith("./", StringComparison.Ordinal) ? trimmed[2..] : trimmed;
+        var segments = trimmed.Split('/');
+        if (segments.Any(segment => segment.Length == 0))
+        {
+            throw new ArgumentException($"Path must not have an empty segment: {path}", nameof(path));
+        }
+
+        var kept = segments.Where(segment => segment != ".").ToArray();
+        return kept.Length > 0
+            ? string.Join('/', kept)
+            : throw new ArgumentException($"Path names no file: {path}", nameof(path));
     }
 
     /// <summary>Whether <see cref="Normalize"/> would accept this path, without throwing.</summary>

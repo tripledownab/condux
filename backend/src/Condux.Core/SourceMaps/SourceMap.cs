@@ -4,8 +4,8 @@ namespace Condux.Core.SourceMaps;
 
 /// <summary>
 /// A parsed Source Map v3 (ECMA-426), decoded so a generated (line, column) resolves to its original
-/// source position for read-time symbolication (ADR-0028). Plain maps only: an index map (with a
-/// "sections" array instead of "mappings") returns null from <see cref="Parse"/> (a follow-up).
+/// source position for read-time symbolication (ADR-0028). A plain map decodes its own "mappings"; an
+/// index map ("sections") holds one plain map per section, decoded by <see cref="SourceMapSections"/>.
 /// </summary>
 public sealed class SourceMap
 {
@@ -14,6 +14,9 @@ public sealed class SourceMap
     private readonly string[] names;
 
     private readonly List<SourceMapMappings.Segment>?[] lines;
+
+    // Set for an index map, whose own sources, names and lines stay empty.
+    private readonly SourceMapSections.Section[]? sections;
 
     private SourceMap(
         string[] sources, string?[] sourcesContent, string[] names, List<SourceMapMappings.Segment>?[] lines)
@@ -24,29 +27,33 @@ public sealed class SourceMap
         this.lines = lines;
     }
 
+    private SourceMap(SourceMapSections.Section[] sections)
+        : this([], [], [], [])
+    {
+        this.sections = sections;
+    }
+
+    /// <summary>The decoded map, or null when it is not a source map this can read: not JSON, neither
+    /// form, past the decode budget, or an index map none of whose sections decodes. As in the
+    /// specification's ParseSourceMap, a "sections" field makes it an index map whatever else it holds.
+    /// </summary>
     public static SourceMap? Parse(byte[] json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("mappings", out var mappings)
-                || mappings.ValueKind != JsonValueKind.String)
-            {
-                return null; // not a plain v3 map (e.g. an index map with "sections")
-            }
-
-            if (!SourceMapMappings.IsDecodable(mappings.GetString()!))
+            if (root.ValueKind != JsonValueKind.Object)
             {
                 return null;
             }
 
-            return new SourceMap(
-                ReadStrings(root, "sources"),
-                ReadNullableStrings(root, "sourcesContent"),
-                ReadStrings(root, "names"),
-                SourceMapMappings.Decode(mappings.GetString()!));
+            if (root.TryGetProperty("sections", out var sections))
+            {
+                return SourceMapSections.Parse(sections) is { Length: > 0 } decoded ? new SourceMap(decoded) : null;
+            }
+
+            return ToPlain(root);
         }
         catch (JsonException)
         {
@@ -54,10 +61,32 @@ public sealed class SourceMap
         }
     }
 
+    /// <summary>A plain map from its JSON object, or null without a decodable "mappings" string.</summary>
+    internal static SourceMap? ToPlain(JsonElement root)
+    {
+        if (!root.TryGetProperty("mappings", out var mappings)
+            || mappings.ValueKind != JsonValueKind.String
+            || !SourceMapMappings.IsDecodable(mappings.GetString()!))
+        {
+            return null;
+        }
+
+        return new SourceMap(
+            ReadStrings(root, "sources"),
+            ReadNullableStrings(root, "sourcesContent"),
+            ReadStrings(root, "names"),
+            SourceMapMappings.Decode(mappings.GetString()!));
+    }
+
     /// <summary>The original position for a generated (line, column) — both 0-based — or null when the
     /// map has no mapping there (out of range, before the first segment, or a gap segment).</summary>
     public OriginalPosition? OriginalPositionFor(int generatedLine, int generatedColumn)
     {
+        if (sections is not null)
+        {
+            return SourceMapSections.Find(sections, generatedLine, generatedColumn);
+        }
+
         if (generatedLine < 0 || generatedLine >= lines.Length)
         {
             return null;

@@ -8,15 +8,11 @@ using Microsoft.AspNetCore.Http.HttpResults;
 namespace Condux.ControlPlane.Endpoints;
 
 /// <summary>
-/// Customer-hosted runners (ADR-0033 slice 4, #68). Two surfaces that share a credential:
-///
-/// Management is cookie-authed from the dashboard, admin mints and revokes, member reads, and the raw
-/// token is returned once on mint. Built like <see cref="McpTokenEndpoints"/>, but scoped to an org rather
-/// than a project, because a runner serves whatever work its org produces.
-///
-/// The lease surface is what the runner itself calls, authenticated by that token alone with no cookie.
-/// It is deliberately tiny and additive-only: a customer's runner lags our deploys, so a field added here
-/// must never be required of an older runner, and one removed breaks every runner at once.
+/// Customer-hosted runners (ADR-0033 slice 4, #68): the lease surface a runner itself calls, authenticated
+/// by its token alone with no cookie. The dashboard's management of those tokens is
+/// <see cref="RunnerTokenEndpoints"/>. This surface is deliberately tiny and additive-only: a customer's
+/// runner lags our deploys, so a field added here must never be required of an older runner, and one
+/// removed breaks every runner at once.
 /// </summary>
 internal static class RunnerEndpoints
 {
@@ -26,43 +22,6 @@ internal static class RunnerEndpoints
     private const string RunnerActor = "runner";
 
     public static void MapRunnerEndpoints(this IEndpointRouteBuilder app)
-    {
-        MapTokenManagement(app);
-        MapLeaseProtocol(app);
-    }
-
-    private static void MapTokenManagement(IEndpointRouteBuilder app)
-    {
-        app.MapPost("/api/orgs/{orgId:long}/runner-tokens",
-                async Task<Ok<MintedRunnerTokenResponse>> (
-                    long orgId, CreateRunnerTokenRequest req, RunnerTokenRepository tokens) =>
-                {
-                    var label = string.IsNullOrWhiteSpace(req.Label) ? "Runner" : req.Label.Trim();
-                    var (raw, hash) = RunnerTokens.Create();
-                    var token = await tokens.CreateAsync(orgId, hash, label);
-                    return TypedResults.Ok(
-                        new MintedRunnerTokenResponse(token.Id, token.Name, raw, token.CreatedAt));
-                })
-            .WithName("createRunnerToken").WithTags("RunnerTokens")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
-
-        app.MapGet("/api/orgs/{orgId:long}/runner-tokens",
-                async (long orgId, RunnerTokenRepository tokens) =>
-                    TypedResults.Ok((await tokens.ListByOrgAsync(orgId)).Select(ToResponse).ToArray()))
-            .WithName("listRunnerTokens").WithTags("RunnerTokens")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Member));
-
-        app.MapDelete("/api/orgs/{orgId:long}/runner-tokens/{tokenId:guid}",
-                async Task<Results<NoContent, NotFound>> (
-                    long orgId, Guid tokenId, RunnerTokenRepository tokens) =>
-                    await tokens.RevokeAsync(orgId, tokenId)
-                        ? TypedResults.NoContent()
-                        : TypedResults.NotFound())
-            .WithName("revokeRunnerToken").WithTags("RunnerTokens")
-            .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireOrgRole(OrgRole.Admin));
-    }
-
-    private static void MapLeaseProtocol(IEndpointRouteBuilder app)
     {
         // Take the next job, or 204 when there is none. 204 is the ordinary answer: a runner polls
         // continuously and most polls find nothing, so it must not read as an error.
@@ -131,9 +90,10 @@ internal static class RunnerEndpoints
                 async Task<Results<NoContent, Conflict, UnauthorizedHttpResult>> (
                     Guid fixId, ReportRequest req, HttpContext http,
                     RunnerTokenRepository tokens, PostgresJobLeaseStore leases, IFixStore fixes,
-                    IAiFixQuota quota, ProjectEventNotifier projectEvents, ILoggerFactory log) =>
+                    ProjectEventNotifier projectEvents, ILoggerFactory log) =>
                 {
-                    if (await ResolveOrgAsync(http, tokens) is not { } orgId)
+                    // The report is tied to its run by the lease id, which TryReportAsync checks.
+                    if (await ResolveOrgAsync(http, tokens) is null)
                     {
                         return TypedResults.Unauthorized();
                     }
@@ -146,22 +106,37 @@ internal static class RunnerEndpoints
                         ? reported
                         : FixStatus.Failed;
 
+                    // The reason comes from outside, so it is narrowed like the status: only a failure
+                    // carries one, and a number this version does not know reads as Unknown. An older
+                    // runner sends none, which is Unknown too.
+                    FixFailureReason? reason = status != FixStatus.Failed ? null
+                        : req.FailureReason is { } sent && Enum.IsDefined((FixFailureReason)sent)
+                            ? (FixFailureReason)sent
+                            : FixFailureReason.Unknown;
+
+                    // A failure's summary is the runner's error text, and the run's summary is shown to
+                    // every member, so it is kept for the audit trail below and not stored on the run. The
+                    // reason is what the dashboard explains. A hosted failure writes no summary either.
+                    var summary = status == FixStatus.Succeeded ? req.Summary ?? "" : "";
+                    if (status != FixStatus.Succeeded)
+                    {
+                        // A CVE bump writes no audit, so this log line is the only place its runner's
+                        // error text is kept.
+                        log.CreateLogger("Condux.Runner").LogWarning(
+                            "runner reported {FixId} {Status}: {Summary}", fixId, status, req.Summary);
+                    }
+
                     if (await leases.TryReportAsync(
                         fixId, req.LeaseId ?? "", status, req.Branch ?? "", req.PrUrl ?? "",
-                        req.Summary ?? "", req.Model ?? "", req.InputTokens, req.OutputTokens,
-                        DateTimeOffset.UtcNow, http.RequestAborted) is not { } concluded)
+                        summary, req.Model ?? "", req.InputTokens, req.OutputTokens,
+                        DateTimeOffset.UtcNow, http.RequestAborted, reason) is not { } concluded)
                     {
                         return TypedResults.Conflict();
                     }
 
-                    // A run that delivered no PR stays free (ADR-0017), exactly as the hosted orchestrator
-                    // refunds its failures. The lease guard above makes this once-only: a second report of
-                    // the same run is refused before reaching here, so the refund cannot double. The first
-                    // real runner failure burned its reservation because this was missing.
-                    if (status != FixStatus.Succeeded)
-                    {
-                        await quota.RefundAsync(orgId, DateTimeOffset.UtcNow, http.RequestAborted);
-                    }
+                    // A run that delivered no PR stays free (ADR-0017): the report refunded it in the same
+                    // transaction, and the lease guard refuses a second report of the same run, so the refund
+                    // cannot double.
 
                     // Same event names the orchestrator uses, so one issue's history reads the same whether
                     // the fix ran on our compute or the customer's. Token usage rides along, because spend
@@ -216,7 +191,4 @@ internal static class RunnerEndpoints
         IFixStore fixes, ILoggerFactory log, Guid fixId, string eventName, object detail, CancellationToken ct) =>
         FixAudit.TryWriteAsync(
             fixes, log.CreateLogger(nameof(RunnerEndpoints)), fixId, RunnerActor, eventName, detail, ct);
-
-    private static RunnerTokenResponse ToResponse(ScopedTokenRow t) =>
-        new(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.RevokedAt is not null);
 }

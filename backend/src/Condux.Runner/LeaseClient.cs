@@ -47,7 +47,7 @@ public sealed class LeaseClient(HttpClient http)
     {
         using var response = await http.PostAsJsonAsync(
             $"api/runner/jobs/{job.FixId}/heartbeat", new { leaseId = job.LeaseId }, cancellationToken);
-        return response.IsSuccessStatusCode;
+        return ReadLeaseAnswer(response);
     }
 
     /// <summary>
@@ -57,7 +57,7 @@ public sealed class LeaseClient(HttpClient http)
     /// </summary>
     public async Task<bool> ReportAsync(
         RunnerJob job, FixStatus status, FixResult? result, string model, string summary,
-        CancellationToken cancellationToken = default)
+        FixFailureReason? failureReason = null, CancellationToken cancellationToken = default)
     {
         using var response = await http.PostAsJsonAsync(
             $"api/runner/jobs/{job.FixId}/result",
@@ -71,8 +71,23 @@ public sealed class LeaseClient(HttpClient http)
                 model,
                 inputTokens = result?.InputTokens ?? 0,
                 outputTokens = result?.OutputTokens ?? 0,
+                failureReason = (int?)failureReason,
             },
             cancellationToken);
-        return response.IsSuccessStatusCode;
+        return ReadLeaseAnswer(response);
+    }
+
+    // 409 is the control plane saying the lease is gone, and 401 that the runner's token was revoked.
+    // Anything else, such as a 502 from the edge while the control plane redeploys, throws, so the caller
+    // retries it rather than abandoning a run, or a report, that the lease still covers.
+    private static bool ReadLeaseAnswer(HttpResponseMessage response)
+    {
+        if (response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.Unauthorized)
+        {
+            return false;
+        }
+
+        response.EnsureSuccessStatusCode();
+        return true;
     }
 }

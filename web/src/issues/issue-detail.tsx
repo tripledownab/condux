@@ -13,6 +13,7 @@ import type { IssueSummary } from "@/src/api/generated/model";
 import { Notice } from "@/src/components/notice";
 import { Button } from "@/src/components/ui/button";
 import { formatRelativeTime } from "@/src/lib/time";
+import { canManageOrg } from "@/src/orgs/current-org";
 import { ProjectStatus, useCurrentProject } from "./current-project";
 import { EventChips, EventEvidence } from "./event-detail";
 import {
@@ -115,7 +116,7 @@ export function IssueDetail({ issueId }: { issueId: string }) {
   const latestStored = detail.events[0];
   const currentUserId = me.data?.data.id ?? null;
   const myRole = (members.data?.data ?? []).find((member) => member.userId === currentUserId)?.role;
-  const canModerate = myRole === "admin" || myRole === "owner";
+  const canModerate = myRole !== undefined && canManageOrg(myRole);
   return (
     <div className="relative flex h-full">
       <div className="min-w-0 flex-1 overflow-y-auto p-6">

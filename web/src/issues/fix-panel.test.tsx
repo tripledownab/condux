@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConduxApiError } from "@/src/api/fetcher";
 import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 
+const { invalidateQueriesMock } = vi.hoisted(() => ({ invalidateQueriesMock: vi.fn() }));
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
 }));
 
 const useListFixesMock = vi.fn();
@@ -13,7 +14,8 @@ const useAiFixUsageMock = vi.fn();
 const useListReposMock = vi.fn();
 const useListGithubBranchesMock = vi.fn();
 vi.mock("@/src/api/generated/condux", () => ({
-  useListFixes: () => useListFixesMock(),
+  useListFixes: (_projectId: number, _issueId: string, options: unknown) =>
+    useListFixesMock(options),
   useRequestFix: () => useRequestFixMock(),
   useAiFixUsage: () => useAiFixUsageMock(),
   useListRepos: () => useListReposMock(),
@@ -88,6 +90,96 @@ describe("FixPanel", () => {
     expect(screen.queryByRole("button", { name: "Suggest fix" })).not.toBeInTheDocument();
   });
 
+  it("offers the trigger again when the last run failed, with a link to why", () => {
+    useListFixesMock.mockReturnValue({ data: { data: [{ id: "fix-1", status: 4 }] } });
+    useRequestFixMock.mockReturnValue(idle);
+    renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+
+    expect(screen.getByRole("button", { name: "Suggest fix" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "See why" })).toHaveAttribute("href", "/fixes/fix-1");
+  });
+
+  it("after a retry, waits for the new run rather than linking back to the failed one", () => {
+    useListFixesMock.mockReturnValue({ data: { data: [{ id: "fix-1", status: 4 }] } });
+    useRequestFixMock.mockReturnValue(idle);
+    const { rerender } = renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    confirmSuggest();
+    expect(idle.mutate).toHaveBeenCalled();
+
+    // The request succeeded but the list still holds only the failed run.
+    useRequestFixMock.mockReturnValue({ ...idle, isSuccess: true });
+    rerender(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    expect(screen.getByRole("link", { name: "View suggested fix" })).toHaveAttribute(
+      "href",
+      "/fixes",
+    );
+
+    // Once the new run appears, the link goes to it.
+    useListFixesMock.mockReturnValue({
+      data: {
+        data: [
+          { id: "fix-2", status: 1 },
+          { id: "fix-1", status: 4 },
+        ],
+      },
+    });
+    rerender(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    expect(screen.getByRole("link", { name: "View suggested fix" })).toHaveAttribute(
+      "href",
+      "/fixes/fix-2",
+    );
+  });
+
+  it("polls after a retry until the new run appears, then stops", () => {
+    const failed = { id: "fix-1", status: 4 };
+    useListFixesMock.mockReturnValue({ data: { data: [failed] } });
+    useRequestFixMock.mockReturnValue(idle);
+    type Options = { query: { refetchInterval: (query: object) => number | false } };
+    const pollNow = (runs: object[]) =>
+      (useListFixesMock.mock.lastCall as [Options])[0].query.refetchInterval({
+        state: { data: { data: runs } },
+      });
+    const { rerender } = renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    confirmSuggest();
+    // Not before the request has succeeded: a refused request must not poll for ever.
+    expect(pollNow([failed])).toBe(false);
+
+    useRequestFixMock.mockReturnValue({ ...idle, isSuccess: true });
+    rerender(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    expect(pollNow([failed])).toBe(3000);
+    expect(pollNow([{ id: "fix-2", status: 1 }, failed])).toBe(false);
+  });
+
+  it("offers another retry once the retried run has failed too", () => {
+    useListFixesMock.mockReturnValue({ data: { data: [{ id: "fix-1", status: 4 }] } });
+    useRequestFixMock.mockReturnValue(idle);
+    const { rerender } = renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    confirmSuggest();
+    useRequestFixMock.mockReturnValue({ ...idle, isSuccess: true });
+    useListFixesMock.mockReturnValue({
+      data: {
+        data: [
+          { id: "fix-2", status: 4 },
+          { id: "fix-1", status: 4 },
+        ],
+      },
+    });
+    rerender(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+
+    expect(screen.getByRole("button", { name: "Suggest fix" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "See why" })).toHaveAttribute("href", "/fixes/fix-2");
+  });
+
+  it("keeps the trigger hidden while a run is in flight or has opened a PR", () => {
+    for (const status of [1, 2, 3]) {
+      useListFixesMock.mockReturnValue({ data: { data: [{ id: "fix-1", status }] } });
+      useRequestFixMock.mockReturnValue(idle);
+      const { unmount } = renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+      expect(screen.queryByRole("button", { name: "Suggest fix" })).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("points at the Fixes section right after a request, before the run row exists", () => {
     useListFixesMock.mockReturnValue({ data: { data: [] } });
     useRequestFixMock.mockReturnValue({ ...idle, isSuccess: true });
@@ -149,6 +241,28 @@ describe("FixPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Suggest fix" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("says a run is already queued and reads the list again to show it", () => {
+    // Another tab or another admin asked first. The server refuses the second request, and the panel
+    // fetches the run that refused it so it can funnel to that run instead.
+    const mutate = vi.fn((_vars, opts) =>
+      opts.onError?.(new ConduxApiError("POST", "/fix", 409, "fix_in_progress")),
+    );
+    useListFixesMock.mockReturnValue({ data: { data: [] } });
+    useRequestFixMock.mockReturnValue({
+      ...idle,
+      mutate,
+      isError: true,
+      error: new ConduxApiError("POST", "/fix", 409, "fix_in_progress"),
+    });
+    renderWithIntl(<FixPanel projectId={7} issueId="abc" orgId={1} />);
+    invalidateQueriesMock.mockClear();
+    confirmSuggest();
+    expect(
+      screen.getByText("A fix for this issue is already queued or running."),
+    ).toBeInTheDocument();
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["fixes"] });
   });
 
   it("opens the connect-repo modal (not an inline error) when no repo is linked", () => {

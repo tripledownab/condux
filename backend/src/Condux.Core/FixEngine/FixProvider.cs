@@ -4,6 +4,9 @@ namespace Condux.Core.FixEngine;
 /// change on a new branch and opens a draft PR into <see cref="BaseBranch"/> (the project's linked base).</summary>
 public sealed record FixRequest(string IssueId, string RepoFullName, string BaseBranch, string Prompt, string Model)
 {
+    /// <summary>The run's own id, which names its branch (<see cref="FixBranches"/>).</summary>
+    public required Guid RunId { get; init; }
+
     /// <summary>The repo-relative files the fix should focus on (never the whole repo).</summary>
     public IReadOnlyList<string> ScopedPaths { get; init; } = [];
 

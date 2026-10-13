@@ -86,6 +86,43 @@ public sealed class FixCatalogApiTest(PostgresFixture pg) : IClassFixture<Postgr
     }
 
     [Fact]
+    public async Task A_failed_fix_shows_its_reason_and_a_successful_one_shows_none()
+    {
+        var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
+        await ApiAuth.SignUpAsync(client);
+        var orgResp = await client.PostAsJsonAsync("/api/orgs", new { name = "Acme" });
+        var orgId = (await orgResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        var projResp = await client.PostAsJsonAsync($"/api/orgs/{orgId}/projects",
+            new { slug = "backend", name = "Backend", platform = "python" });
+        var projectId = (await projResp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("project").GetProperty("id").GetInt64();
+        var issue = await new IssueRepository(pg.ConnectionString).UpsertAsync(
+            projectId, new Grouping("fp-reason", "TypeError: boom", "run"), Level.Error, DateTimeOffset.UtcNow);
+        var fixes = new PostgresFixStore(pg.ConnectionString);
+        var now = DateTimeOffset.UtcNow;
+
+        // Insert then update, as the orchestrator does: the reason is written with the failure.
+        var failed = new FixSuggestion(
+            Guid.CreateVersion7(), issue.Id, "acme/api", FixStatus.Failed, "anthropic", "claude-opus-4-8",
+            "", "", "", now, now)
+        { FailureReason = FixFailureReason.NoSourceFiles };
+        await fixes.InsertAsync(failed);
+        await fixes.UpdateAsync(failed);
+        var succeeded = new FixSuggestion(
+            Guid.CreateVersion7(), issue.Id, "acme/api", FixStatus.Succeeded, "anthropic", "claude-opus-4-8",
+            "condux/fix-1", "https://example.invalid/p/1", "s", now, now);
+        await fixes.InsertAsync(succeeded);
+        await fixes.UpdateAsync(succeeded);
+
+        var failedDetail = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/fixes/{failed.Id}");
+        Assert.Equal((int)FixFailureReason.NoSourceFiles, failedDetail.GetProperty("failureReason").GetInt32());
+        var okDetail = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/fixes/{succeeded.Id}");
+        Assert.Equal(JsonValueKind.Null, okDetail.GetProperty("failureReason").ValueKind);
+        // The store reads it back too, which is what the worker and the per-issue list use.
+        Assert.Equal(FixFailureReason.NoSourceFiles, (await fixes.GetAsync(failed.Id))!.FailureReason);
+    }
+
+    [Fact]
     public async Task Fix_cost_rollup_prices_priced_models_and_leaves_byo_uncounted()
     {
         var client = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();

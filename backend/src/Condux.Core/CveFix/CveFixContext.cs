@@ -19,7 +19,6 @@ public static class EcosystemManifests
             ["npm"] = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
             ["pip"] = ["requirements.txt", "pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock"],
             ["maven"] = ["pom.xml"],
-            ["gradle"] = ["build.gradle", "build.gradle.kts"],
             ["composer"] = ["composer.json", "composer.lock"],
             ["rubygems"] = ["Gemfile", "Gemfile.lock"],
             ["go"] = ["go.mod", "go.sum"],
@@ -28,9 +27,36 @@ public static class EcosystemManifests
             ["pub"] = ["pubspec.yaml", "pubspec.lock"],
         };
 
+    // Where a Gradle build declares a version: the version catalog, the root build script in either DSL,
+    // and the module build script of the Android default layout. Most likely first, since the gateway
+    // reads only the first few scoped paths and an absent file still costs one.
+    private static readonly IReadOnlyList<string> GradleCandidates =
+    [
+        "gradle/libs.versions.toml", "build.gradle.kts", "build.gradle", "app/build.gradle.kts",
+        "app/build.gradle",
+    ];
+
     /// <summary>The manifest candidates for an ecosystem, or an empty list when it is not supported.</summary>
     public static IReadOnlyList<string> For(string ecosystem) =>
         Candidates.TryGetValue(ecosystem, out var paths) ? paths : [];
+
+    /// <summary>The candidates beside a manifest the alert names. A Gradle build file gets Gradle's, whatever
+    /// the ecosystem says: GitHub reads no Gradle file itself, so a Gradle alert comes from dependency
+    /// submission, which reports the ecosystem as maven and the manifest as the settings file, and maven's
+    /// candidate is a pom.xml such a build does not have.</summary>
+    public static IReadOnlyList<string> ForManifest(string ecosystem, string manifestPath) =>
+        IsGradleBuildFile(manifestPath) ? GradleCandidates : For(ecosystem);
+
+    /// <summary>Whether the path is a Gradle settings or build script, in either DSL.</summary>
+    public static bool IsGradleBuildFile(string path) =>
+        FileName(path) is "settings.gradle" or "settings.gradle.kts" or "build.gradle" or "build.gradle.kts";
+
+    /// <summary>Whether the path is a Gradle settings script, which names the build's modules and rarely
+    /// declares a version (only through an inline version catalog).</summary>
+    public static bool IsGradleSettingsFile(string path) =>
+        FileName(path) is "settings.gradle" or "settings.gradle.kts";
+
+    private static string FileName(string path) => path[(path.LastIndexOf('/') + 1)..];
 }
 
 /// <summary>
@@ -42,6 +68,26 @@ public static class EcosystemManifests
 /// </summary>
 public static class CveFixContextAssembler
 {
+    // Every system prompt asks for a test that fails without the change, which is right for a code fix
+    // and has no answer for a version bump, so a model told both invented a script that greps the build
+    // file. Said here, in the task, rather than by loosening the system prompts, which an issue fix still
+    // needs: there is one system prompt per backend and strategy, the task is the one text they all
+    // receive, and it is ours rather than the advisory's.
+    // A lockfile is rewritten whole, and one the model could not read in full (cut short in the prompt, or
+    // too large for the source host to return) cannot be, so a bump that tried failed outright. Leaving it
+    // for the reviewer to regenerate still lands the manifest change, and the pull request says which
+    // lockfile was left. Worded for both backends: one is shown files, the other reads a mounted checkout.
+    private const string LockfileInstruction =
+        "Update its lockfile too, but only if you could read the whole of it. A lockfile you could not read "
+        + "in full, because it was cut short or was too large to read, must be left exactly as it is: do not "
+        + "write it, and do not create a new one in its place. Say in the summary that the lockfile was left "
+        + "for the reviewer to regenerate. ";
+
+    private const string NoTestInstruction =
+        "This is a dependency update, not a code fix: do not add tests, scripts or any other new file, "
+        + "even though your general instructions ask for a test, because a version bump has none to add. "
+        + "Say in the summary that no test was added for that reason.";
+
     /// <summary>Build the bump prompt + the manifest paths to scope to. When the alert names its
     /// manifest(s) (#41 — one advisory can affect several monorepo workspace members, all bumped in one
     /// run), the scope is those manifests plus each one's sibling lockfile candidates; otherwise the
@@ -81,10 +127,17 @@ public static class CveFixContextAssembler
             + (manifests.Count > 0
                 ? $"The vulnerable dependency is declared in: {string.Join(", ", promptManifests)}.\n"
                 : "")
-            + "Update the dependency manifest (and its lockfile if one is present) so the resolved "
+            + (manifests.Any(EcosystemManifests.IsGradleBuildFile)
+                ? "This is a Gradle build: set the version where the build declares it, in the "
+                  + "gradle/libs.versions.toml version catalog or a build.gradle(.kts) file, not in the "
+                  + "settings file.\n"
+                : "")
+            + "Update the dependency manifest so the resolved "
             + $"version of \"{promptPackage}\" is \"{promptToVersion}\" or a compatible patched version. "
+            + LockfileInstruction
             + "Change only what the bump requires; do not modify application code unless the new version "
-            + "needs it.";
+            + "needs it. "
+            + NoTestInstruction;
 
         return new FixContext(prompt, ScopedPaths(ecosystem, manifests));
     }
@@ -101,35 +154,46 @@ public static class CveFixContextAssembler
     // ignores the rest), then the sibling candidates ROUND-ROBIN across manifests rather than all of one
     // directory's before the next: the gateway fetches only the first few scoped paths, and absent
     // candidates burn slots, so ordering one member's whole candidate list first could starve the other
-    // member's real lockfile out of the run entirely. A known manifest with an unmapped ecosystem still
-    // scopes to that manifest alone: the file to edit is known, so "ecosystem not in the table" is no
-    // reason to decline the fix.
+    // member's real lockfile out of the run entirely. A Gradle settings file is the exception and goes
+    // last: it is what the alert names, yet it rarely declares a version, so leading with it would spend a
+    // slot the version catalog needs; for a root build it still lands inside the in-process gateway's
+    // six-file read. A known manifest with an unmapped ecosystem still scopes to that manifest alone: the
+    // file to edit is known, so "ecosystem not in the table" is no reason to decline the fix.
     private static IReadOnlyList<string> ScopedPaths(string ecosystem, IReadOnlyList<string> manifests)
     {
-        var candidates = EcosystemManifests.For(ecosystem);
         if (manifests.Count == 0)
         {
-            return candidates;
+            return EcosystemManifests.For(ecosystem);
         }
 
-        var directories = manifests
-            .Select(manifest => manifest.LastIndexOf('/') is var slash && slash < 0
-                ? ""
-                : manifest[..(slash + 1)])
+        var siblings = manifests
+            .Select(manifest => (
+                Directory: CandidateRoot(manifest),
+                Candidates: EcosystemManifests.ForManifest(ecosystem, manifest)))
             .ToList();
+        var settings = manifests.Where(EcosystemManifests.IsGradleSettingsFile).ToList();
         var seen = new HashSet<string>(manifests, StringComparer.Ordinal);
-        var paths = new List<string>(manifests);
-        foreach (var candidate in candidates)
+        var paths = manifests.Except(settings).ToList();
+        for (var i = 0; i < siblings.Max(sibling => sibling.Candidates.Count); i++)
         {
-            foreach (var directory in directories)
+            foreach (var (directory, candidates) in siblings)
             {
-                var path = directory + candidate;
-                if (seen.Add(path))
+                if (i < candidates.Count && seen.Add(directory + candidates[i]))
                 {
-                    paths.Add(path);
+                    paths.Add(directory + candidates[i]);
                 }
             }
         }
+        paths.AddRange(settings);
         return paths;
     }
+
+    // Where a manifest's candidates are looked for: its own directory, except for a Gradle module script.
+    // A settings file marks the build's root, but a module's build.gradle(.kts) does not say where that root
+    // is, and its own directory would yield paths such as app/app/build.gradle, so the repository root is
+    // the better guess.
+    private static string CandidateRoot(string manifest) =>
+        EcosystemManifests.IsGradleBuildFile(manifest) && !EcosystemManifests.IsGradleSettingsFile(manifest)
+            ? ""
+            : manifest.LastIndexOf('/') is var slash && slash < 0 ? "" : manifest[..(slash + 1)];
 }

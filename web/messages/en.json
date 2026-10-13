@@ -7,7 +7,14 @@
     "loading": "Loading",
     "comboboxSearch": "Search",
     "comboboxEmpty": "No results.",
-    "renderErrorFallback": "Something went wrong rendering this page. The error has been reported."
+    "renderErrorFallback": "Something went wrong rendering this page. The error has been reported.",
+    "pager": {
+      "label": "Pagination",
+      "previous": "Previous page",
+      "next": "Next page",
+      "page": "Page {page}",
+      "pageSize": "Rows per page"
+    }
   },
   "platforms": {
     "javascript": "JavaScript / Node",
@@ -19,6 +26,7 @@
     "php": "PHP",
     "ruby": "Ruby",
     "rust": "Rust",
+    "flutter": "Flutter",
     "other": "Other"
   },
   "nav": {
@@ -58,7 +66,9 @@
       "install": "Install",
       "initialize": "Initialize and capture",
       "framework": "{framework} integration",
-      "sourcemaps": "Upload source maps (CI)"
+      "sourcemaps": "Upload source maps (CI)",
+      "build": "Build with split debug info",
+      "symbols": "Upload debug symbols (CI)"
     }
   },
   "admin": {
@@ -256,6 +266,7 @@
       "ssoNotAvailable": "No single sign-on is configured for that email domain.",
       "ssoDomainMismatch": "Your identity provider returned an email outside your organization's domain.",
       "ssoInviteRequired": "That account is not a member of this organization. Ask an administrator to invite you, then sign in again.",
+      "ssoPlatformAdmin": "A platform administrator account cannot sign in with single sign-on. Sign in another way, or ask whoever runs this Condux deployment.",
       "signInFailed": "Sign-in failed. Try again."
     },
     "mfa": {
@@ -612,7 +623,7 @@
     },
     "releaseTokens": {
       "title": "Release tokens",
-      "description": "Give CI a token to record releases from a pipeline, with no login. Use it as an Authorization: Bearer header on POST /api/releases.",
+      "description": "Give CI a token to use with no login, as an Authorization: Bearer header: to record releases (POST /api/releases), and to upload source maps (POST /api/sourcemaps) and debug files (POST /api/debug-files). Uploads need no linked repository, only object storage configured on this server.",
       "nameLabel": "Token name",
       "namePlaceholder": "e.g. GitHub Actions",
       "create": "Create token",
@@ -680,6 +691,7 @@
       "mappingsTitle": "Code mappings",
       "mappingsEmpty": "No code mappings. Stack paths are used as-is.",
       "repoRoot": "(repo root)",
+      "anyPath": "(any path)",
       "stackRootLabel": "Stack path prefix",
       "stackRootPlaceholder": "/app/dist/",
       "sourceRootLabel": "Repo path prefix",
@@ -696,6 +708,18 @@
       "inactive": "Inactive"
     },
     "cve": {
+      "verify": {
+        "watching": "Merged {date}. Watching which versions the app reports running.",
+        "held": "A fixed version was reported running, and no vulnerable one from {from} to {date}. A service that sends no events is not seen.",
+        "stillExposed": "Still reported running: {versions}.",
+        "cannotVerify": "Could not tell from what the app reported whether the fixed version is running.",
+        "noScheme": "Condux cannot compare versions in this ecosystem yet.",
+        "noRanges": "This bump was requested before Condux kept the advisory's ranges, or GitHub did not list them.",
+        "incomplete": "Too many versions were reported to read them all, so a vulnerable one may have been missed.",
+        "nothingReported": "No version of this package was reported running between the merge on {from} and {date}. Its service may send no events, or no dependency list.",
+        "fixedNotReported": "No fixed version was reported running between the merge on {from} and {date}.",
+        "undecidedReported": "A version Condux cannot place in the advisory's ranges was still reported running."
+      },
       "title": "{count, plural, one {# vulnerability} other {# vulnerabilities}}",
       "fix": "Fix: {version}",
       "noFix": "No fix available yet",
@@ -713,10 +737,44 @@
         "generic": "Could not start the fix"
       },
       "exposure": {
-        "running": "Running",
+        "running": "Running, not confirmed",
+        "exposed": "Running a vulnerable version",
+        "inRange": "in the vulnerable range",
         "where": "in {environment}",
         "noEnvironment": "an unnamed environment"
-      }
+      },
+      "severity": {
+        "unknown": "unknown",
+        "low": "low",
+        "moderate": "moderate",
+        "high": "high",
+        "critical": "critical"
+      },
+      "columns": {
+        "severity": "Severity",
+        "package": "Package",
+        "advisory": "Advisory",
+        "affected": "Affected",
+        "fix": "Fix",
+        "runtime": "Runtime",
+        "action": "Action"
+      },
+      "filters": {
+        "severity": "Severity",
+        "allSeverities": "All severities",
+        "sort": "Sort",
+        "sortSeverity": "Severity",
+        "sortPackage": "Package",
+        "runningOnly": "Seen running only",
+        "fixableOnly": "Fix available only",
+        "search": "Search package or advisory",
+        "noMatches": "No vulnerabilities match these filters.",
+        "noneSeenRunning": "No package that matches has been seen running. A package with no runtime data may still be affected."
+      },
+      "pager": {
+        "range": "{from} to {to} of {total}"
+      },
+      "truncated": "This list may be incomplete: Condux could not read every open Dependabot alert for this repository."
     },
     "alerts": {
       "title": "Alert rules",
@@ -760,7 +818,8 @@
       "title": "Releases",
       "description": "Map a deployed version to its commit, so the Conductor fixes against the exact code and issues show the release they first appeared in. Usually recorded by CI on deploy.",
       "empty": "No releases recorded yet.",
-      "needRepo": "Link a repository first to record a release.",
+      "needRepo": "Recording a release here needs a linked repository. Release tokens below can still upload source maps and debug files where object storage is configured.",
+      "needGithub": "Recording a release here needs a repository linked, which needs GitHub connected first. Release tokens below can still upload source maps and debug files where object storage is configured.",
       "version": "Version",
       "versionPlaceholder": "v1.2.3",
       "commit": "Commit SHA",
@@ -915,6 +974,7 @@
       "loading": "Loading suggestions.",
       "error": "Could not load suggestions. Try again.",
       "noRepo": "Link a repository to this project before suggesting a fix.",
+      "inProgress": "A fix for this issue is already queued or running.",
       "quotaExceeded": "This organization has used its included AI fixes for the month. Upgrade the plan for a larger allowance.",
       "forbidden": "You need the admin role to suggest a fix.",
       "failed": "Could not request a fix. Try again.",
@@ -932,9 +992,15 @@
       "verify": {
         "watching": "Verifying in production",
         "held": "Verified, error stopped",
-        "didNotHold": "Fix did not hold"
+        "didNotHold": "Fix did not hold",
+        "cannotVerify": "Could not verify",
+        "bumpWatching": "Watching what runs",
+        "bumpHeld": "No vulnerable version reported",
+        "bumpDidNotHold": "Still exposed"
       },
       "view": "View suggested fix",
+      "lastAttemptFailed": "The last attempt did not produce a fix.",
+      "viewLastAttempt": "See why",
       "connectRepo": {
         "title": "Connect a repository",
         "body": "The Conductor opens each fix as a human-reviewed draft PR, so this project needs a connected GitHub repository. Open the project and connect GitHub in its Repositories section.",
@@ -966,6 +1032,7 @@
       "stackTrace": "Stack trace",
       "breadcrumbs": "Breadcrumbs",
       "inApp": "in app",
+      "inlined": "inlined",
       "locals": "locals",
       "openInGitHub": "Open in GitHub"
     },
@@ -1159,15 +1226,42 @@
       "verified": "Verified",
       "archive": "Archive",
       "unarchive": "Restore",
+      "cancel": "Cancel run",
+      "cancelling": "Cancelling",
+      "cancelRefused": "This run can no longer be cancelled: something is still running it, or it has already ended.",
+      "cancelFailed": "Could not cancel the run",
       "timeline": "Activity",
       "audit": {
         "requested": "Fix requested",
         "leased": "Claimed by a runner",
         "draft_pr_opened": "Draft PR opened",
+        "draft_pr_found": "Draft PR found after the run stopped",
         "fix_merged": "Draft PR merged",
         "fix_verified": "Verified in production",
         "fix_did_not_hold": "Fix did not hold",
-        "failed": "Run failed"
+        "failed": "Run failed",
+        "failed_late": "Failed after it was marked interrupted",
+        "cancelled": "Run cancelled"
+      },
+      "failure": {
+        "title": "Why it failed",
+        "unknown": "The run failed for a reason Condux could not classify.",
+        "noManifestFiles": "None of the dependency manifests or lockfiles this advisory names could be read on the base branch. Check that the branch exists and still contains them.",
+        "noSourceFiles": "No frame in the stack trace pointed to a file in the repository, so there was nothing to fix. Add a code mapping that turns the stack paths into repository paths. For bundled JavaScript, upload source maps as well.",
+        "sourceHostAccess": "Condux could not reach the repository or its base branch on GitHub. Check that GitHub is connected, that the Condux app can access this repository and that the branch exists. GitHub also refuses requests while it is rate limiting.",
+        "modelKeyRejected": "The AI provider refused the API key. If your organization uses its own key, update it in the AI provider settings. Otherwise the key is Condux's own, and trying again later is the next step.",
+        "modelUnavailable": "The AI provider was busy or unavailable during the run.",
+        "noUsableFix": "The model did not produce a change that could be applied within the run's limits.",
+        "timedOut": "The run, or a call to the model or GitHub within it, took too long. A draft PR can still appear if the run was stopped just as GitHub was opening it, so check the repository before requesting another.",
+        "interrupted": "The run was still in progress long after it should have finished, most often because the Conductor restarted during it, so Condux marked it failed. A draft PR can still exist if the Conductor stopped just as GitHub was opening it, so check the repository before requesting another.",
+        "modelRefused": "The model declined to produce a fix, for example because a safety check refused its response.",
+        "agentBlocked": "The agent stopped to wait for a confirmation or a tool result that Condux does not supply, so the run could not continue.",
+        "stoppedExternally": "The run was stopped from outside Condux before it finished, so its answer was not used.",
+        "sourceFilesUnreadable": "The files this error points to are in the repository, but none could be read as text: they are larger than GitHub returns (1 MB), or not UTF-8. The Conductor never changes a file it could not read in full.",
+        "manifestFilesUnreadable": "The manifests or lockfiles this advisory names are in the repository, but none could be read as text: they are larger than GitHub returns (1 MB), or not UTF-8. The Conductor never changes a file it could not read in full.",
+        "retryFromIssue": "Open the issue to request the fix again. A failed run does not use your allowance.",
+        "projectGitHub": "Open the project's GitHub settings",
+        "aiProvider": "Open the AI provider settings"
       }
     },
     "spend": {
@@ -1194,7 +1288,6 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "confirmDelete": "Delete this project and all its data?",
-    "releasesNeedGithub": "Connect GitHub to record releases. Link a repository from the GitHub tab first.",
     "tabs": {
       "github": "GitHub",
       "releases": "Releases",

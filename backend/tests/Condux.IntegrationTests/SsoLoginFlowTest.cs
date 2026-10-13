@@ -28,8 +28,10 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
 {
     private static readonly string SecretKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    private WebApplicationFactory<Program> CreateApp(string idpEmail) =>
-        ControlPlaneApp.Create(pg.ConnectionString).WithWebHostBuilder(b =>
+    private WebApplicationFactory<Program> CreateApp(string idpEmail, string? platformAdminEmails = null) =>
+        // The listed address is not seeded: these tests need it held by nobody, the state the rule is for.
+        ControlPlaneApp.Create(pg.ConnectionString, platformAdminEmails: platformAdminEmails, seedPlatformAdmin: false)
+            .WithWebHostBuilder(b =>
         {
             b.UseSetting("CONDUX_SECRET_KEY", SecretKey);
             // Domain verification is switched off for this host the way a self-hosted deployment switches
@@ -164,6 +166,79 @@ public sealed class SsoLoginFlowTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal("/", second.Headers.Location!.ToString());
         Assert.Contains(second.Headers.GetValues("Set-Cookie"), c => c.StartsWith("condux_session="));
         Assert.Equal(1, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, email));
+    }
+
+    /// <summary>
+    /// A platform-admin address never signs in through an organisation's IdP, and is never created
+    /// through one: that account gets the cross-tenant console, and an IdP is one tenant's choice, trusted
+    /// to have applied its own second factor, and speaks for its domain only as far as the domain was
+    /// proved. This host skips that proof, as a self-hosted one may. The refusal reads as any address the
+    /// org has no claim to, so an org owner cannot use their IdP to learn which addresses are listed.
+    /// </summary>
+    [Fact]
+    public async Task A_platform_admin_address_is_never_created_through_an_org_idp()
+    {
+        const string email = "root@listed.test";
+        var app = CreateApp(idpEmail: email, platformAdminEmails: email);
+        await SetUpOrgWithSsoAsync(app, "listed.test");
+
+        var callback = await SsoCallbackAsync(app, email);
+
+        Assert.Equal("/login?error=sso_invite_required", callback.Headers.Location!.ToString());
+        Assert.False(HasSession(callback));
+        Assert.Equal(0, await SsoFlow.CountUsersAsync(pg.ConnectionString, email));
+    }
+
+    /// <summary>
+    /// Being a member does not change that: the org's IdP still does not get to sign in the console's
+    /// account, or any owner of an org the admin belongs to could, with no second factor. A member already
+    /// knows the account exists, so they are told why.
+    /// </summary>
+    [Fact]
+    public async Task A_platform_admin_who_is_a_member_is_refused_too()
+    {
+        const string email = "ops@member.test";
+        var unlisted = CreateApp(idpEmail: email);
+        var orgId = await SetUpOrgWithSsoAsync(unlisted, "member.test");
+        Assert.Equal("/", (await SsoCallbackAsync(unlisted, email)).Headers.Location!.ToString());
+
+        var listed = CreateApp(idpEmail: email, platformAdminEmails: email);
+        var callback = await SsoCallbackAsync(listed, email);
+
+        Assert.Equal("/login?error=sso_platform_admin", callback.Headers.Location!.ToString());
+        Assert.False(HasSession(callback));
+        Assert.Equal(1, await SsoFlow.CountMembershipAsync(pg.ConnectionString, orgId, email));
+    }
+
+    /// <summary>
+    /// A listed address held by someone outside the org reads exactly as any address held by someone
+    /// outside it, listed or not, so the org's IdP cannot tell the two apart and learn the list.
+    /// </summary>
+    [Fact]
+    public async Task A_listed_address_held_outside_the_org_reads_as_any_held_address()
+    {
+        const string email = "admin@held.test";
+        var unlisted = CreateApp(idpEmail: email);
+        await ApiAuth.SignUpAsync(unlisted.CreateClient(), email);
+
+        var listed = CreateApp(idpEmail: email, platformAdminEmails: email);
+        await SetUpOrgWithSsoAsync(listed, "held.test");
+        var callback = await SsoCallbackAsync(listed, email);
+
+        Assert.Equal("/login?error=sso_invite_required", callback.Headers.Location!.ToString());
+        Assert.False(HasSession(callback));
+    }
+
+    private static bool HasSession(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("Set-Cookie", out var cookies)
+        && cookies.Any(c => c.StartsWith("condux_session=", StringComparison.Ordinal));
+
+    private static async Task<HttpResponseMessage> SsoCallbackAsync(WebApplicationFactory<Program> app, string email)
+    {
+        var sso = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var start = await sso.GetAsync($"/api/auth/sso/start?email={email}");
+        var state = SsoFlow.QueryParam(new Uri(start.Headers.Location!.ToString()), "state");
+        return await sso.GetAsync($"/api/auth/sso/callback?code=any&state={Uri.EscapeDataString(state)}");
     }
 
     [Fact]

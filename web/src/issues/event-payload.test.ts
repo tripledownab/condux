@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEventPayload, primaryException } from "./event-payload";
+import { parseEventPayload, primaryException, toFrameLabels } from "./event-payload";
 import { buildFacets, usersAffected } from "./issue-facets";
 
 // A stored payload as the backend writes it: the normalized Event serialized with PascalCase keys.
@@ -53,6 +53,28 @@ const payload = JSON.stringify({
 });
 
 describe("parseEventPayload", () => {
+  it("reads a frame native symbolication marked as inlined", () => {
+    const event = parseEventPayload(
+      JSON.stringify({
+        Exceptions: [
+          {
+            Stacktrace: {
+              Frames: [
+                { Function: "cart_total", InApp: true },
+                { Function: "apply_discount", InApp: true, Inlined: true },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    if (event === null) {
+      throw new Error("payload should parse");
+    }
+    expect(primaryException(event)?.frames.map((frame) => frame.inlined)).toEqual([false, true]);
+  });
+
   it("parses the PascalCase stored payload field by field", () => {
     const event = parseEventPayload(payload);
     if (event === null) {
@@ -67,6 +89,7 @@ describe("parseEventPayload", () => {
       function: "total",
       lineno: 5,
       inApp: true,
+      inlined: false,
       contextLine: "  total()",
       contextBefore: ["function total() {", "  validate()"],
       contextAfter: ["}"],
@@ -143,5 +166,64 @@ describe("facets", () => {
     expect(browser?.values[1]).toEqual({ value: "Firefox 128", share: 1 / 3 });
     // Tags participate as dimensions beside contexts.
     expect(facets.some((facet) => facet.key === "region")).toBe(true);
+  });
+});
+
+// An obfuscated Flutter crash, as sentry_flutter sends it: native frames carry only the address they were
+// executing, and the async gaps between them only an abs_path.
+const nativePayload = JSON.stringify({
+  Exceptions: [
+    {
+      Type: "StateError",
+      Stacktrace: {
+        Frames: [
+          { InstructionAddr: "0x000000794ed3af6b" },
+          { AbsPath: "<asynchronous suspension>" },
+        ],
+      },
+    },
+  ],
+});
+
+describe("frame labels", () => {
+  it("parses a native frame's address and an async gap's abs_path", () => {
+    const frames = primaryException(parseEventPayload(nativePayload) ?? ({} as never))?.frames;
+
+    expect(frames?.[0]?.instructionAddr).toBe("0x000000794ed3af6b");
+    expect(frames?.[1]?.absPath).toBe("<asynchronous suspension>");
+  });
+
+  it.each([
+    [
+      { function: "total", filename: "src/cart.js", lineno: 5 },
+      { name: "total", location: "src/cart.js:5" },
+    ],
+    [{ instructionAddr: "0x794ed3af6b" }, { name: "0x794ed3af6b", location: undefined }],
+    [
+      { absPath: "<asynchronous suspension>" },
+      { name: undefined, location: "<asynchronous suspension>" },
+    ],
+    [
+      { function: "f", instructionAddr: "0x1", filename: "a.js", absPath: "https://x/a.js" },
+      { name: "f", location: "a.js" },
+    ],
+    // A line number beside a bare function would read as that function's line, so it rides on a location.
+    [
+      { function: "outer", lineno: 12 },
+      { name: "outer", location: undefined },
+    ],
+    [{}, { name: "?" }],
+  ])("labels %o as %o", (fields, expected) => {
+    const frame = {
+      lineno: 0,
+      inApp: false,
+      inlined: false,
+      contextBefore: [],
+      contextAfter: [],
+      vars: {},
+      ...fields,
+    };
+
+    expect(toFrameLabels(frame)).toEqual(expected);
   });
 });

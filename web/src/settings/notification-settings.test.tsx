@@ -20,8 +20,8 @@ vi.mock("@/src/api/generated/condux", () => ({
 }));
 
 const useCurrentOrgMock = vi.fn();
-vi.mock("@/src/orgs/current-org", () => ({
-  OrgStatus: { Loading: "loading", Error: "error", NoOrg: "no-org", Ready: "ready" },
+vi.mock("@/src/orgs/current-org", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/src/orgs/current-org")>()),
   useCurrentOrg: () => useCurrentOrgMock(),
 }));
 // The weekly-summary section has its own test; stub it here so this suite stays focused on channels

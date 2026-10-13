@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text.Json;
+using Condux.Core.FixEngine;
 
 namespace Condux.Agent;
 
@@ -22,6 +24,11 @@ internal static class ModelApiError
     /// megabyte in its message wrote a megabyte into the audit row.
     /// </summary>
     private const int MaxDetail = 500;
+
+    /// <summary>A provider's error answer as a failure whose reason the dashboard can explain, with the
+    /// described body as its message for the audit trail.</summary>
+    public static FixFailedException ToFailure(string provider, HttpStatusCode status, string body) =>
+        new(FixFailures.ToModelReason(status), $"{provider} returned {(int)status}: {Describe(body)}");
 
     /// <summary>The error's type and message when the body parses as either envelope, else the raw body
     /// truncated. Never throws: this runs while reporting a failure, and a parse error here would replace

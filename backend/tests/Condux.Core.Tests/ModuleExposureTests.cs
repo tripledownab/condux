@@ -24,14 +24,143 @@ public class ModuleExposureTests
         string package, string ecosystem, string version = "4.17.11", string environment = "production") =>
         new(ecosystem, package, version, environment, "1.4.2", SeenAt);
 
+    /// <summary>
+    /// 4.17.21 is past the fix, and the state still says only Running. Nothing in this rule reports a
+    /// package as safe, since a version outside the range and one the matcher could not decide look
+    /// the same from here.
+    /// </summary>
     [Fact]
-    public void ReportsRunningWhenAVersionOfTheFindingsPackageWasObserved()
+    public void ReportsRunningWhenTheObservedVersionIsNotConfirmedInRange()
     {
         var exposure = ModuleExposures.For(
-            Finding("lodash", "npm"), [Observed("lodash", "npm")]);
+            Finding("lodash", "npm"), [Observed("lodash", "npm", version: "4.17.21")]);
 
         Assert.Equal(ModuleExposureState.Running, exposure.State);
-        Assert.Equal("4.17.11", Assert.Single(exposure.Observed).Version);
+        var observed = Assert.Single(exposure.Observed);
+        Assert.Equal("4.17.21", observed.Version);
+        Assert.False(observed.Confirmed);
+    }
+
+    [Fact]
+    public void ReportsExposedWhenAnObservedVersionIsInsideTheRange()
+    {
+        var exposure = ModuleExposures.For(
+            Finding("lodash", "npm"), [Observed("lodash", "npm", version: "4.17.11")]);
+
+        Assert.Equal(ModuleExposureState.Exposed, exposure.State);
+        Assert.True(Assert.Single(exposure.Observed).Confirmed);
+    }
+
+    /// <summary>
+    /// The confirmation is per sighting, so the reader can see which environment runs the vulnerable
+    /// version, and one confirmed sighting is enough to make the finding Exposed.
+    /// </summary>
+    [Fact]
+    public void ConfirmsOnlyTheSightingsInsideTheRange()
+    {
+        var exposure = ModuleExposures.For(
+            Finding("lodash", "npm"),
+            [
+                Observed("lodash", "npm", version: "4.17.21"),
+                Observed("lodash", "npm", version: "4.17.11", environment: "staging"),
+            ]);
+
+        Assert.Equal(ModuleExposureState.Exposed, exposure.State);
+        Assert.Equal([false, true], exposure.Observed.Select(module => module.Confirmed));
+    }
+
+    /// <summary>
+    /// "Proto" and "proto" are two different npm packages, and GHSA-58g2-9fqr-36q2 names only the
+    /// first. The lenient name match still shows the sighting as Running, but a version may only be
+    /// confirmed against the package the advisory names, so it is never Exposed.
+    /// </summary>
+    [Fact]
+    public void ConfirmsOnlyTheExactlyNamedPackage()
+    {
+        var finding = Finding("Proto", "npm") with { VulnerableRange = "<= 1.1.4" };
+
+        var exposure = ModuleExposures.For(finding, [Observed("proto", "npm", version: "1.0.9")]);
+
+        Assert.Equal(ModuleExposureState.Running, exposure.State);
+        Assert.False(Assert.Single(exposure.Observed).Confirmed);
+    }
+
+    /// <summary>
+    /// The matcher has no scheme for RubyGems, so a finding whose running version is plainly inside
+    /// the range by SemVer still reads Running and not Exposed.
+    /// </summary>
+    [Fact]
+    public void ConfirmsNothingInAnEcosystemTheMatcherDoesNotKnow()
+    {
+        var exposure = ModuleExposures.For(
+            Finding("rack", "rubygems"), [Observed("rack", "RubyGems", version: "4.17.11")]);
+
+        Assert.Equal(ModuleExposureState.Running, exposure.State);
+    }
+
+    /// <summary>
+    /// A pip finding confirms against the version a Python runtime reported, and a PyPI name is case
+    /// insensitive, so an advisory's "Django" confirms a runtime's "django". npm's ordinal rule here
+    /// would leave it Running.
+    /// </summary>
+    [Fact]
+    public void ConfirmsAPipFindingWhateverTheNameCase()
+    {
+        var finding = Finding("Django", "pip") with { VulnerableRange = ">= 4.2, < 4.2.30" };
+
+        var exposure = ModuleExposures.For(finding, [Observed("django", "PyPI", version: "4.2.29")]);
+
+        Assert.Equal(ModuleExposureState.Exposed, exposure.State);
+    }
+
+    /// <summary>
+    /// A Maven finding confirms against the "group:artifact" names stock sentry-java reports, which are
+    /// Dependabot's names too. Maven coordinates are case sensitive, so a differently cased name is
+    /// another artifact: it shows as Running and is never confirmed.
+    /// </summary>
+    [Theory]
+    [InlineData("com.fasterxml.jackson.core:jackson-databind", ModuleExposureState.Exposed)]
+    [InlineData("com.fasterxml.jackson.core:Jackson-Databind", ModuleExposureState.Running)]
+    public void ConfirmsAMavenFindingOnlyForTheExactCoordinate(string observed, ModuleExposureState expected)
+    {
+        var jackson = Finding("com.fasterxml.jackson.core:jackson-databind", "maven");
+        var finding = jackson with { VulnerableRange = ">= 2.13.0, < 2.13.1" };
+
+        var exposure = ModuleExposures.For(finding, [Observed(observed, "Maven", version: "2.13.0")]);
+
+        Assert.Equal(expected, exposure.State);
+    }
+
+    /// <summary>
+    /// PyPI folds separators as well as case, and one project's own releases report both spellings
+    /// (jupyter-server 1.13.1's metadata says "jupyter-server", 2.14.0's "jupyter_server"). npm does
+    /// not: "socket.io" and "socket-io" are different packages.
+    /// </summary>
+    [Theory]
+    [InlineData("pip", "jupyter_server", "PyPI", "jupyter-server", ModuleExposureState.Exposed)]
+    [InlineData("pip", "zope.interface", "PyPI", "Zope_Interface", ModuleExposureState.Exposed)]
+    [InlineData("npm", "socket.io", "npm", "socket-io", ModuleExposureState.Unknown)]
+    public void FoldsSeparatorsOnlyWhereTheRegistryDoes(
+        string ecosystem, string package, string recorded, string observed, ModuleExposureState expected)
+    {
+        var finding = Finding(package, ecosystem) with { VulnerableRange = "<= 2.14.0" };
+
+        var exposure = ModuleExposures.For(finding, [Observed(observed, recorded, version: "1.13.1")]);
+
+        Assert.Equal(expected, exposure.State);
+    }
+
+    /// <summary>
+    /// The keys lowercase ASCII letters only, as ClickHouse's lower() does in the inventory's query; a
+    /// key that lowercased "À" would no longer match the "À" the query leaves in a stored name.
+    /// </summary>
+    [Theory]
+    [InlineData("ÀBC_d", "Àbc-d")]
+    [InlineData("Jupyter__Server", "jupyter-server")]
+    public void KeysLowercaseAsciiOnlyAsTheStoreDoes(string name, string key)
+    {
+        Assert.Equal(key, PackageNames.ToFilterKey(name));
+        Assert.Equal(key, PackageNames.ToMatchKey("pip", name));
     }
 
     /// <summary>
@@ -65,8 +194,9 @@ public class ModuleExposureTests
     [InlineData("go", "Go")]
     public void MatchesAScannersEcosystemAgainstTheOneWeRecorded(string reported, string recorded)
     {
+        // Past the range, so pip's confirmation cannot decide the state and only the match is tested.
         var exposure = ModuleExposures.For(
-            Finding("requests", reported), [Observed("requests", recorded)]);
+            Finding("requests", reported), [Observed("requests", recorded, version: "4.17.21")]);
 
         Assert.Equal(ModuleExposureState.Running, exposure.State);
     }
@@ -80,9 +210,10 @@ public class ModuleExposureTests
     public void MatchesThePackageNameCaseInsensitively()
     {
         // Same ecosystem on both sides on purpose, so only the package casing is under test and this
-        // cannot pass or fail for the ecosystem fold's reasons.
+        // cannot pass or fail for the ecosystem fold's reasons. Past the range, so a confirmation
+        // cannot decide it either.
         var exposure = ModuleExposures.For(
-            Finding("Flask", "PyPI"), [Observed("flask", "PyPI", version: "2.0.0")]);
+            Finding("Flask", "PyPI"), [Observed("flask", "PyPI", version: "4.17.12")]);
 
         Assert.Equal(ModuleExposureState.Running, exposure.State);
     }
@@ -126,7 +257,6 @@ public class ModuleExposureTests
                 Observed("lodash", "npm", version: "4.17.11", environment: "staging"),
             ]);
 
-        Assert.Equal(ModuleExposureState.Running, exposure.State);
         Assert.Equal(["4.17.21", "4.17.11"], exposure.Observed.Select(module => module.Version));
         Assert.Equal(["production", "staging"], exposure.Observed.Select(module => module.Environment));
     }

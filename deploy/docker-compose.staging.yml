@@ -14,7 +14,8 @@ name: condux-staging
 #     ADDS the relay's own edge port, which is the one thing port concatenation is good for.
 #   - TLS is served from a certificate file. A private address cannot answer an ACME challenge, so
 #     something outside this stack issues the certificate and something outside this stack renews it.
-#   - ClickHouse gets a memory limit, because on a shared host it cannot have the whole machine.
+#   - Every long-running service gets a memory limit, because on a shared host none of them can have
+#     the whole machine. The deploy refuses a render in which one has none.
 #   - The bundled mail catcher comes back, so staging cannot mail a real person by accident. The
 #     production overlay parks it behind the dev-mail profile, which the command line above re-enables.
 #
@@ -56,6 +57,11 @@ services:
       # but it can add this one. Production fronts the relay on a hostname of its own; a host with one
       # name has one certificate, so staging tells the dashboard and the relay apart by port instead.
       - "${EDGE_INGEST_BIND:?set EDGE_INGEST_BIND to the address and port SDKs reach the relay on}"
+    # REPLACES the production edge's ceiling, which is sized for public traffic. This edge is reached
+    # only over a private network, so most of that ceiling would be memory taken from the host's other
+    # stack for connections that cannot arrive.
+    deploy: { resources: { limits: { memory: 128m } } }
+    memswap_limit: 128m
 
   mailpit:
     # The catcher is already what every staging service sends to. This publishes its INBOX, which is a
@@ -69,6 +75,12 @@ services:
     # SDK and no browser session depends on.
     ports:
       - "${MAILPIT_BIND:?set MAILPIT_BIND to the address and port the staging inbox is read on}"
+    # The base file starts it once and never again, which is right for a laptop and wrong here: after a
+    # host restart it would be the one long-running service left down, and staging's mail would go
+    # nowhere until someone noticed.
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 128m } } }
+    memswap_limit: 128m
 
   clickhouse:
     # A shared host cannot give ClickHouse the whole machine, and an uncapped one will eventually take
@@ -83,3 +95,63 @@ services:
       resources:
         limits:
           memory: ${CLICKHOUSE_MEMORY_LIMIT:?set CLICKHOUSE_MEMORY_LIMIT to the ceiling ClickHouse may use}
+    memswap_limit: ${CLICKHOUSE_MEMORY_LIMIT}
+
+  redpanda:
+    # A LIMIT ALONE IS NOT ENOUGH HERE, unlike ClickHouse above. Dev-container mode passes
+    # --reserve-memory=0M and no --memory, so Seastar budgets everything it can see: the whole host with
+    # no limit, and the whole limit with one. Measured on this image: under a 1 GiB limit its budget was
+    # 1,004 MB, leaving nothing for what Seastar does not allocate, so it would be killed at its own
+    # ceiling. With no limit it grows into the host's memory until the kernel kills it, and the restart
+    # policy starts it again into the same shortage, for as long as the shortage lasts. --memory sets
+    # the budget outright (measured: 512 MiB, and 300 MB of writes left it at 154 MiB resident), and
+    # the limit sits above it for the rest.
+    #
+    # THIS RESTATES THE BASE FILE'S COMMAND, because Compose replaces a command whole and cannot append
+    # to one. The deploy compares the two and refuses a render where they differ by anything but the
+    # flag added here, so a change to the base command cannot leave staging running the old one.
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=warn
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --memory=512M
+    deploy: { resources: { limits: { memory: 768m } } }
+    memswap_limit: 768m
+
+  # The rest are sized well above what each used at the time of writing, so a limit bounds a fault
+  # rather than normal load. The .NET services size their garbage collector to the limit. The
+  # control-plane and the consumer each hold up to two whole debug files at once, which is why they get
+  # the most. The symbolizer keeps the base file's limit: it is sized for the parser, not for staging.
+  #
+  # EVERY memswap_limit EQUALS ITS LIMIT, so no container here may swap. On a host with swap, Docker
+  # otherwise lets each container swap as much again as its limit, and one at its ceiling then pages
+  # against the shared disk instead of being killed, which slows the disk for everything on the host.
+  # Host swap still serves the host's own processes and any container that is allowed to swap. The
+  # deploy checks both values.
+  web:
+    deploy: { resources: { limits: { memory: 384m } } }
+    memswap_limit: 384m
+  relay:
+    deploy: { resources: { limits: { memory: 384m } } }
+    memswap_limit: 384m
+  controlplane:
+    deploy: { resources: { limits: { memory: 768m } } }
+    memswap_limit: 768m
+  consumer:
+    deploy: { resources: { limits: { memory: 512m } } }
+    memswap_limit: 512m
+  conductor:
+    deploy: { resources: { limits: { memory: 384m } } }
+    memswap_limit: 384m
+  postgres:
+    deploy: { resources: { limits: { memory: 384m } } }
+    memswap_limit: 384m
+  valkey:
+    deploy: { resources: { limits: { memory: 64m } } }
+    memswap_limit: 64m
+  symbolizer:
+    memswap_limit: 1G

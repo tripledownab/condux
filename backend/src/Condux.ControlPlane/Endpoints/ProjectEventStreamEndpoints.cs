@@ -19,42 +19,52 @@ internal static class ProjectEventStreamEndpoints
         // counts the instant a new or regressed issue lands, fed by the consumer's NOTIFY over Postgres
         // LISTEN/NOTIFY. The browser's EventSource speaks this directly.
         app.MapGet("/api/projects/{projectId:long}/events",
-                async (long projectId, HttpContext http, ProjectEventHub hub) =>
-                {
-                    var ct = http.RequestAborted;
-                    http.Response.Headers.ContentType = "text/event-stream";
-                    http.Response.Headers.CacheControl = "no-cache";
-                    http.Response.Headers["X-Accel-Buffering"] = "no";
-                    using var subscription = hub.Subscribe(projectId);
-                    await http.Response.WriteAsync(": connected\n\n", ct);
-                    await http.Response.Body.FlushAsync(ct);
-                    try
-                    {
-                        while (!ct.IsCancellationRequested)
-                        {
-                            using var beat = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            beat.CancelAfter(HeartbeatInterval);
-                            try
-                            {
-                                await subscription.Reader.WaitToReadAsync(beat.Token);
-                                while (subscription.Reader.TryRead(out _)) { }
-                                // An unnamed event, so the browser's EventSource.onmessage fires. The
-                                // payload is a generic "project changed, refetch" nudge, not data.
-                                await http.Response.WriteAsync("data: 1\n\n", ct);
-                            }
-                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                            {
-                                await http.Response.WriteAsync(": ping\n\n", ct); // heartbeat tick
-                            }
-                            await http.Response.Body.FlushAsync(ct);
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // The client disconnected (or the server is shutting down); nothing to do.
-                    }
-                })
+                (long projectId, HttpContext http, ProjectEventHub hub, IHostApplicationLifetime lifetime) =>
+                    StreamAsync(http, hub, projectId, lifetime.ApplicationStopping))
             .WithName("projectEvents").ExcludeFromDescription()
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));
+    }
+
+    // Ends on shutdown as well as on a disconnect. The server waits for open requests before it disposes
+    // its services, so a stream left open holds shutdown until the host's timeout.
+    internal static async Task StreamAsync(
+        HttpContext http, ProjectEventHub hub, long projectId, CancellationToken stopping)
+    {
+        using var open = CancellationTokenSource.CreateLinkedTokenSource(
+            http.RequestAborted, stopping);
+        var ct = open.Token;
+        http.Response.Headers.ContentType = "text/event-stream";
+        http.Response.Headers.CacheControl = "no-cache";
+        http.Response.Headers["X-Accel-Buffering"] = "no";
+        using var subscription = hub.Subscribe(projectId);
+        try
+        {
+            // Inside the try: a browser reconnecting as shutdown starts gets here already
+            // cancelled, which is an ordinary close and not a fault to report.
+            await http.Response.WriteAsync(": connected\n\n", ct);
+            await http.Response.Body.FlushAsync(ct);
+            while (!ct.IsCancellationRequested)
+            {
+                using var beat = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                beat.CancelAfter(HeartbeatInterval);
+                try
+                {
+                    await subscription.Reader.WaitToReadAsync(beat.Token);
+                    while (subscription.Reader.TryRead(out _)) { }
+                    // An unnamed event, so the browser's EventSource.onmessage fires. The
+                    // payload is a generic "project changed, refetch" nudge, not data.
+                    await http.Response.WriteAsync("data: 1\n\n", ct);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    await http.Response.WriteAsync(": ping\n\n", ct); // heartbeat tick
+                }
+                await http.Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The client disconnected or the server is shutting down. The browser reconnects.
+        }
     }
 }

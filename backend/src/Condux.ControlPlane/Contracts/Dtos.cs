@@ -76,7 +76,7 @@ internal sealed record HeartbeatRequest(string LeaseId);
 // which one ran, and an empty model on the run would price and display as if none had.
 internal sealed record ReportRequest(
     string LeaseId, int Status, string Branch, string PrUrl, string Summary, string Model,
-    long InputTokens, long OutputTokens);
+    long InputTokens, long OutputTokens, int? FailureReason = null);
 
 // Scoped MCP tokens (ADR-0029): a per-project credential an AI agent presents as a bearer to the MCP
 // endpoint. Shaped like the release-token DTOs; the raw token is returned once, on mint.
@@ -94,6 +94,10 @@ internal sealed record McpTokenResponse(
 // Source-map artifacts (ADR-0028): the uploaded map's index row, returned to the CI uploader.
 internal sealed record SourceMapArtifactResponse(
     Guid Id, string Release, string? Dist, string? DebugId, string Filename, long ByteSize, DateTimeOffset CreatedAt);
+// Native debug files: the uploaded file's index row, returned to the CI uploader. DebugId is the form a
+// crash from the same build carries, so a CI log can be matched against an event by eye.
+internal sealed record DebugFileResponse(
+    Guid Id, string BuildId, string DebugId, long ByteSize, DateTimeOffset CreatedAt);
 internal sealed record ArchiveFixRequest(bool Archived);
 internal sealed record UnviewedFixCountResponse(int Count);
 internal sealed record SetLlmConfigRequest(string Provider, string Model, string? BaseUrl, string ApiKey);

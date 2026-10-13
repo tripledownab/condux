@@ -82,30 +82,8 @@ spec:
               value: {{ required "github.oauthRedirectUri is required when github.enabled: the App's Callback URL, e.g. https://app.example.com/api/github/oauth/callback. Connecting an org goes through user authorization, and the control-plane refuses to start without it." .Values.github.oauthRedirectUri | quote }}
             {{- end }}
             {{- if .Values.objectStore.enabled }}
-            {{- if .Values.objectStore.endpoint }}
-            - name: CONDUX_S3_ENDPOINT
-              value: {{ .Values.objectStore.endpoint | quote }}
-            {{- end }}
-            - name: CONDUX_S3_BUCKET
-              value: {{ .Values.objectStore.bucket | quote }}
-            {{- if .Values.objectStore.region }}
-            - name: CONDUX_S3_REGION
-              value: {{ .Values.objectStore.region | quote }}
-            {{- end }}
-            {{- if .Values.objectStore.serverSideEncryption }}
-            - name: CONDUX_S3_SSE
-              value: {{ .Values.objectStore.serverSideEncryption | quote }}
-            {{- end }}
-            - name: CONDUX_S3_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "condux.secretName" . }}
-                  key: CONDUX_S3_ACCESS_KEY
-            - name: CONDUX_S3_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "condux.secretName" . }}
-                  key: CONDUX_S3_SECRET_KEY
+            {{- include "condux.objectStoreEnv" . | nindent 12 }}
+            {{- include "condux.symbolizerEnv" . | nindent 12 }}
             {{- end }}
           {{- if .Values.github.enabled }}
           volumeMounts:

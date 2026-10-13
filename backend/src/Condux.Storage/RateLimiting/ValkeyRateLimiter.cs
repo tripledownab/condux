@@ -1,4 +1,5 @@
 using Condux.Core.RateLimiting;
+using Condux.Storage.Valkey;
 using StackExchange.Redis;
 
 namespace Condux.Storage.RateLimiting;
@@ -92,7 +93,7 @@ public sealed class ValkeyRateLimiter : IRateLimiter
             var allowed = (long)result[0] == 1;
             return new RateLimitDecision(allowed, (long)result[1], (long)result[2]);
         }
-        catch (RedisException)
+        catch (Exception ex) when (ValkeyOutages.IsOutage(ex))
         {
             // Fail open: a limiter outage must not become an ingest outage.
             return new RateLimitDecision(true, 0, 0);

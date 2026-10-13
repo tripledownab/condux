@@ -11,11 +11,11 @@ public static class SourceMapKeys
     {
         if (!string.IsNullOrWhiteSpace(debugId))
         {
-            return $"sourcemaps/{projectId}/by-debug-id/{Sanitize(debugId)}";
+            return $"{ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId)}by-debug-id/{Sanitize(debugId)}";
         }
 
         var scopedDist = string.IsNullOrWhiteSpace(dist) ? "_" : Sanitize(dist);
-        return $"sourcemaps/{projectId}/by-release/{Sanitize(release)}/{scopedDist}/{Sanitize(filename)}";
+        return $"{ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId)}by-release/{Sanitize(release)}/{scopedDist}/{Sanitize(filename)}";
     }
 
     // Object-store keys must be predictable path segments: keep alphanumerics + . - _, collapse the rest

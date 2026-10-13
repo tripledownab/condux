@@ -1,4 +1,4 @@
-import { ConduxApiError } from "@/src/api/fetcher";
+import { lookUpCodeKey, readErrorCode, readErrorStatus } from "@/src/lib/api-errors";
 
 // Maps a failed auth request to a message KEY under the "auth" namespace (the form translates it),
 // keyed first on the control-plane error code then on the HTTP status. Returns null when there is no
@@ -17,15 +17,12 @@ const STATUS_KEYS: Record<number, string> = {
 };
 
 export function authErrorKey(error: unknown): string | null {
-  if (error instanceof ConduxApiError) {
-    if (error.code && CODE_KEYS[error.code]) {
-      return CODE_KEYS[error.code];
-    }
-    if (STATUS_KEYS[error.status]) {
-      return STATUS_KEYS[error.status];
-    }
+  const codeKey = lookUpCodeKey(CODE_KEYS, readErrorCode(error));
+  if (codeKey !== undefined) {
+    return codeKey;
   }
-  return null;
+  const status = readErrorStatus(error);
+  return status !== undefined && STATUS_KEYS[status] ? STATUS_KEYS[status] : null;
 }
 
 // The OAuth/SSO callbacks (redirect flows, not XHR) bounce failures back to /login?error=<code>. Map a
@@ -36,11 +33,12 @@ const REDIRECT_ERROR_KEYS: Record<string, string> = {
   sso_not_available: "errors.ssoNotAvailable",
   sso_domain_mismatch: "errors.ssoDomainMismatch",
   sso_invite_required: "errors.ssoInviteRequired",
+  sso_platform_admin: "errors.ssoPlatformAdmin",
 };
 
 export function redirectErrorKey(code: string | null): string | null {
   if (!code) {
     return null;
   }
-  return REDIRECT_ERROR_KEYS[code] ?? "errors.signInFailed";
+  return lookUpCodeKey(REDIRECT_ERROR_KEYS, code) ?? "errors.signInFailed";
 }

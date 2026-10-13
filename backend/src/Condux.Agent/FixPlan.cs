@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Condux.Core.FixEngine;
 
 namespace Condux.Agent;
 
@@ -25,7 +26,7 @@ public static class FixPlanParser
         var end = modelOutput.LastIndexOf('}');
         if (start < 0 || end <= start)
         {
-            throw new InvalidOperationException("The model output contains no JSON object.");
+            throw new FixFailedException(FixFailureReason.NoUsableFix, "The model output contains no JSON object.");
         }
 
         WirePlan? wire;
@@ -35,7 +36,7 @@ public static class FixPlanParser
         }
         catch (JsonException ex)
         {
-            throw new InvalidOperationException($"The model output is not a valid fix plan: {ex.Message}");
+            throw new FixFailedException(FixFailureReason.NoUsableFix, $"The model output is not a valid fix plan: {ex.Message}");
         }
 
         var files = (wire?.Files ?? [])
@@ -46,7 +47,7 @@ public static class FixPlanParser
         {
             // Same as the agentic path: when the model answers that nothing needs changing, its reason is
             // what the reviewer needs, not a generic parse complaint.
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(wire?.Summary)
+            throw new FixFailedException(FixFailureReason.NoUsableFix, string.IsNullOrWhiteSpace(wire?.Summary)
                 ? "The fix plan has no usable file changes."
                 : $"The agent proposed no change: {wire.Summary.Trim()}");
         }

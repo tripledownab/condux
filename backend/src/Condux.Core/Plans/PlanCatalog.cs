@@ -9,7 +9,10 @@ public enum Tier
     Enterprise,
 }
 
-/// <summary>Per-project ingest + retention limits for a tier.</summary>
+/// <summary>
+/// The limits a tier sets. The monthly event cap, the upload quota and the AI fix allowance and budget
+/// are the org's; the ingest rate and burst apply to each project; retention is stamped on each event.
+/// </summary>
 public readonly record struct Limits(
     long MonthlyEvents,
     double RatePerSecond,
@@ -23,6 +26,11 @@ public readonly record struct Limits(
     decimal? FixComputeCapUsd = null,
     bool SelfHostedRunner = false)
 {
+    /// <summary>How many bytes of uploaded source maps and debug files one org may keep, across all its
+    /// projects; 0 means no cap. Required rather than defaulted, because a default of 0 would leave a
+    /// tier added later uncapped by omission.</summary>
+    public required long UploadBytes { get; init; }
+
     /// <summary>
     /// True when the tier uses custom/unlimited event volume (Enterprise), which
     /// the relay treats as "no monthly cap".
@@ -37,6 +45,10 @@ public readonly record struct Limits(
     /// (ADR-0035) — but a future zero-fix tier would need an explicit representation, not a 0 here.</para>
     /// </summary>
     public bool UnlimitedAiFixes => AiFixesPerMonth == 0;
+
+    /// <summary>True when an org's uploaded artifacts are not capped (Enterprise; the same
+    /// 0-means-no-cap convention as <see cref="MonthlyEvents"/>).</summary>
+    public bool UnlimitedUploads => UploadBytes == 0;
 }
 
 /// <summary>
@@ -67,23 +79,33 @@ public static class PlanCatalog
     // FixComputeCapUsd is the tier's DEFAULT monthly fix-compute ceiling in USD (ADR-0020): for the
     // platform-billed tiers it is a fair-use compute ceiling, so a run count alone can't run up unbounded
     // compute ("up to N fixes OR $X compute, whichever first"); an org's own ai_fix_cost_cap_usd overrides
-    // it. Free is capped for the same reason the paid tiers are, at roughly their per-run rate plus room
-    // for one awkward repo. Enterprise leaves it null: they run on their own key (BYO) and set their own
-    // budget (null = uncapped, their money). All values are placeholders to calibrate against real usage.
+    // it. Each platform-billed ceiling is sized at about $0.75 a run times the tier's run allowance, so a
+    // typical run count reaches its allowance before its dollar ceiling: a ceiling that binds first refuses
+    // runs the plan advertises. Enterprise leaves it null: they run on their own key (BYO) and set their
+    // own budget (null = uncapped, their money). All values are still to calibrate against real usage.
+    // UploadBytes is how much of the source maps and native debug files CI uploads one org may keep, across
+    // its projects; past it the oldest are evicted, so an upload never fails on storage. 0 = no cap.
     private static readonly Dictionary<Tier, Limits> Catalog = new()
     {
         [Tier.Free] = new Limits(50_000, 10, 50, 30,
-            AiFixesPerMonth: 3, AutoFix: false, Sso: false, ByoKey: false, FixComputeCapUsd: 2m),
-        [Tier.Team] = new Limits(1_000_000, 100, 500, 90,
-            AiFixesPerMonth: 25, AutoFix: true, Sso: false, ByoKey: false, FixComputeCapUsd: 10m,
-            SelfHostedRunner: true),
-        [Tier.Business] = new Limits(10_000_000, 1_000, 5_000, 90,
-            AiFixesPerMonth: 100, AutoFix: true, Sso: true, ByoKey: false, FixComputeCapUsd: 40m,
-            SelfHostedRunner: true),
+            AiFixesPerMonth: 3, AutoFix: false, Sso: false, ByoKey: false, FixComputeCapUsd: 2.25m)
+        { UploadBytes = 1L << 30 },
+        [Tier.Team] = new Limits(500_000, 100, 500, 90,
+            AiFixesPerMonth: 25, AutoFix: true, Sso: false, ByoKey: false, FixComputeCapUsd: 19m,
+            SelfHostedRunner: true)
+        { UploadBytes = 10L << 30 },
+        [Tier.Business] = new Limits(5_000_000, 1_000, 5_000, 90,
+            AiFixesPerMonth: 100, AutoFix: true, Sso: true, ByoKey: false, FixComputeCapUsd: 75m,
+            SelfHostedRunner: true)
+        { UploadBytes = 50L << 30 },
         [Tier.Enterprise] = new Limits(0, 0, 0, 90,
-            AiFixesPerMonth: 0, AutoFix: true, Sso: true, ByoKey: true, SelfHostedRunner: true),
+            AiFixesPerMonth: 0, AutoFix: true, Sso: true, ByoKey: true, SelfHostedRunner: true)
+        { UploadBytes = 0 },
     };
 
     /// <summary>Limits for a tier, falling back to Free for unknown tiers.</summary>
-    public static Limits For(Tier tier) => Catalog.TryGetValue(tier, out var limits) ? limits : Catalog[Tier.Free];
+    public static Limits For(Tier tier) => Catalog.TryGetValue(tier, out var limits) ? limits : Catalog[FallbackTier];
+
+    /// <summary>The tier whose limits apply to a stored tier this version does not know.</summary>
+    public const Tier FallbackTier = Tier.Free;
 }

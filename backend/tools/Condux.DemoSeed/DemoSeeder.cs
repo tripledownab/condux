@@ -173,17 +173,8 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
             var at = from.AddHours(_random.Next(windowHours));
             var count = i == buckets - 1 ? remaining : Math.Min(remaining, Math.Max(1, remaining / (buckets - i) + _random.Next(4)));
             remaining -= count;
-            rows.Add(StatRow(project, issueId, at, (ulong)count));
+            rows.Add(ClickHouseIssueStatsWriter.ToRow(project, issueId, at, (ulong)count));
         }
-    }
-
-    private static IssueStatsRow StatRow(string project, ulong issueId, DateTimeOffset at, ulong count)
-    {
-        var utc = at.UtcDateTime;
-        var bucket = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, DateTimeKind.Utc)
-            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        var seen = utc.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-        return new IssueStatsRow(project, issueId, bucket, count, seen, seen);
     }
 
     private List<EventRow> BuildEventRows(string project, ulong issueId, IssueSpec spec, DateTimeOffset now, int count)
@@ -260,7 +251,7 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
         var host = Environment.GetEnvironmentVariable("CONDUX_INGEST_HOST") ?? "localhost:9010";
         Console.WriteLine();
         Console.WriteLine("Done. Demo data seeded:");
-        Console.WriteLine($"  Login:    {Email} / {Password}   (dashboard: http://localhost:3000)");
+        Console.WriteLine($"  Login:    {Email} / {Password}   (dashboard: http://localhost:3200)");
         Console.WriteLine($"  Org:      {OrgName} (Team)    Project: {ProjectName}");
         Console.WriteLine($"  Project:  {account.ProjectPublicId}");
         Console.WriteLine($"  DSN:      {scheme}://{account.DsnKey}@{host}/{account.ProjectPublicId}");

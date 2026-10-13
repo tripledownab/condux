@@ -1,6 +1,6 @@
 # Condux Helm values.
 #
-# This chart deploys the five Condux services (relay, control-plane, consumer, conductor, web). It does
+# This chart deploys the Condux services (relay, control-plane, consumer, conductor, web, symbolizer). It does
 # NOT run the data stores — bring your own managed Postgres, ClickHouse, Kafka/Redpanda and Valkey/Redis
 # (recommended for production) and point the chart at them below. Credentials go in a Secret (inline for
 # dev, or reference an existing one for production).
@@ -16,6 +16,7 @@ image:
   consumer: consumer
   conductor: conductor
   web: web
+  symbolizer: symbolizer
   migrations: migrations
 imagePullSecrets: []
 
@@ -79,9 +80,18 @@ email:
   password: ""
 
 conductor:
-  provider: fake            # fake | simulated-agent | anthropic
+  provider: fake            # fake | simulated-agent | anthropic | managed-agents
   replicas: 1
   resources: {}
+  # Each one left empty keeps the conductor's own default. The poll cadence is read under every provider,
+  # and the sweep for stale runs waits on it too; the rest apply only to managed-agents. A pinned
+  # environment or agent is used exactly as configured, so give a pinned environment limited networking with
+  # no allowed hosts, and switch read, web_fetch and web_search off on a pinned agent.
+  pollSeconds: ""           # CONDUX_CONDUCTOR_POLL_SECONDS
+  maxPolls: ""              # CONDUX_CONDUCTOR_MAX_POLLS
+  maxSessionUsd: ""         # CONDUX_CMA_MAX_SESSION_USD, the hard budget for each session
+  agentId: ""               # CONDUX_CMA_AGENT_ID
+  environmentId: ""         # CONDUX_CMA_ENVIRONMENT_ID
 
 # GitHub App (the Conductor) — opt-in. When enabled the private key + webhook secret are stored in the
 # Secret and the control-plane's /api/github/* routes + the anthropic provider activate.
@@ -114,7 +124,8 @@ github:
   oauthRedirectUri: ""
 
 # Source-map object store (ADR-0028) — opt-in, BYO S3-compatible bucket. When enabled the control-plane's
-# /api/sourcemaps upload routes activate; the access key + secret are stored in the Secret. Leave the
+# /api/sourcemaps upload routes activate, and the control-plane and the consumer both read maps from it to
+# symbolicate the frames a fix request sends the Conductor; the access key + secret are stored in the Secret. Leave the
 # endpoint empty for AWS S3 (set region), or point it at a non-AWS S3 (MinIO, Cloudflare R2, etc.).
 objectStore:
   enabled: false
@@ -166,6 +177,20 @@ web:
   resources: {}
   # The dashboard bakes its API base URL at build time (NEXT_PUBLIC_CONDUX_API_URL). Build the web image
   # with your domain, or serve it same-origin behind the ingress below.
+
+# The native symbolizer (ADR-0049): resolves native frame addresses against uploaded debug files. It
+# holds no credential, and its NetworkPolicy (where the cluster enforces one) admits only the control-plane
+# and the consumer. The limits are a ceiling, so a debug file that makes the parser misbehave costs this
+# pod rather than its node.
+symbolizer:
+  replicas: 1
+  port: 9100
+  # The debug file cache's volume. The service evicts at 2 GiB, so this leaves room for files in flight.
+  cacheSizeLimit: 3Gi
+  resources:
+    limits:
+      memory: 1Gi
+      cpu: "1"
 
 # Ingress: route the dashboard + API host to the web + control-plane, and the ingest host to the relay.
 ingress:

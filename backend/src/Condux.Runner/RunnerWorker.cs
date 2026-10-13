@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Condux.Core.FixEngine;
 using Condux.Telemetry;
 using Microsoft.Extensions.Hosting;
@@ -11,6 +12,16 @@ public sealed record RunnerOptions(string Model, TimeSpan IdlePoll, TimeSpan Err
     /// <summary>A third of the lease, so two heartbeats can be lost before the job is considered
     /// abandoned. Extending on the last possible moment would hand work away on one slow request.</summary>
     public TimeSpan HeartbeatInterval { get; init; } = JobLease.Duration / 3;
+
+    /// <summary>How long the control plane holds a lease without a heartbeat. A setting only so a test
+    /// can shorten it: the control plane decides the real value.</summary>
+    public TimeSpan LeaseDuration { get; init; } = JobLease.Duration;
+
+    /// <summary>When the work stops, counted from the SEND of the last heartbeat that landed: a fifth of a
+    /// lease early. The control plane extends the lease no earlier than the send, so stopping first keeps
+    /// this runner from working past a lapse, after which the run may be cancelled and refunded or handed
+    /// to another runner. Two heartbeats can still fail first.</summary>
+    public TimeSpan WorkDeadline => LeaseDuration - LeaseDuration / 5;
 }
 
 /// <summary>
@@ -43,7 +54,7 @@ public sealed class RunnerWorker(
 
                 await RunAsync(job, stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -71,39 +82,48 @@ public sealed class RunnerWorker(
             // outcome and the allowance is refunded.
             logger.LogWarning("job {FixId} carried no fix context", job.FixId);
             await ReportAsync(
-                job, FixStatus.Failed, result: null, "The job carried no fix context.", stoppingToken);
+                job, FixStatus.Failed, result: null, "The job carried no fix context.",
+                FixFailureReason.Unknown, stoppingToken);
             return;
         }
 
         logger.LogInformation("running fix {FixId} repo={Repo}", job.FixId, job.RepoFullName);
 
-        // Cancelled either because the host is shutting down or because the lease was lost. Both mean stop:
-        // continuing after another runner has taken the job is how one fix opens two pull requests.
-        using var work = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        var heartbeat = KeepLeaseAsync(job, work);
+        // Cancelled when the host stops, the lease is lost, or no heartbeat has landed for long enough that
+        // it may lapse. All three mean stop: another runner may take the job, and one fix opens two pull
+        // requests. The deadline fires on time even while a heartbeat hangs; the lease was granted before
+        // this runner heard of it, and the margin in WorkDeadline covers that gap.
+        using var deadline = new CancellationTokenSource(options.WorkDeadline);
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, deadline.Token);
+        var heartbeat = KeepLeaseAsync(job, work, deadline);
 
         try
         {
             var request = new FixRequest(
                 job.WorkRef, job.RepoFullName, job.BaseBranch, job.Prompt, options.Model)
-            {
-                ScopedPaths = job.ScopedPaths,
-            };
+            { RunId = job.FixId, ScopedPaths = job.ScopedPaths };
             var result = await provider.GenerateFixAsync(request, work.Token);
-            await ReportAsync(job, FixStatus.Succeeded, result, "", stoppingToken);
+            await ReportAsync(job, FixStatus.Succeeded, result, "", failureReason: null, stoppingToken);
             logger.LogInformation("fix {FixId} opened {PrUrl}", job.FixId, result.PrUrl);
         }
-        catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (work.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
         {
-            // The lease lapsed mid-run. Whoever holds it now will report; a report from here is refused
-            // anyway, and pretending otherwise would log a failure that never happened.
-            logger.LogWarning("lost the lease on {FixId} while running it", job.FixId);
+            // The lease was lost mid-run, or is about to be. Whoever holds it next reports; a report from
+            // here is refused once it lapses, and logging a failure would describe one that never happened.
+            logger.LogWarning(
+                deadline.IsCancellationRequested
+                    ? "no heartbeat on {FixId} landed in time, stopping before the lease can lapse"
+                    : "lost the lease on {FixId} while running it",
+                job.FixId);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // A cancellation nobody here asked for is a timeout inside the run, which fails it like any other
+        // error. Reading it as a lost lease would report nothing and let the job be run a second time.
+        // ReportAsync never throws short of shutdown, so a success report cannot land here.
+        catch (Exception ex) when (ex is not OperationCanceledException || !work.IsCancellationRequested)
         {
             logger.LogWarning(ex, "fix {FixId} failed", job.FixId);
             selfReport.Report(ex);
-            await ReportAsync(job, FixStatus.Failed, result: null, ex.Message, stoppingToken);
+            await ReportAsync(job, FixStatus.Failed, result: null, ex.Message, FixFailures.Classify(ex), stoppingToken);
         }
         finally
         {
@@ -121,21 +141,24 @@ public sealed class RunnerWorker(
     /// whoever holds the job now is the one entitled to report on it.
     /// </summary>
     private async Task ReportAsync(
-        RunnerJob job, FixStatus status, FixResult? result, string summary, CancellationToken cancellationToken)
+        RunnerJob job, FixStatus status, FixResult? result, string summary, FixFailureReason? failureReason,
+        CancellationToken cancellationToken)
     {
         const int attempts = 3;
         for (var attempt = 1; attempt <= attempts; attempt++)
         {
             try
             {
-                if (!await leases.ReportAsync(job, status, result, options.Model, summary, cancellationToken))
+                if (!await leases.ReportAsync(job, status, result, options.Model, summary, failureReason, cancellationToken))
                 {
                     logger.LogWarning("report on {FixId} refused: the lease is no longer ours", job.FixId);
                 }
 
                 return;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // A timeout is a transport failure like any other and is retried. Letting it escape would turn a
+            // success report into a Failed one, for a run whose pull request already exists.
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(
                     ex, "reporting {FixId} failed, attempt {Attempt} of {Attempts}", job.FixId, attempt, attempts);
@@ -152,24 +175,44 @@ public sealed class RunnerWorker(
         }
     }
 
-    /// <summary>Hold the lease for as long as the work runs, and cancel the work the moment it is lost.</summary>
-    private async Task KeepLeaseAsync(RunnerJob job, CancellationTokenSource work)
+    /// <summary>Hold the lease while the work runs: cancel it when the lease is lost, push the deadline out
+    /// when a heartbeat lands.</summary>
+    private async Task KeepLeaseAsync(RunnerJob job, CancellationTokenSource work, CancellationTokenSource deadline)
     {
+        // A local stopwatch, not the lease's expiry time, so a skewed customer clock cannot move it.
+        var clock = Stopwatch.StartNew();
         try
         {
             while (!work.IsCancellationRequested)
             {
                 await Task.Delay(options.HeartbeatInterval, work.Token);
-                if (!await leases.HeartbeatAsync(job, work.Token))
+                var sentAt = clock.Elapsed;
+                bool held;
+                try
+                {
+                    held = await leases.HeartbeatAsync(job, work.Token);
+                }
+                // A heartbeat that times out or cannot connect is not a lost lease; the next one asks again,
+                // and the deadline stops the work if none lands in time, without waiting for this call.
+                catch (Exception ex) when (ex is not OperationCanceledException || !work.IsCancellationRequested)
+                {
+                    logger.LogWarning(ex, "heartbeat on {FixId} failed, retrying", job.FixId);
+                    continue;
+                }
+
+                if (!held)
                 {
                     await work.CancelAsync();
                     return;
                 }
+
+                var left = options.WorkDeadline - (clock.Elapsed - sentAt); // counted from the send
+                deadline.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (work.IsCancellationRequested)
         {
-            // The run finished, or the host is stopping. Either way there is nothing left to hold.
+            // The run finished, the host is stopping, or the deadline passed. Nothing left to hold.
         }
     }
 }

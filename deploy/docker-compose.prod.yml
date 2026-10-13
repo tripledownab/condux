@@ -17,6 +17,19 @@ name: condux
 # datastore ports here. The security boundary is the host firewall — open ONLY 22/80/443 (the runbook
 # shows the cloud-firewall / ufw steps). Everything else stays on the private compose network.
 
+# The base points the source-map object store at the dev object store; prod uses a BYO S3 bucket. Off (the
+# /api/sourcemaps routes 404, and nothing symbolicates) until set in .env.prod: a real bucket + access key
+# + secret (endpoint for a non-AWS S3, region for AWS). Merged into the control-plane and the consumer, as
+# in the base, so both read the same bucket. CONDUX_S3_SSE is optional at-rest encryption for uploaded
+# maps (e.g. AES256 for SSE-S3); unset relies on the bucket's default encryption.
+x-object-store-env: &object-store-env
+  CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-}
+  CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-}
+  CONDUX_S3_ACCESS_KEY: ${CONDUX_S3_ACCESS_KEY:-}
+  CONDUX_S3_SECRET_KEY: ${CONDUX_S3_SECRET_KEY:-}
+  CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
+  CONDUX_S3_SSE: ${CONDUX_S3_SSE:-}
+
 services:
   caddy:
     image: caddy:2-alpine
@@ -41,13 +54,18 @@ services:
       - ./.data/caddy/data:/data
       - ./.data/caddy/config:/config
     depends_on: [web, controlplane, relay]
+    # A ceiling on the edge's memory, so a fault in it costs an edge restart instead of the host's
+    # memory, which every other service here shares. Past the limit the kernel kills Caddy and
+    # `unless-stopped` starts it again, with its in-memory state reset. Set well above what it uses
+    # under ordinary traffic, so it bounds a fault rather than normal load.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
-  # MinIO is AGPL and unused by any service today (S3 is BYO). Park it behind a profile so it never starts
-  # in prod; nothing depends on it. (Dev, which runs the base file alone, is unaffected.)
-  minio:
-    profiles: ["dev-object-store"]
-
-  minio-init:
+  # The dev object store is unused in prod (S3 is BYO). Park it behind a profile so it never starts in
+  # prod; nothing depends on it. (Dev, which runs the base file alone, is unaffected.)
+  object-store:
     profiles: ["dev-object-store"]
 
   # Mailpit is a dev-only SMTP catcher; park it so it never starts in prod (prod email uses a real relay
@@ -102,17 +120,7 @@ services:
       # The base defaults SMTP to the dev-only Mailpit; clear the host so prod email stays opt-in. Set
       # CONDUX_SMTP_HOST (+ port/ssl/from/user/password) in .env.prod to a real relay to enable email.
       CONDUX_SMTP_HOST: ${CONDUX_SMTP_HOST:-}
-      # The base points the source-map object store at the dev MinIO; prod uses a BYO S3 bucket. Off (the
-      # /api/sourcemaps routes 404) until set in .env.prod: a real bucket + access key + secret (endpoint
-      # for a non-AWS S3, region for AWS).
-      CONDUX_S3_ENDPOINT: ${CONDUX_S3_ENDPOINT:-}
-      CONDUX_S3_BUCKET: ${CONDUX_S3_BUCKET:-}
-      CONDUX_S3_ACCESS_KEY: ${CONDUX_S3_ACCESS_KEY:-}
-      CONDUX_S3_SECRET_KEY: ${CONDUX_S3_SECRET_KEY:-}
-      CONDUX_S3_REGION: ${CONDUX_S3_REGION:-}
-      # Optional at-rest encryption for uploaded maps (e.g. AES256 for SSE-S3); unset relies on the
-      # bucket's default encryption (AWS S3 encrypts new objects by default).
-      CONDUX_S3_SSE: ${CONDUX_S3_SSE:-}
+      <<: *object-store-env
 
   web:
     restart: unless-stopped # reached via Caddy at app.condux.ai
@@ -159,9 +167,13 @@ services:
       # The weekly summary worker runs here (ADR-0031); its digest CTA links to the public dashboard, same
       # absolute URL the control-plane uses (the dev base default in docker-compose.yml points at localhost).
       CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
+      <<: *object-store-env
 
   conductor:
     restart: unless-stopped
+
+  symbolizer:
+    restart: unless-stopped # reached only over its internal network, never through Caddy
 
 volumes:
   redpanda-data:

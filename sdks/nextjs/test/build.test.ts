@@ -92,6 +92,17 @@ test("without an upload target the chunk keeps its map pointer so the CLI can st
   assert.equal(map.debugId, debugIdFromContent(CHUNK));
 });
 
+test("a chunk an earlier pass stamped counts as kept, so its map on disk is not a silent skip", async () => {
+  const { distDir } = await buildDir();
+  await processClientBuild({ distDir, log: () => {} });
+  const logs: string[] = [];
+
+  const again = await processClientBuild({ distDir, log: (m) => logs.push(m) });
+
+  assert.equal(again.kept, 1);
+  assert.ok(logs.some((line) => line.includes("1 maps kept on disk")));
+});
+
 test("processing is idempotent: a second pass leaves a stamped chunk alone", async () => {
   const { distDir, jsPath } = await buildDir();
   await processClientBuild({ distDir, log: () => {} });
@@ -141,6 +152,27 @@ test("with an upload target an orphan map still uploads under its name-derived k
   assert.ok(orphanCall);
   assert.ok(orphanCall.url.includes("debugId=1234"));
   assert.equal(existsSync(orphanPath), false);
+});
+
+test("a chunk that bundles the SDK is still stamped, and its map uploaded and removed", async () => {
+  const distDir = await mkdtemp(join(tmpdir(), "condux-build-"));
+  await mkdir(join(distDir, "static/chunks"), { recursive: true });
+  const jsPath = join(distDir, "static/chunks/sdk.js");
+  const mapPath = join(distDir, "static/chunks/sdk.js.map");
+  // @condux/core reads the registry by this name, so a bundle of it carries the string unstamped.
+  await writeFile(jsPath, "var r=globalThis._conduxDebugIds;\n//# sourceMappingURL=sdk.js.map\n");
+  await writeFile(mapPath, MAP);
+  const { doFetch } = recordingFetch();
+
+  const result = await processClientBuild({
+    distDir,
+    upload: { url: "https://condux.test", token: "t", release: "1" },
+    fetch: doFetch,
+    log: () => {},
+  });
+
+  assert.equal(result.stamped, 1);
+  assert.equal(existsSync(mapPath), false);
 });
 
 test("chunks without a pointer, orphan maps, and files outside static/ are left alone", async () => {

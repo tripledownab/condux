@@ -1703,52 +1703,6 @@
         }
       }
     },
-    "/api/projects/{projectId}/repos/{repoId}/suggested-mappings": {
-      "get": {
-        "tags": [
-          "Repos"
-        ],
-        "operationId": "suggestedMappings",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "repoId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DerivedMapping"
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found"
-          }
-        }
-      }
-    },
     "/api/projects/{projectId}/releases": {
       "post": {
         "tags": [
@@ -1821,6 +1775,52 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/repos/{repoId}/suggested-mappings": {
+      "get": {
+        "tags": [
+          "Repos"
+        ],
+        "operationId": "suggestedMappings",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "repoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DerivedMapping"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
           }
         }
       }
@@ -2265,6 +2265,39 @@
         }
       }
     },
+    "/api/debug-files": {
+      "post": {
+        "tags": [
+          "DebugFiles"
+        ],
+        "operationId": "uploadDebugFile",
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugFileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/issues/{issueId}/fix": {
       "post": {
         "tags": [
@@ -2399,10 +2432,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CveFindingWithExposure"
-                  }
+                  "$ref": "#/components/schemas/CveFindingsResponse"
                 }
               }
             }
@@ -2740,6 +2770,107 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/fixes/{fixId}/cancel": {
+      "post": {
+        "tags": [
+          "Conductor"
+        ],
+        "operationId": "cancelFix",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "fixId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/repos/{repoId}/cve-fixes/{runId}/cancel": {
+      "post": {
+        "tags": [
+          "Conductor"
+        ],
+        "operationId": "cancelCveFix",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "repoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -6568,6 +6699,9 @@
           }
         }
       },
+      "CannotVerifyReason": {
+        "type": "integer"
+      },
       "ChangePasswordRequest": {
         "required": [
           "currentPassword",
@@ -6862,6 +6996,24 @@
           }
         }
       },
+      "CveFindingsResponse": {
+        "required": [
+          "findings",
+          "truncated"
+        ],
+        "type": "object",
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CveFindingWithExposure"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
       "CveFindingWithExposure": {
         "required": [
           "finding",
@@ -6874,6 +7026,92 @@
           },
           "exposure": {
             "$ref": "#/components/schemas/ModuleExposure"
+          }
+        }
+      },
+      "CveFixEvidence": {
+        "required": [
+          "evaluatedAt",
+          "quietSince",
+          "mergedAt",
+          "target",
+          "ranges",
+          "complete",
+          "reason",
+          "sightings"
+        ],
+        "type": "object",
+        "properties": {
+          "evaluatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "quietSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mergedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "target": {
+            "type": "string"
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "integer",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CannotVerifyReason"
+              }
+            ],
+            "nullable": true
+          },
+          "sightings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CveFixEvidenceSighting"
+            }
+          }
+        }
+      },
+      "CveFixEvidenceSighting": {
+        "required": [
+          "version",
+          "environment",
+          "release",
+          "lastSeen",
+          "class",
+          "inWindow"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "release": {
+            "type": "string"
+          },
+          "lastSeen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "class": {
+            "$ref": "#/components/schemas/SightingClass"
+          },
+          "inWindow": {
+            "type": "boolean"
           }
         }
       },
@@ -6966,11 +7204,72 @@
           "outputTokens": {
             "type": "integer",
             "format": "int64"
+          },
+          "failureReason": {
+            "type": "integer",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FixFailureReason"
+              }
+            ],
+            "nullable": true
+          },
+          "mergedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verifyStatus": {
+            "$ref": "#/components/schemas/VerifyStatus"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verifyEvidence": {
+            "type": "object",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CveFixEvidence"
+              }
+            ],
+            "nullable": true
           }
         }
       },
       "CveSeverity": {
         "type": "integer"
+      },
+      "DebugFileResponse": {
+        "required": [
+          "id",
+          "buildId",
+          "debugId",
+          "byteSize",
+          "createdAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "buildId": {
+            "type": "string"
+          },
+          "debugId": {
+            "type": "string"
+          },
+          "byteSize": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "DerivedMapping": {
         "required": [
@@ -7223,8 +7522,20 @@
             "items": {
               "$ref": "#/components/schemas/FixAuditEntry"
             }
+          },
+          "failureReason": {
+            "type": "integer",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FixFailureReason"
+              }
+            ],
+            "nullable": true
           }
         }
+      },
+      "FixFailureReason": {
+        "type": "integer"
       },
       "FixListItem": {
         "required": [
@@ -7377,6 +7688,15 @@
           "mergedAt": {
             "type": "string",
             "format": "date-time",
+            "nullable": true
+          },
+          "failureReason": {
+            "type": "integer",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FixFailureReason"
+              }
+            ],
             "nullable": true
           },
           "verifyStatus": {
@@ -8212,6 +8532,9 @@
           "lastSeen": {
             "type": "string",
             "format": "date-time"
+          },
+          "confirmed": {
+            "type": "boolean"
           }
         }
       },
@@ -8751,6 +9074,9 @@
           }
         }
       },
+      "SightingClass": {
+        "type": "integer"
+      },
       "SourceMapArtifactResponse": {
         "required": [
           "id",
@@ -9216,6 +9542,9 @@
     },
     {
       "name": "SourceMaps"
+    },
+    {
+      "name": "DebugFiles"
     },
     {
       "name": "Conductor"

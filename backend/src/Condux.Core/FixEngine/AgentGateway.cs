@@ -13,6 +13,10 @@ public enum AgentRunStatus
 /// scrubbing and file scoping happen upstream (RequestFix, #63); here it is already safe to send.</summary>
 public sealed record AgentRunSpec(string IssueId, string RepoFullName, string BaseBranch, string Prompt, string Model)
 {
+    /// <summary>The fix run's own id, which names its branch (<see cref="FixBranches"/>). Not the gateway's
+    /// run id, which the run row does not keep.</summary>
+    public required Guid RunId { get; init; }
+
     /// <summary>The repo-relative files the fix should focus on (never the whole repo).</summary>
     public IReadOnlyList<string> ScopedPaths { get; init; } = [];
 
@@ -42,16 +46,23 @@ public sealed record AgentRunProgress(AgentRunStatus Status, string Branch, stri
     public static AgentRunProgress Done(string branch, string prUrl, string summary) =>
         new(AgentRunStatus.Succeeded, branch, prUrl, summary, null);
 
+    /// <summary>Why a failed run failed, carried across the start and poll seam, where the exception that
+    /// knew it is long gone.</summary>
+    public FixFailureReason Reason { get; init; }
+
     public static AgentRunProgress Failed(string error) =>
         new(AgentRunStatus.Failed, "", "", "", error);
+
+    public static AgentRunProgress Failed(Exception exception) =>
+        Failed(exception.Message) with { Reason = FixFailures.Classify(exception) };
 }
 
 /// <summary>
-/// The agentic backend behind a fix run: start a run, then poll it to completion. This is the seam that
-/// isolates the provider-agnostic orchestration (<see cref="ManagedAgentFixProvider"/>) from vendor
-/// specifics. Anthropic Managed Agents (default) and the bring-your-own-model backends are each a gateway
-/// implementation; the safety guarantees (sandboxed edits, credential isolation, draft-PR-only) live
-/// inside each implementation, not the orchestration.
+/// The agentic backend behind a fix run: start a run, poll it to completion, and stop it if polling ends
+/// first. This is the seam that isolates the provider-agnostic orchestration
+/// (<see cref="ManagedAgentFixProvider"/>) from vendor specifics. Anthropic Managed Agents (default) and
+/// the bring-your-own-model backends are each a gateway implementation; the safety guarantees (sandboxed
+/// edits, credential isolation, draft-PR-only) live inside each implementation, not the orchestration.
 /// </summary>
 public interface IAgentGateway
 {
@@ -63,4 +74,19 @@ public interface IAgentGateway
 
     /// <summary>Report the current state of a run.</summary>
     Task<AgentRunProgress> PollAsync(string runId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stop a run nobody will poll again, and report the state it stopped in. A backend that does its
+    /// work between polls would otherwise carry on and could open a draft PR no run records. A run that
+    /// finished before the stop took effect reports that result, so the caller can record a PR it did
+    /// open. Each backend bounds how long it waits for the run to stop, a stop that publishes only by the
+    /// timeouts of the calls it makes. One window stays open: a stop that lands while the source host is
+    /// creating the PR ends the run before it reads the answer.
+    /// </summary>
+    /// <param name="publishFinished">Whether a run whose work is done but whose draft PR is not yet opened
+    /// may open it now, rather than be discarded. Only when polling ran out of time and no shutdown had begun
+    /// by then. A shutdown that begins later, while the stop reads the session or writes to the source host,
+    /// does not stop it, and can cut the writes off, leaving a branch or a PR that no run records.</param>
+    Task<AgentRunProgress> CancelAsync(
+        string runId, CancellationToken cancellationToken = default, bool publishFinished = false);
 }

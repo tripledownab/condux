@@ -18,7 +18,7 @@ public sealed class OsvCveScanner(
 {
     public string Name => OsvScanOutput.SourceName;
 
-    public async Task<IReadOnlyList<CveFinding>> ScanAsync(
+    public async Task<CveScan> ScanAsync(
         string token, string repoFullName, CancellationToken cancellationToken = default)
     {
         var tree = await repo.ListTreeAsync(token, repoFullName, defaultBranch, cancellationToken);
@@ -26,21 +26,29 @@ public sealed class OsvCveScanner(
         if (lockfiles.Count == 0)
         {
             // Nothing to scan is a clean result, not a failure: plenty of repositories have no lockfile.
-            return [];
+            return CveScan.Empty;
         }
 
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        // A lockfile too large for the host to return cannot be scanned, so the answer is incomplete rather
+        // than clean for it.
+        var withheld = false;
         foreach (var path in lockfiles)
         {
             if (await repo.GetFileAsync(token, repoFullName, path, defaultBranch, cancellationToken) is { } file)
             {
+                if (file.Content is null)
+                {
+                    withheld = true;
+                    continue;
+                }
                 files[path] = file.Content;
             }
         }
 
         if (files.Count == 0)
         {
-            return [];
+            return withheld ? CveScan.Empty with { Truncated = true } : CveScan.Empty;
         }
 
         var scanning = options with { NetworkEnabled = true };
@@ -57,8 +65,9 @@ public sealed class OsvCveScanner(
             ["/osv-scanner", "scan", "source", "--recursive", "--format=json", ContainerWorkspace.WorkDir],
             cancellationToken);
 
+        // osv-scanner reports every result in one document, so its answer is never cut short here.
         return result.Output.Contains("\"results\"", StringComparison.Ordinal)
-            ? OsvScanOutput.Parse(Report(result.Output))
+            ? new CveScan(OsvScanOutput.Parse(Report(result.Output)), Truncated: withheld)
             : throw new InvalidOperationException(
                 $"osv-scanner produced no report (exit {result.ExitCode}): {Truncate(result.Output, 400)}");
     }

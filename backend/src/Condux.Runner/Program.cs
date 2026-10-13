@@ -87,7 +87,8 @@ switch (providerKind)
             sp.GetRequiredService<ModelKeyResolver>(),
             new HttpClient { Timeout = TimeSpan.FromMinutes(10) },
             agentic,
-            sandbox));
+            sandbox,
+            sp.GetRequiredService<ILogger<AnthropicAgentGateway>>()));
         builder.Services.AddSingleton<IFixProvider>(sp =>
             new ManagedAgentFixProvider(sp.GetRequiredService<IAgentGateway>()));
         break;

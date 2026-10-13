@@ -40,6 +40,9 @@
     <!-- Both the control-plane and the relay expose a global `Program`; alias the relay
          so tests can host each via WebApplicationFactory<Program> / <relay::Program>. -->
     <ProjectReference Include="../../src/Condux.Relay/Condux.Relay.csproj" Aliases="relay" />
+    <!-- The symbolizer service the native pass calls, hosted in process by the native tests. Aliased like
+         the relay, since its Program would otherwise clash with the control-plane's. -->
+    <ProjectReference Include="../../src/Condux.Symbolizer/Condux.Symbolizer.csproj" Aliases="symbolizer" />
     <!-- The demo-seed tool is an Exe with its own global `Program`; alias it so it does not collide. -->
     <ProjectReference Include="../../tools/Condux.DemoSeed/Condux.DemoSeed.csproj" Aliases="demoseed" />
   </ItemGroup>
@@ -58,4 +61,13 @@
          here has established. Both are worth measuring before treating 4 as the right answer. -->
     <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- One ELF builder for the parser's unit tests and the upload endpoint's integration tests. -->
+  <ItemGroup>
+    <Compile Include="../Shared/ElfFiles.cs" Link="Shared/ElfFiles.cs" />
+    <Compile Include="../Shared/SymbolizerBinary.cs" Link="Shared/SymbolizerBinary.cs" />
+    <None Include="Golden/**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The symbolizer's inline-chain fixture, linked rather than copied so there is one file. -->
+    <None Include="../Condux.Symbolizer.Tests/Fixtures/cart.so" Link="Golden/cart.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -9,6 +9,7 @@ using Condux.Storage.Postgres;
 using Condux.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Condux.Storage.SourceMaps;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -44,8 +45,12 @@ builder.Services.AddSingleton(new ReleaseRepository(pg));
 builder.Services.AddSingleton(new GithubInstallationRepository(pg));
 builder.Services.AddSingleton<IAiFixQuota>(new PostgresAiFixQuota(pg));
 builder.Services.AddSingleton<IAiFixSpend>(new PostgresAiFixSpend(pg));
+// A factory, not an instance: the container disposes only what it created, and disposing is what flushes a
+// job still queued at shutdown. Its run is already reserved, so dropping it would cost the org that run.
 builder.Services.AddSingleton<IFixRequestPublisher>(
-    new KafkaFixRequestPublisher(builder.Configuration["CONDUX_KAFKA_BOOTSTRAP"] ?? "localhost:9092"));
+    sp => new KafkaFixRequestPublisher(
+        builder.Configuration["CONDUX_KAFKA_BOOTSTRAP"] ?? "localhost:9092",
+        sp.GetRequiredService<ILogger<KafkaFixRequestPublisher>>()));
 // The other destination: an org that runs its own runner gets a leasable row instead of a topic message
 // (ADR-0033 slice 4c), so auto-fix routes the same way the manual request does. The fix store comes with
 // it, because a run queued here never reaches the orchestrator that would otherwise open its audit trail.
@@ -58,6 +63,9 @@ builder.Services.AddSingleton(new OrgNotificationChannelRepository(pg));
 builder.Services.AddSingleton<IPauseNotifyThrottle>(new PostgresPauseNotifyThrottle(pg));
 builder.Services.AddSingleton<OrgNotificationDispatcher>();
 builder.Services.AddSingleton<ConductorPauseNotifier>();
+// Auto-fix builds its context from symbolicated frames, as the manual request does, so the consumer reads
+// uploaded source maps and debug files too (ADR-0028, ADR-0049).
+builder.Services.AddEventSymbolication(builder.Configuration, pg);
 builder.Services.AddSingleton<AutoFixDispatcher>();
 
 // Weekly summary emails (ADR-0031): an hourly-wake worker sends each enabled org's digest once per week (a

@@ -24,7 +24,7 @@ public readonly record struct QuotaDecision(long Admitted, long Used, long Remai
 public interface IQuotaMeter
 {
     /// <summary>
-    /// Admit and count up to <paramref name="count"/> events for <paramref name="key"/> (a project id) in
+    /// Admit and count up to <paramref name="count"/> events for <paramref name="key"/> (the org's quota key) in
     /// the current month. The count is a parameter rather than a loop at the call site because one OTLP
     /// export carries a record count the sender chose: metering per record turns one request into that
     /// many round trips to a shared counter, which is work a stranger sizes.
@@ -34,7 +34,7 @@ public interface IQuotaMeter
 
     /// <summary>
     /// Give <paramref name="count"/> events of <paramref name="key"/>'s current month back, for events
-    /// that were admitted and then could not be stored.
+    /// that were admitted and then could not be stored, or turned out to carry nothing to store.
     /// </summary>
     /// <remarks>
     /// Consuming quota cannot be undone by the request that did it, so a caller that takes a batch and
@@ -48,8 +48,9 @@ public interface IQuotaMeter
     /// Two ways it can still under-count, both left alone deliberately. It refunds into the wrong month
     /// if the clock rolls over between the two calls. And a Valkey meter that failed open on the way in
     /// counted nothing, so if the store recovers before the refund the give-back comes off usage that was
-    /// real. Both cost at most one batch, and the fail-open they sit behind already grants a project
-    /// unmetered ingest for the length of the outage, which is the larger and deliberate leak.
+    /// real. Each costs at most one batch per refund, and a request that carried no event refunds one, so
+    /// while Valkey flaps the second can recur per such request. The fail-open they sit behind already
+    /// grants an org unmetered ingest for the length of the outage, which is the larger and deliberate leak.
     /// </remarks>
     ValueTask RefundAsync(string key, long count, CancellationToken ct = default);
 

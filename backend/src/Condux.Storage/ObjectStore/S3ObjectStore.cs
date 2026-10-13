@@ -6,12 +6,13 @@ using Condux.Core.SourceMaps;
 namespace Condux.Storage.ObjectStore;
 
 /// <summary>
-/// <see cref="IObjectStore"/> over the S3 API via the AWS SDK (ADR-0028). Works against real AWS S3 and
-/// dev MinIO (a custom service URL + path-style addressing). The AWS SDK handles SigV4 request signing,
-/// which we deliberately do not hand-roll (ADR-0008 prefer-vetted-packages). The bucket is expected to
-/// exist (prod provisions it; dev compose creates it), so this does not manage buckets.
+/// <see cref="IObjectStore"/> over the S3 API via the AWS SDK (ADR-0028). Works against real AWS S3 and any
+/// S3-compatible server such as the dev object store (a custom service URL + path-style addressing). The AWS
+/// SDK handles SigV4 request signing, which we deliberately do not hand-roll (ADR-0008 prefer-vetted-packages).
+/// The bucket is expected to exist (prod provisions it; dev compose creates it), so this does not manage
+/// buckets.
 /// </summary>
-public sealed class S3ObjectStore : IObjectStore, IDisposable
+public sealed partial class S3ObjectStore : IObjectStore, IDisposable
 {
     private readonly IAmazonS3 client;
     private readonly string bucket;
@@ -27,7 +28,7 @@ public sealed class S3ObjectStore : IObjectStore, IDisposable
         if (!string.IsNullOrEmpty(config.Endpoint))
         {
             s3Config.ServiceURL = config.Endpoint;
-            s3Config.ForcePathStyle = true; // MinIO / custom endpoint
+            s3Config.ForcePathStyle = true; // custom S3-compatible endpoint
         }
         else if (!string.IsNullOrEmpty(config.Region))
         {

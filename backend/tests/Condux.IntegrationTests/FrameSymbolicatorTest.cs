@@ -1,5 +1,5 @@
 using System.Text;
-using Condux.ControlPlane.SourceMaps;
+using Condux.Storage.SourceMaps;
 using Condux.Core.Events;
 using Condux.Core.SourceMaps;
 using Condux.IntegrationTests.Fixtures;
@@ -32,7 +32,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         await artifacts.RecordAsync(
             projectId, "app@1.4.2", dist: null, debugId: "abc123", filename: "app.min.js",
             objectKey: objectKey, byteSize: Map.Length);
-        var symbolicator = new FrameSymbolicator(artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), objectKey));
+        var symbolicator = new FrameSymbolicator(artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), objectKey));
 
         var result = await symbolicator.SymbolicateAsync(projectId, MinifiedEvent(
             debugId: "abc123", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
@@ -46,11 +46,101 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
     }
 
     [Fact]
+    public async Task A_line_from_an_installed_package_is_not_the_apps_own_code()
+    {
+        // The minified chunk was in-app as a whole, but this line came from a dependency. Left in-app, the
+        // Conductor would try to fix a file under node_modules, and the issue page would highlight library
+        // code as the culprit.
+        const string dependencyMap =
+            """{"version":3,"sources":["turbopack:///[project]/node_modules/.pnpm/clsx@2.1.1/node_modules/clsx/dist/clsx.mjs"],"sourcesContent":["const a = 1;\nfunction boom() {\n  throw new Error();\n}\n"],"names":["boom"],"mappings":"AAAA,CAEA;KAAGA"}""";
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
+        const string objectKey = "sourcemaps/by-debug-id/dep";
+        await artifacts.RecordAsync(
+            projectId, "app@1.4.2", dist: null, debugId: "dep", filename: "app.min.js",
+            objectKey: objectKey, byteSize: dependencyMap.Length);
+        var symbolicator = new FrameSymbolicator(
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(dependencyMap), objectKey));
+
+        var result = await symbolicator.SymbolicateAsync(projectId, MinifiedEvent(
+            debugId: "dep", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
+
+        var frame = Assert.Single(Assert.Single(result.Exceptions).Stacktrace!.Frames);
+        Assert.Equal("node_modules/.pnpm/clsx@2.1.1/node_modules/clsx/dist/clsx.mjs", frame.Filename);
+        Assert.False(frame.InApp);
+    }
+
+    [Fact]
+    public async Task A_map_that_cannot_be_read_leaves_the_fix_its_raw_frames()
+    {
+        // The fix paths call this before building a context. A broken store must cost the run its
+        // symbolication, never the run itself.
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
+        await artifacts.RecordAsync(
+            projectId, "app@1.4.2", dist: null, debugId: "broken", filename: "app.min.js",
+            objectKey: "sourcemaps/by-debug-id/broken", byteSize: 1);
+        var symbolication = new EventSymbolication(
+            new FrameSymbolicator(artifacts, new UnreachableMapStore()), native: null,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<EventSymbolication>.Instance);
+        var raw = MinifiedEvent(
+            debugId: "broken", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js");
+
+        var result = await symbolication.SymbolicateAsync(projectId, raw);
+
+        Assert.Same(raw, result);
+    }
+
+    [Fact]
+    public async Task A_map_that_never_arrives_leaves_the_fix_its_raw_frames()
+    {
+        // The consumer runs this inside its drain, so a store that stops answering must cost the run its
+        // symbolication after a bounded wait, not hold up ingest until the store recovers. No budget is
+        // passed, so this is the one the fix paths get.
+        var (projectId, raw) = await SeedSlowMapAsync();
+        var symbolication = SlowSymbolication(new HangingMapStore());
+
+        var result = await symbolication.SymbolicateAsync(projectId, raw).WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Same(raw, result);
+    }
+
+    [Fact]
+    public async Task A_fix_request_the_caller_abandons_is_not_answered_with_raw_frames()
+    {
+        // Only the budget running out means "go ahead without maps". The caller's own cancellation is
+        // passed on, so a request that is gone does not carry on building a fix.
+        var (projectId, raw) = await SeedSlowMapAsync();
+        var store = new HangingMapStore();
+        using var caller = new CancellationTokenSource();
+
+        var call = SlowSymbolication(store).SymbolicateAsync(projectId, raw, cancellationToken: caller.Token);
+        await store.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await caller.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call.WaitAsync(TimeSpan.FromSeconds(30)));
+    }
+
+    private async Task<(long ProjectId, Event Raw)> SeedSlowMapAsync()
+    {
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        await new SourceMapArtifactRepository(pg.ConnectionString).RecordAsync(
+            projectId, "app@1.4.2", dist: null, debugId: "slow", filename: "app.min.js",
+            objectKey: "sourcemaps/by-debug-id/slow", byteSize: 1);
+        return (projectId, MinifiedEvent(
+            debugId: "slow", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
+    }
+
+    private EventSymbolication SlowSymbolication(IObjectStore store) => new(
+        new FrameSymbolicator(new SourceMapArtifactRepository(pg.ConnectionString), store), native: null,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<EventSymbolication>.Instance);
+
+    [Fact]
     public async Task Leaves_a_frame_untouched_when_no_map_matches()
     {
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var symbolicator = new FrameSymbolicator(
-            new SourceMapArtifactRepository(pg.ConnectionString), new MapStore([]));
+            new SourceMapArtifactRepository(pg.ConnectionString), new InMemoryMapStore([]));
 
         var result = await symbolicator.SymbolicateAsync(projectId, MinifiedEvent(
             debugId: "missing", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
@@ -68,7 +158,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         await artifacts.RecordAsync(
             projectId, "app@1.4.2", dist: null, debugId: null, filename: "app.min.js",
             objectKey: objectKey, byteSize: Map.Length);
-        var symbolicator = new FrameSymbolicator(artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), objectKey));
+        var symbolicator = new FrameSymbolicator(artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), objectKey));
 
         // No debug images; the frame's abs_path is the full deployed URL with a cache-buster query, so the
         // basename ("app.min.js") is what must line up with the uploaded map's filename.
@@ -125,7 +215,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
             projectId, "app@1.4.2", dist: null, debugId: null, filename: crashSite,
             objectKey: $"sourcemaps/{crashSite}", byteSize: Map.Length);
         var symbolicator = new FrameSymbolicator(
-            artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), $"sourcemaps/{crashSite}"));
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), $"sourcemaps/{crashSite}"));
 
         await CommittedTransactionsAsync(counted); // settle the setup's own statistics before the baseline
         var before = await CommittedTransactionsAsync(counted);
@@ -157,7 +247,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         }
 
         var symbolicator = new FrameSymbolicator(
-            artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), $"sourcemaps/{oldest}", $"sourcemaps/{crashSite}"));
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), $"sourcemaps/{oldest}", $"sourcemaps/{crashSite}"));
         var result = await symbolicator.SymbolicateAsync(projectId, EventWithFrames(frames));
 
         var got = Assert.Single(result.Exceptions).Stacktrace!.Frames;
@@ -204,7 +294,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         };
 
         var symbolicator = new FrameSymbolicator(
-            artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), "sourcemaps/primary.js"));
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), "sourcemaps/primary.js"));
         var result = await symbolicator.SymbolicateAsync(projectId, stored);
 
         Assert.Equal("src/app.ts", result.Exceptions[^1].Stacktrace!.Frames[0].Filename);
@@ -225,7 +315,7 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
 
         // The store knows only the newer object, so a frame is rewritten iff that is the one resolved.
         var symbolicator = new FrameSymbolicator(
-            artifacts, new MapStore(Encoding.UTF8.GetBytes(Map), "sourcemaps/fresh"));
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), "sourcemaps/fresh"));
         var result = await symbolicator.SymbolicateAsync(projectId, EventWithFrames(
         [
             new Frame
@@ -313,12 +403,4 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
     // Serves the same map under every key it is given. Which keys it holds decides what a test can
     // tell apart: a store that knows only one of two recorded artifacts cannot show whether the second
     // was looked up or merely failed to load.
-    private sealed class MapStore(byte[] bytes, params string[] keys) : IObjectStore
-    {
-        public Task PutAsync(string k, byte[] content, string contentType, CancellationToken ct = default) =>
-            Task.CompletedTask;
-
-        public Task<byte[]?> GetAsync(string k, CancellationToken ct = default) =>
-            Task.FromResult<byte[]?>(keys.Contains(k) ? bytes : null);
-    }
 }

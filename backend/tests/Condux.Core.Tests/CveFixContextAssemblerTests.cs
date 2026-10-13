@@ -21,6 +21,37 @@ public class CveFixContextAssemblerTests
     }
 
     [Fact]
+    public void Assemble_TellsTheModelABumpAddsNoTest_OutsideTheAdvisoryFence()
+    {
+        // Every system prompt asks for a test, and a bump has none to add, so a probe bump invented a
+        // script that greps the build file. The task has to say so, and in our words, not inside the
+        // fenced advisory text, where it would read as data.
+        var context = CveFixContextAssembler.Assemble(
+            "okhttp", "maven", "< 4.9.2", "4.9.2", "GHSA-x", null, "An advisory summary.",
+            manifestPaths: ["settings.gradle.kts"]);
+
+        var instruction = context.Prompt.IndexOf(
+            "do not add tests, scripts or any other new file", StringComparison.Ordinal);
+        Assert.True(instruction >= 0);
+        Assert.True(instruction > context.Prompt.LastIndexOf("An advisory summary.", StringComparison.Ordinal));
+        Assert.Contains("no test was added", context.Prompt);
+    }
+
+    // A lockfile is rewritten whole, so one the model could not read in full must be left alone, or the
+    // whole bump is refused at publish. The task says so, in our words, outside the advisory fence.
+    [Fact]
+    public void Assemble_TellsTheModelToLeaveALockfileItCouldNotReadWhole()
+    {
+        var context = CveFixContextAssembler.Assemble(
+            "lodash", "npm", "< 4.17.21", "4.17.21", "GHSA-x", null, "An advisory summary.",
+            manifestPaths: ["package.json"]);
+
+        var instruction = context.Prompt.IndexOf("only if you could read the whole of it", StringComparison.Ordinal);
+        Assert.True(instruction > context.Prompt.LastIndexOf("An advisory summary.", StringComparison.Ordinal));
+        Assert.Contains("do not create a new one in its place", context.Prompt);
+    }
+
+    [Fact]
     public void Assemble_FallsBackToTheGhsaId_WhenNoCveIsAssigned()
     {
         var context = CveFixContextAssembler.Assemble(
@@ -102,6 +133,58 @@ public class CveFixContextAssemblerTests
         Assert.Equal("package.json", context.ScopedPaths[0]);
         Assert.Contains("package-lock.json", context.ScopedPaths);
         Assert.Single(context.ScopedPaths, path => path == "package.json");
+    }
+
+    [Fact]
+    public void Assemble_AGradleAlert_ScopesWhereGradleDeclaresVersions_NotAPomXml()
+    {
+        // The shape measured on a Gradle repository with dependency submission: GitHub reads no Gradle file
+        // itself, so every alert says maven and names the settings file, and maven's candidate is a pom.xml
+        // the build does not have. The version lives in the catalog or a build script.
+        var context = CveFixContextAssembler.Assemble(
+            "okhttp", "maven", "< 4.9.2", "4.9.2", "GHSA-x", null, "", manifestPaths: ["settings.gradle.kts"]);
+
+        Assert.Equal(
+            ["gradle/libs.versions.toml", "build.gradle.kts", "build.gradle", "app/build.gradle.kts",
+             "app/build.gradle", "settings.gradle.kts"],
+            context.ScopedPaths);
+        Assert.DoesNotContain("pom.xml", context.ScopedPaths);
+        Assert.Contains("gradle/libs.versions.toml version catalog", context.Prompt);
+    }
+
+    [Fact]
+    public void Assemble_AGradleBuildInASubdirectory_ScopesBesideItsSettingsFile()
+    {
+        var context = CveFixContextAssembler.Assemble(
+            "okhttp", "maven", "<1", "1", "GHSA-x", null, "", manifestPaths: ["android/settings.gradle"]);
+
+        Assert.Equal("android/gradle/libs.versions.toml", context.ScopedPaths[0]);
+        Assert.Contains("android/app/build.gradle.kts", context.ScopedPaths);
+        Assert.Equal("android/settings.gradle", context.ScopedPaths[^1]);
+    }
+
+    [Fact]
+    public void Assemble_AGradleModuleScript_LeadsAndLooksForTheRestFromTheRepositoryRoot()
+    {
+        // A module script may declare the version itself, so it leads. It does not say where the build's
+        // root is, and its own directory would yield app/app/build.gradle, so the rest come from the root.
+        var context = CveFixContextAssembler.Assemble(
+            "okhttp", "maven", "<1", "1", "GHSA-x", null, "", manifestPaths: ["app/build.gradle.kts"]);
+
+        Assert.Equal("app/build.gradle.kts", context.ScopedPaths[0]);
+        Assert.Contains("gradle/libs.versions.toml", context.ScopedPaths);
+        Assert.Single(context.ScopedPaths, path => path == "app/build.gradle.kts");
+        Assert.DoesNotContain(context.ScopedPaths, path => path.StartsWith("app/app/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Assemble_AMavenAlert_KeepsItsPomXml_AndSaysNothingAboutGradle()
+    {
+        var context = CveFixContextAssembler.Assemble(
+            "jackson-databind", "maven", "<1", "1", "GHSA-x", null, "", manifestPaths: ["service/pom.xml"]);
+
+        Assert.Equal(["service/pom.xml"], context.ScopedPaths);
+        Assert.DoesNotContain("Gradle", context.Prompt);
     }
 
     [Fact]
