@@ -33,25 +33,4 @@ public class ConduxSelfReportTests
         Assert.Null(host.Services.GetService<Condux.Sdk.ConduxClient>());
     }
 
-    // A client disconnect or graceful shutdown cancels in-flight work; Npgsql surfaces query cancellation as
-    // OperationCanceledException. The request middleware must treat that as expected noise, not a self-reported
-    // fault, but only when the request/host was actually cancelled.
-    [Theory]
-    [InlineData(true, true)] // aborted request + a cancellation: expected, do not report
-    [InlineData(false, false)] // a cancellation with no abort: unexpected, report it
-    public void Treats_a_cancellation_as_expected_only_when_cancellation_was_requested(
-        bool cancellationRequested, bool expected)
-    {
-        var cancellation = new OperationCanceledException("Query was cancelled");
-
-        Assert.Equal(expected, ConduxSelfReport.IsExpectedCancellation(cancellation, cancellationRequested));
-    }
-
-    [Fact]
-    public void A_non_cancellation_exception_is_always_reported_even_during_an_abort()
-    {
-        var real = new InvalidOperationException("42P08: could not determine data type of parameter $1");
-
-        Assert.False(ConduxSelfReport.IsExpectedCancellation(real, cancellationRequested: true));
-    }
 }

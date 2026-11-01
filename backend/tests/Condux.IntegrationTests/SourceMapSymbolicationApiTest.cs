@@ -51,6 +51,49 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
         Assert.Equal("boom", frame.GetProperty("Function").GetString());
     }
 
+    // The browser no longer resolves mappings itself: the detail carries each frame's link, built from the
+    // symbolicated frame, so a mapping written against the source path links the minified event.
+    [Fact]
+    public async Task GetIssue_links_each_frame_through_the_code_mappings()
+    {
+        var (client, project) = await SeedMinifiedIssueAsync(Map, new CapturingFixPublisher());
+        var repoId = await LinkRepoAsync(client, project);
+        var mapped = await client.PostAsJsonAsync($"/api/projects/{project}/repos/{repoId}/code-mappings",
+            new { stackRoot = "src/", sourceRoot = "web/src/" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, mapped.StatusCode);
+
+        var list = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{project}/issues"))
+            .GetProperty("issues");
+        var detail = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{project}/issues/{list[0].GetProperty("id").GetString()}");
+
+        var link = Assert.Single(detail.GetProperty("frameLinks")[0].EnumerateArray());
+        Assert.Equal(0, link.GetProperty("frame").GetInt32());
+        Assert.Equal("https://github.com/acme/web/blob/main/web/src/app.ts#L3", link.GetProperty("url").GetString());
+    }
+
+    // The event's release was recorded against the repository at a commit, so the line points at that
+    // commit's code rather than at whatever the default branch holds today.
+    [Fact]
+    public async Task GetIssue_links_the_commit_of_the_events_recorded_release()
+    {
+        var (client, project) = await SeedMinifiedIssueAsync(Map, new CapturingFixPublisher());
+        var repoId = await LinkRepoAsync(client, project);
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await client.PostAsJsonAsync(
+            $"/api/projects/{project}/repos/{repoId}/code-mappings", new { stackRoot = "", sourceRoot = "" })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await client.PostAsJsonAsync(
+            $"/api/projects/{project}/releases",
+            new { repoLinkId = repoId, version = "app@1.4.2", commitSha = "4f2c9e1" })).StatusCode);
+
+        var list = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{project}/issues"))
+            .GetProperty("issues");
+        var detail = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{project}/issues/{list[0].GetProperty("id").GetString()}");
+
+        var link = Assert.Single(detail.GetProperty("frameLinks")[0].EnumerateArray());
+        Assert.Equal("https://github.com/acme/web/blob/4f2c9e1/src/app.ts#L3", link.GetProperty("url").GetString());
+    }
+
     [Fact]
     public async Task RequestFix_scopes_the_fix_to_the_file_the_source_map_names()
     {
@@ -117,9 +160,60 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
         var suggestions = await client.GetFromJsonAsync<JsonElement>(
             $"/api/projects/{project}/repos/{repoId}/suggested-mappings");
 
-        var only = Assert.Single(suggestions.EnumerateArray());
+        Assert.Equal("suggested", suggestions.GetProperty("outcome").GetString());
+        var only = Assert.Single(suggestions.GetProperty("suggestions").EnumerateArray());
         Assert.Equal("app/", only.GetProperty("stackRoot").GetString());
         Assert.Equal("web/", only.GetProperty("sourceRoot").GetString());
+    }
+
+    // Another linked repository already maps the empty root. The identity rule this repo's frames support
+    // would tie with it, and a frame two repositories claim links into neither, so it is not offered.
+    [Fact]
+    public async Task SuggestedMappings_call_a_root_another_repository_maps_a_conflict()
+    {
+        var (client, project) = await SeedMinifiedIssueAsync(
+            Map, new CapturingFixPublisher(), services: s => AddSourceHost(s, new TreeHost(["src/app.ts"])));
+        var repoId = await LinkRepoAsync(client, project);
+        var other = await client.PostAsJsonAsync($"/api/projects/{project}/repos",
+            new { repoFullName = "acme/api", defaultBranch = "main" });
+        var otherId = (await other.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        var mapped = await client.PostAsJsonAsync($"/api/projects/{project}/repos/{otherId}/code-mappings",
+            new { stackRoot = "", sourceRoot = "" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, mapped.StatusCode);
+
+        var body = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{project}/repos/{repoId}/suggested-mappings");
+
+        Assert.Equal("conflicting", body.GetProperty("outcome").GetString());
+        Assert.Empty(body.GetProperty("suggestions").EnumerateArray());
+    }
+
+    // Another project's mappings are not this project's: one mapping the empty root there neither ties
+    // with this repo's suggestion nor takes this project's links.
+    [Fact]
+    public async Task Another_projects_mappings_neither_block_a_suggestion_nor_a_link()
+    {
+        var (otherClient, otherProject) = await SeedMinifiedIssueAsync(
+            Map, new CapturingFixPublisher(), services: s => AddSourceHost(s, new TreeHost(["src/app.ts"])));
+        var otherRepo = await LinkRepoAsync(otherClient, otherProject);
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await otherClient.PostAsJsonAsync(
+            $"/api/projects/{otherProject}/repos/{otherRepo}/code-mappings", new { stackRoot = "", sourceRoot = "elsewhere/" })).StatusCode);
+
+        var (client, project) = await SeedMinifiedIssueAsync(
+            Map, new CapturingFixPublisher(), services: s => AddSourceHost(s, new TreeHost(["src/app.ts"])));
+        var repoId = await LinkRepoAsync(client, project);
+
+        var body = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{project}/repos/{repoId}/suggested-mappings");
+        Assert.Equal("suggested", body.GetProperty("outcome").GetString());
+
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await client.PostAsJsonAsync(
+            $"/api/projects/{project}/repos/{repoId}/code-mappings", new { stackRoot = "", sourceRoot = "" })).StatusCode);
+        var list = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{project}/issues")).GetProperty("issues");
+        var detail = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{project}/issues/{list[0].GetProperty("id").GetString()}");
+        var link = Assert.Single(detail.GetProperty("frameLinks")[0].EnumerateArray());
+        Assert.Equal("https://github.com/acme/web/blob/main/src/app.ts#L3", link.GetProperty("url").GetString());
     }
 
     [Fact]
@@ -134,7 +228,10 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
         var resp = await client.GetAsync($"/api/projects/{project}/repos/{repoId}/suggested-mappings");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, resp.StatusCode);
-        Assert.Empty((await resp.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray());
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(body.GetProperty("suggestions").EnumerateArray());
+        // Said as "try again", not as "connect GitHub", which the dashboard said for every empty answer.
+        Assert.Equal("unavailable", body.GetProperty("outcome").GetString());
     }
 
     [Fact]
@@ -142,7 +239,8 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
     {
         // The list overload waits for maps without a deadline. The endpoint bounds it, and past the budget
         // it derives from the stored frames instead: the tree holds the minified chunk under web/, so the
-        // raw frame app.min.js still yields a rule, which only the fallback can produce.
+        // raw frame app.min.js still yields a rule, which only the fallback can produce. The frame has no
+        // directory, so the rule is one of its own file rather than one from the empty root.
         var store = new HangingMapStore();
         var (client, project) = await SeedMinifiedIssueAsync(
             Map, new CapturingFixPublisher(), store,
@@ -156,9 +254,10 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
 
         Assert.True(store.Reached.Task.IsCompleted, "the map was never looked up, so nothing was bounded");
         Assert.Equal(System.Net.HttpStatusCode.OK, resp.StatusCode);
-        var only = Assert.Single((await resp.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray());
-        Assert.Equal("", only.GetProperty("stackRoot").GetString());
-        Assert.Equal("web/", only.GetProperty("sourceRoot").GetString());
+        var only = Assert.Single(
+            (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("suggestions").EnumerateArray());
+        Assert.Equal("app.min.js", only.GetProperty("stackRoot").GetString());
+        Assert.Equal("web/app.min.js", only.GetProperty("sourceRoot").GetString());
     }
 
     private static void AddSourceHost(IServiceCollection services, TreeHost host)
@@ -307,7 +406,8 @@ public sealed class SourceMapSymbolicationApiTest(PostgresFixture pg, ClickHouse
             ],
         };
         await new ClickHouseEventWriter(chHttp).InsertAsync([ClickHouseEventWriter.ToRow(
-            project, (ulong)issue.Id, stored, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays)]);
+            project, (ulong)issue.Id, stored, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays,
+            DateTimeOffset.UtcNow)]);
 
         return (client, project);
     }

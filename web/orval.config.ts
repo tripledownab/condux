@@ -15,7 +15,8 @@ export default defineConfig({
       clean: true,
       override: {
         mutator: { path: "./src/api/fetcher.ts", name: "conduxFetch" },
-        query: { useQuery: true },
+        // No query.useQuery: since orval 8 it makes every operation a query, POSTs included, where the
+        // default already makes a GET a query and anything else a mutation.
       },
     },
   },

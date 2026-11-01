@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Apply the Condux database migrations (baked into the image from the repo). Idempotent, safe to
-# re-run on every install/upgrade. Run by the Helm migrations hook Job; config comes from the same
-# env the services use (CONDUX_POSTGRES, CONDUX_CLICKHOUSE_URL/USER/PASSWORD).
+# Apply the Condux database migrations (baked into the image from the repo) on every install/upgrade:
+# Postgres through apply-postgres.sh, which says which files run, then every ClickHouse file. Run
+# by the Helm migrations hook Job; config comes from the same env the services use (CONDUX_POSTGRES,
+# CONDUX_CLICKHOUSE_URL/USER/PASSWORD).
 #
 # Both stores are reached by a different client than the services use, so each connection setting is
 # translated rather than passed through, and a setting that governs how the connection is secured is
@@ -92,7 +93,17 @@ for kv in "${_parts[@]}"; do
       esac
       ;;
     krbsrvname|kerberosservicename) set_pg PGKRBSRVNAME "$val" ;;
-    # Carried by Npgsql 8 as an obsolete no-op ("no longer needed and does nothing"), so there is no
+    # Npgsql 10 tries GSSAPI encryption by default, and its release notes give Disable as the way to stop
+    # that, so a string carrying it is ordinary. Both libraries name the same three
+    # modes and libpq compares them lowercase. Listed before the refusal below, which its name would match.
+    gssencryptionmode)
+      gss="$(fold_mode "$val")"
+      case "$gss" in
+        disable|prefer|require) set_pg PGGSSENCMODE "$gss" ;;
+        *) refused+=("${kv%%=*}: not one of the three GSS encryption modes") ;;
+      esac
+      ;;
+    # Carried by Npgsql (8 and 10) as an obsolete no-op ("no longer needed and does nothing"), so there is no
     # posture here to preserve and refusing it would fail an install over a setting that is ignored
     # on the services' own connections. Listed before the refusal below, which its name would match.
     trustservercertificate) ;;
@@ -165,20 +176,9 @@ case "${CH_AUTHORITY}" in
 esac
 
 echo "==> Postgres migrations"
-applied=0
-# A glob rather than `ls`, because pathname expansion is already sorted and an unmatched glob is
-# left literal, which the -e test below turns into a loud failure. An empty tree must not read as a
-# successful run: this Job is what stands between a fresh install and a schema.
-for f in "${MIGRATIONS_DIR}"/postgres/*.sql; do
-  [ -e "$f" ] || break
-  echo "    $f"
-  psql -v ON_ERROR_STOP=1 -f "$f"
-  applied=$((applied + 1))
-done
-if [ "$applied" -eq 0 ]; then
-  echo "No Postgres migrations found under ${MIGRATIONS_DIR}/postgres" >&2
-  exit 1
-fi
+# The rule for which files run, and the refusal of an empty tree, live in the one script compose runs too.
+# The image installs it beside this one; overridable so the check script can drive both from the repo.
+sh "${APPLY_POSTGRES:-/usr/local/bin/apply-postgres}" "${MIGRATIONS_DIR}/postgres"
 
 echo "==> ClickHouse migrations (host ${CH_HOST})"
 applied=0

@@ -57,7 +57,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(new ProjectEventNotifier(postgres));
         services.AddSingleton(new SourceMapArtifactRepository(postgres));
         services.AddSingleton(new DebugFileRepository(postgres));
-        services.AddSingleton<DebugFileUploadGate>();
+        services.AddSingleton(new DartSymbolMapRepository(postgres));
+        services.AddSingleton<UploadBodyBudget>();
+        services.AddSingleton<DartSymbolMapUploadGate>();
         services.AddUploadStorage(cfg, postgres);
         services.AddSingleton(new AlertRuleRepository(postgres));
         services.AddSingleton(new OrgNotificationChannelRepository(postgres));
@@ -66,6 +68,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(new AdminAuditRepository(postgres));
         services.AddSingleton(new AdminSpendRepository(postgres));
         services.AddSingleton(new GithubInstallationRepository(postgres));
+        services.AddSingleton(new AdvisoryNoticeRepository(postgres));
 
         // The readiness probe's own client (/api/readyz), with a timeout well under any monitor's: a probe
         // that hangs is worse than one that fails, because a monitor cannot tell it apart from its own
@@ -77,8 +80,9 @@ internal static class ServiceCollectionExtensions
         // ChannelTester resolves the INotifier for a channel and reports the outcome instead of throwing.
         services.AddAlertNotifiers(cfg);
         services.AddSingleton<ChannelTester>();
-        // Alert dispatch from the control-plane too: triage events (issue resolved/assigned) fire alert
-        // rules here, not just the consumer's new-issue/regression path.
+        // Alert dispatch from the control-plane too: triage events (issue resolved/assigned) and new
+        // dependency advisories from the GitHub webhook fire alert rules here, not just the consumer's
+        // new-issue/regression path.
         services.AddSingleton<AlertDispatcher>();
         // Its org-level counterpart (#129), for a notice addressed to the org rather than to a project's
         // alert rules. The consumer has had this since the Conductor-pause notices; the control-plane needs
@@ -127,6 +131,9 @@ internal static class ServiceCollectionExtensions
             // deployment with no secret key runs no timer for a table it has no rows in.
             services.AddHostedService<Auth.SsoVerificationWorker>();
         }
+
+        // Tracker tickets (ADR-0053). After the secrets block, because the Linear grant is sealed with it.
+        services.AddTicketServices(cfg, postgres, secretsEnabled);
 
         // TOTP second factor (ADR-0039). The store and the service register unconditionally, unlike the
         // SecretBox-gated blocks above: MultiFactor takes a NULLABLE SecretBox and reports Available,

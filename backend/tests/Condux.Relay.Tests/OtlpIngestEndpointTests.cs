@@ -5,6 +5,7 @@ using Condux.Core.Events;
 using Condux.Core.Messaging;
 using Condux.Core.Projects;
 using Condux.Core.Quotas;
+using Condux.Relay.Ingest;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -58,64 +59,8 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
 
     private WebApplicationFactory<Program> With(
         IEventPublisher publisher, IQuotaMeter? quota = null, int? maxRecords = null,
-        IProjectStore? projects = null) =>
-        factory.WithWebHostBuilder(b =>
-        {
-            // The per-export ceiling defaults to 20,000, so a test drives it down rather than building a
-            // body big enough to reach it.
-            if (maxRecords is not null)
-            {
-                b.UseSetting("CONDUX_MAX_OTLP_RECORDS", maxRecords.Value.ToString(CultureInfo.InvariantCulture));
-            }
-            b.ConfigureServices(s =>
-            {
-                s.AddSingleton(publisher);
-                if (quota is not null) s.AddSingleton(quota);
-                if (projects is not null) s.AddSingleton(projects);
-            });
-        });
-
-    // Records the count of every call as well as answering it, so a test can say how many times the
-    // handler asked and for how much. Returning a fixed decision keeps the meter's own arithmetic out of
-    // the test: the endpoint's job is to publish exactly what it was told was admitted.
-    private sealed class StubQuotaMeter(QuotaDecision decision) : IQuotaMeter
-    {
-        public List<long> Requested { get; } = [];
-        public List<long> Refunded { get; } = [];
-        public List<string> Keys { get; } = [];
-
-        public ValueTask<QuotaDecision> TryConsumeAsync(
-            string key, long monthlyLimit, long count = 1, CancellationToken ct = default)
-        {
-            Requested.Add(count);
-            Keys.Add(key);
-            return ValueTask.FromResult(decision);
-        }
-
-        public ValueTask RefundAsync(string key, long count, CancellationToken ct = default)
-        {
-            Refunded.Add(count);
-            Keys.Add(key);
-            return ValueTask.CompletedTask;
-        }
-    }
-
-    // Stores the first few and then fails, standing in for a broker that stops answering mid-batch.
-    private sealed class FailAfterPublisher(int succeed) : IEventPublisher
-    {
-        public int Published { get; private set; }
-
-        public Task PublishAsync(
-            string projectId, Event e, int retentionDays, CancellationToken cancellationToken = default)
-        {
-            if (Published >= succeed)
-            {
-                throw new InvalidOperationException("broker unreachable");
-            }
-            Published++;
-            return Task.CompletedTask;
-        }
-    }
+        IProjectStore? projects = null, IngestBodyBudget? budget = null) =>
+        factory.WithOtlpServices(publisher, quota, maxRecords, projects, budget);
 
     [Fact]
     public async Task Otlp_ErrorRecord_IsPublished_InfoRecordIsFilteredOut()
@@ -286,10 +231,12 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     public async Task Otlp_MissingOrWrongKey_Returns401()
     {
         var client = With(new InMemoryEventPublisher()).CreateClient();
-        Assert.Equal(HttpStatusCode.Unauthorized,
-            (await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch, key: null))).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized,
-            (await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch, key: "wrong"))).StatusCode);
+        foreach (var key in new[] { null, "wrong" })
+        {
+            var resp = await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch, key: key));
+            Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+            Assert.Equal("Sentry", Assert.Single(resp.Headers.WwwAuthenticate).Scheme);
+        }
     }
 
     /// <summary>
@@ -383,6 +330,44 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     }
 
     /// <summary>
+    /// An export the relay's body budget has no room for is a 429 the exporter retries, answered with a
+    /// Status like every other refusal (8 is RESOURCE_EXHAUSTED). The body is read before the quota is
+    /// asked, so nothing was spent on it.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_OverTheBodyBudget_Returns429_AndSpendsNoQuota()
+    {
+        var pub = new InMemoryEventPublisher();
+        var quota = new StubQuotaMeter(new QuotaDecision(Admitted: 1, Used: 1, Remaining: 9));
+        var client = With(pub, quota, budget: new IngestBodyBudget(1, 1, 1)).CreateClient();
+
+        var resp = await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, resp.StatusCode);
+        Assert.Equal("1", resp.Headers.RetryAfter?.ToString());
+        Assert.Contains("\"code\":8", await resp.Content.ReadAsStringAsync());
+        Assert.Empty(quota.Requested);
+        Assert.Empty(pub.Published);
+    }
+
+    /// <summary>An export gives its share of the budget back once answered, stored or not decoded.</summary>
+    [Fact]
+    public async Task Otlp_GivesItsShareOfTheBudgetBack()
+    {
+        const long size = 1024 * 1024;
+        var budget = new IngestBodyBudget(size, size, size);
+        var client = With(new InMemoryEventPublisher(), budget: budget).CreateClient();
+
+        var stored = await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch));
+        var invalid = await client.SendAsync(OtlpPost("1", "not json"));
+
+        Assert.Equal(HttpStatusCode.OK, stored.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.True(budget.TryReserve(size));
+        Assert.Equal(0, budget.SharesHeld);
+    }
+
+    /// <summary>
     /// The protocol requires the body of every 4xx and 5xx to be a google.rpc.Status in the content type
     /// the request arrived in. Asserting the status code alone is what let this ship answering a protobuf
     /// sender with a bare 400 carrying no content type and no body at all, so the body is read back here:
@@ -424,6 +409,28 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
     }
 
     /// <summary>
+    /// Well formed JSON whose string escapes half a surrogate pair is not text. The parser accepts the
+    /// document and the decoder found it only when reading the string, which it used to throw on, so the
+    /// request answered 500 and the relay filed the sender's bad input against itself. A bytes value is
+    /// a base64 string read another way, and threw after plain strings no longer did.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"stringValue":"\uD800"}""")]
+    [InlineData("""{"bytesValue":"\uD800"}""")]
+    public async Task Otlp_JsonStringThatIsNotText_Returns400_WithAStatusInJson(string body)
+    {
+        var pub = new InMemoryEventPublisher();
+        var client = With(pub).CreateClient();
+
+        var resp = await client.SendAsync(OtlpPost("1", ErrorAndInfoBatch.Replace("""{"stringValue":"boom"}""", body)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("application/json", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("\"code\":3", await resp.Content.ReadAsStringAsync());
+        Assert.Empty(pub.Published);
+    }
+
+    /// <summary>
     /// Gzipped, which is what the OpenTelemetry Collector's exporter sends by default. The decompression
     /// middleware has to run before the decoder sees the body, and the bound on the read has to apply to
     /// the expanded bytes rather than the compressed ones.
@@ -439,6 +446,24 @@ public class OtlpIngestEndpointTests(WebApplicationFactory<Program> factory)
 
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Equal("checkout-api", Assert.Single(pub.Published).Event.ServerName);
+    }
+
+    /// <summary>
+    /// Sent as gzip but not gzip: the sender's broken body, so a 400 with a Status, not a 500 the relay would
+    /// file against itself. 3 is INVALID_ARGUMENT.
+    /// </summary>
+    [Fact]
+    public async Task Otlp_ExportThatIsNotItsDeclaredEncoding_Returns400_WithAStatus()
+    {
+        var pub = new InMemoryEventPublisher();
+        var client = With(pub).CreateClient();
+
+        var resp = await client.SendAsync(ProtobufPost("1", CollectorExport(), contentEncoding: "gzip"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var body = await resp.Content.ReadAsByteArrayAsync();
+        Assert.Equal([0x08, 0x03], body[..2]);
+        Assert.Empty(pub.Published);
     }
 
     private static byte[] Gzip(byte[] payload)

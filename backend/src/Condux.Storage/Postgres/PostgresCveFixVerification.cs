@@ -100,7 +100,7 @@ public sealed class PostgresCveFixVerification(string connectionString)
         await using var cmd = new NpgsqlCommand(SetStatusSql, conn);
         cmd.Parameters.AddWithValue("id", runId);
         cmd.Parameters.AddWithValue("status", (short)status);
-        cmd.Parameters.AddWithValue("evidence", evidenceJson);
+        cmd.AddJsonb("evidence", evidenceJson);
         cmd.Parameters.AddWithValue("verified", verifiedAt);
         cmd.Parameters.AddWithValue("watching", (short)VerifyStatus.Watching);
         return await cmd.ExecuteNonQueryAsync(cancellationToken) > 0;

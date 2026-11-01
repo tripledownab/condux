@@ -130,7 +130,6 @@ public class RepoPathsTests
     [InlineData("tripledownab/condux", "tripledownab/condux")]
     [InlineData("feature/new thing", "feature/new%20thing")]
     [InlineData("owner/repo#1", "owner/repo%231")]
-    [InlineData("src/./a.cs", "src/./a.cs")]
     public void EscapeSegments_keeps_separators_and_encodes_the_rest(string value, string expected) =>
         Assert.Equal(expected, RepoPaths.EscapeSegments(value));
 
@@ -151,6 +150,20 @@ public class RepoPathsTests
     // twice the two copies disagreed on exactly this: one converted backslashes first and one did not.
     [InlineData(@"a\..\b")]
     public void EscapeSegments_refuses_a_value_that_traverses_the_url_path(string value) =>
+        Assert.Throws<ArgumentException>(() => RepoPaths.EscapeSegments(value));
+
+    /// <summary>
+    /// Neither climbs, but each changes which resource the URL names: a browser reads
+    /// <c>acme/./blob/main</c> as the repository <c>acme/blob</c>. git refuses all of these as branches.
+    /// </summary>
+    [Theory]
+    [InlineData("src/./a.cs")]
+    [InlineData("acme/.")]
+    [InlineData(".")]
+    [InlineData("a//b")]
+    [InlineData("feature/")]
+    [InlineData("")]
+    public void EscapeSegments_refuses_an_empty_or_dot_segment(string value) =>
         Assert.Throws<ArgumentException>(() => RepoPaths.EscapeSegments(value));
 
     /// <summary>

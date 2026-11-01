@@ -3,7 +3,7 @@ using Condux.Core.Events;
 namespace Condux.DemoSeed;
 
 /// <summary>Where a seeded issue is in its lifecycle. Resolved stamps resolved_at this week; Regressed is an
-/// old issue reopened this week (first_seen before the week, activated_at inside it).</summary>
+/// old issue reopened this week (created_at before the week, reopened_at inside it).</summary>
 internal enum SeedStatus
 {
     Active,

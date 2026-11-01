@@ -1,7 +1,8 @@
 namespace Condux.Relay.Ingest;
 
-/// <summary>Reading an inbound ingest request's credential. Shared by the Sentry-compatible and OTLP
-/// endpoints, which authenticate the same way. The body is read through <c>RequestBodies</c> in Core.
+/// <summary>Reading an inbound ingest request's credential, and the challenge a refused one gets. Shared by
+/// the Sentry-compatible and OTLP endpoints, which authenticate the same way. The body is read through
+/// <c>RequestBodies</c> in Core.
 /// </summary>
 internal static class IngestRequest
 {
@@ -30,4 +31,26 @@ internal static class IngestRequest
         }
         return null;
     }
+
+    /// <summary>
+    /// Puts a <c>WWW-Authenticate</c> challenge on every 401 the relay sends, which RFC 9110 15.5.2 requires,
+    /// at the response rather than at each ingest route, so a route added later cannot leave it out. The
+    /// scheme is <c>Sentry</c>, the name the Sentry SDKs write in <c>X-Sentry-Auth</c>, one of the three
+    /// places the DSN key is read from (with <c>x-condux-auth</c> and <c>?sentry_key</c>). It is a
+    /// descriptive name rather than a scheme a client answers in <c>Authorization</c>; it is there because
+    /// a 401 must carry a challenge.
+    /// </summary>
+    public static IApplicationBuilder UseDsnChallenge(this IApplicationBuilder app) =>
+        app.Use((ctx, next) =>
+        {
+            ctx.Response.OnStarting(() =>
+            {
+                if (ctx.Response.StatusCode == StatusCodes.Status401Unauthorized)
+                {
+                    ctx.Response.Headers.WWWAuthenticate = "Sentry realm=\"condux\"";
+                }
+                return Task.CompletedTask;
+            });
+            return next(ctx);
+        });
 }

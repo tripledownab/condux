@@ -32,7 +32,7 @@ x-object-store-env: &object-store-env
 
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.7-alpine
     restart: unless-stopped
     # Each binding is a variable for the reason the note above gives: concatenation means a later file
     # can only ADD a published port, never take one away, so a variable in the file that declares the
@@ -87,12 +87,37 @@ services:
     # their bind-mounted data dirs on startup, so those stay bind mounts for easy backups; Redpanda's log
     # is a rebuildable buffer, not something you back up.)
     volumes: ["redpanda-data:/var/lib/redpanda/data"]
+    # A BUDGET INSIDE A LIMIT. Dev-container mode passes --reserve-memory=0M and no --memory, so with
+    # neither Seastar budgets the whole host. --memory sets its budget outright, the container limit sits
+    # above it for what Seastar does not allocate, and memswap_limit equal to the limit means no swap.
+    # The command restates the base file's, because Compose replaces a command whole and cannot append to
+    # one; check-redpanda-budget.py refuses a render where the two differ by anything but --memory, and
+    # both CI and the deploy run it.
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=warn
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --memory=5600M
+    deploy: { resources: { limits: { memory: 7g } } }
+    memswap_limit: 7g
 
   valkey:
     restart: unless-stopped
 
   relay:
     restart: unless-stopped # reached via Caddy at ingest.condux.ai
+    environment:
+      # Caddy's X-Forwarded-For names the client (it replaces the header for any client it does not
+      # trust), so a body is charged to that client rather than to Caddy. Caddy sits on this project's
+      # Docker network, whose subnets Docker allocates from its default address pools and, for IPv6, from
+      # fd00::/8, so those ranges are trusted rather than subnets that change when the network is
+      # recreated. Caddy may reach the relay over either family. The relay is published on loopback only,
+      # so its peers are the containers on this network, whatever else those ranges hold elsewhere.
+      CONDUX_TRUSTED_PROXIES: ${CONDUX_TRUSTED_PROXIES:-172.16.0.0/12,192.168.0.0/16,fd00::/8}
 
   controlplane:
     restart: unless-stopped # reached via Caddy at app.condux.ai/api
@@ -168,12 +193,32 @@ services:
       # absolute URL the control-plane uses (the dev base default in docker-compose.yml points at localhost).
       CONDUX_APP_BASE_URL: ${CONDUX_APP_BASE_URL:-https://app.condux.ai}
       <<: *object-store-env
+      # The consumer only reads the bucket and handles untrusted events, so when .env.prod has a read key
+      # it gets that key IN PLACE of the shared one, which can write and delete. Unset, it gets the shared
+      # key. Set both halves or neither. Half a pair fails every read and still keeps the shared secret
+      # out: with only the read access key set, the secret falls back to that access key id, which is not
+      # a secret, rather than to the shared secret (Compose evaluates ${VAR:?} even in a branch it does not
+      # take, so it cannot refuse the half pair outright).
+      CONDUX_S3_ACCESS_KEY: ${CONDUX_S3_READ_ACCESS_KEY:-${CONDUX_S3_ACCESS_KEY:-}}
+      CONDUX_S3_SECRET_KEY: ${CONDUX_S3_READ_SECRET_KEY:-${CONDUX_S3_READ_ACCESS_KEY:-${CONDUX_S3_SECRET_KEY:-}}}
 
   conductor:
     restart: unless-stopped
 
   symbolizer:
     restart: unless-stopped # reached only over its internal network, never through Caddy
+
+networks:
+  # IPv6 on the network Caddy publishes from, so an IPv6 client reaches it with its own address. On an
+  # IPv4-only network Docker serves the host's IPv6 ports through its userland proxy, which connects to
+  # the container from the bridge gateway, so every IPv6 client would arrive as that one address. With
+  # no subnet given, Docker allocates a unique local /64 from fd00::/8. An existing network cannot gain
+  # IPv6 in place, and a deploy cannot recreate it: the deploy runs the migrations on their own first
+  # (apply-migrations.sh), Compose stops only Postgres, and removing the network then fails while the
+  # rest of the stack holds it, leaving the database disconnected. A box whose network predates this
+  # needs the stack taken down once (never with -v) before that deploy.
+  default:
+    enable_ipv6: true
 
 volumes:
   redpanda-data:

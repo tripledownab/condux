@@ -5,10 +5,12 @@
 
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import type { FrameLink } from "@/src/api/generated/model";
 import { formatTimestamp } from "@/src/lib/time";
+import { toAgentFailure } from "./agent-failure";
 import type { ParsedEvent } from "./event-payload";
 import { primaryException } from "./event-payload";
-import { type FrameUrlResolver, StackTrace } from "./stack-trace";
+import { StackTrace } from "./stack-trace";
 
 // The structured body of one sampled event: metadata chips, the stack trace (newest frame first,
 // in-app frames highlighted), and the breadcrumb trail. Rendered from the parsed payload. The pieces
@@ -27,14 +29,14 @@ export function EventDetail({ event }: { event: ParsedEvent }) {
 // chart between them).
 export function EventEvidence({
   event,
-  frameUrl,
+  links,
 }: {
   event: ParsedEvent;
-  frameUrl?: FrameUrlResolver;
+  links?: readonly FrameLink[];
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <StackTrace event={event} frameUrl={frameUrl} />
+      <StackTrace event={event} links={links} />
       <Breadcrumbs event={event} />
     </div>
   );
@@ -77,8 +79,12 @@ export function EventChips({ event, leading }: { event: ParsedEvent; leading?: R
   if (event.transaction) {
     chips.push({ key: "transaction", label: event.transaction });
   }
+  // An agent failure's own tags are shown in its block on the rail, so they are not repeated here.
+  const shownElsewhere = toAgentFailure(event)?.shownTags;
   for (const [name, value] of Object.entries(event.tags)) {
-    chips.push({ key: `tag-${name}`, label: `${name}: ${value}` });
+    if (!shownElsewhere?.has(name)) {
+      chips.push({ key: `tag-${name}`, label: `${name}: ${value}` });
+    }
   }
   if (event.sdkName) {
     chips.push({ key: "sdk", label: `${event.sdkName} ${event.sdkVersion ?? ""}`.trim() });

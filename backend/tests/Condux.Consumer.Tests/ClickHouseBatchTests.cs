@@ -9,7 +9,7 @@ public class ClickHouseBatchTests
 {
     /// <summary>
     /// Records the table each insert targeted, in order, and can be told to fail one of them. All
-    /// three writers share one handler so the ordering across them is observable in a single list.
+    /// the writers share one handler so the ordering across them is observable in a single list.
     /// </summary>
     private sealed class RecordingHandler : HttpMessageHandler
     {
@@ -43,12 +43,15 @@ public class ClickHouseBatchTests
     private static IssueStatsRow Stats() =>
         ClickHouseIssueStatsWriter.ToRow("7", 1, DateTimeOffset.UnixEpoch);
 
+    private static IssueReceivedRow Received() =>
+        ClickHouseIssueStatsWriter.ToReceivedRow("7", 1, DateTimeOffset.UnixEpoch);
+
     private static ReleaseModuleRow Module() =>
         new("7", "1.4.2", "production", "npm", "lodash", "4.17.11", 1788436800, 90);
 
     private static EventRow EventRow() =>
         new("7", 1, "abc", 1788436800000, "error", "javascript", "production", "1.4.2",
-            "", "", "boom", "Error", "boom", "fp", [], "{}", 90, "");
+            "", "", "boom", "Error", "boom", "fp", [], "{}", 90, "", 1788436800000);
 
     /// <summary>
     /// The ingest pipeline is written before the advisory extra, because an insert that throws ends
@@ -60,12 +63,53 @@ public class ClickHouseBatchTests
         var (batch, handler) = Build();
         batch.AddStats(Stats());
         batch.AddEvent(EventRow());
+        batch.AddReceived(Received());
         batch.AddModules([Module()]);
 
         await batch.FlushAsync(CancellationToken.None);
 
         Assert.Equal(
-            ["condux.issue_stats_1h", "condux.events", "condux.release_modules"], handler.Inserted);
+            ["condux.issue_stats_1h", "condux.events", "condux.issue_received_1h", "condux.release_modules"],
+            handler.Inserted);
+    }
+
+    /// <summary>
+    /// The receipt-time rollup feeds only the weekly digest and arrives in a migration of its own, so a
+    /// missing table must cost only the digest's counts: the stats and the events land, and the retry sends
+    /// only what did not. It is a sum too, so resending the stats would inflate the charts for good.
+    /// </summary>
+    [Fact]
+    public async Task AMissingReceiptTableDoesNotStallOrResendTheIngestWrites()
+    {
+        var (batch, handler) = Build();
+        handler.FailFor = "condux.issue_received_1h";
+        batch.AddStats(Stats());
+        batch.AddEvent(EventRow());
+        batch.AddReceived(Received());
+        batch.AddModules([Module()]);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => batch.FlushAsync(CancellationToken.None));
+        Assert.Equal(["condux.issue_stats_1h", "condux.events", "condux.issue_received_1h"], handler.Inserted);
+
+        handler.FailFor = null;
+        handler.Inserted.Clear();
+        await batch.FlushAsync(CancellationToken.None);
+        Assert.Equal(["condux.issue_received_1h", "condux.release_modules"], handler.Inserted);
+    }
+
+    /// <summary>Receipt rows left behind by a failed flush, with every other buffer empty, still ask for
+    /// the retry, or a topic that went quiet would never write them.</summary>
+    [Fact]
+    public async Task StillAsksToFlushWhenOnlyReceiptRowsAreLeft()
+    {
+        var (batch, handler) = Build();
+        handler.FailFor = "condux.issue_received_1h";
+        batch.AddStats(Stats());
+        batch.AddReceived(Received());
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => batch.FlushAsync(CancellationToken.None));
+
+        Assert.True(batch.ShouldFlush(idle: true));
     }
 
     /// <summary>

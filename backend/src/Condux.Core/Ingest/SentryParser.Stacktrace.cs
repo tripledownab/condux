@@ -12,8 +12,8 @@ public static partial class SentryParser
 {
     // mechanism.handled distinguishes an unhandled crash from a caught-and-reported error; absent = null.
     private static bool? ParseHandled(JsonElement exItem) =>
-        exItem.TryGetProperty("mechanism", out var mechanism) && mechanism.ValueKind == JsonValueKind.Object
-        && mechanism.TryGetProperty("handled", out var handled)
+        exItem.TryGetMember("mechanism", out var mechanism) && mechanism.ValueKind == JsonValueKind.Object
+        && mechanism.TryGetMember("handled", out var handled)
         && handled.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? handled.GetBoolean()
             : null;
@@ -22,7 +22,7 @@ public static partial class SentryParser
     /// shape so nested structures survive as readable text.</summary>
     private static IReadOnlyDictionary<string, string> ParseVars(JsonElement frame)
     {
-        if (!frame.TryGetProperty("vars", out var vars) || vars.ValueKind != JsonValueKind.Object)
+        if (!frame.TryGetMember("vars", out var vars) || vars.ValueKind != JsonValueKind.Object)
         {
             return new Dictionary<string, string>();
         }
@@ -91,11 +91,11 @@ public static partial class SentryParser
 
     private static Stacktrace? ParseStacktrace(JsonElement exItem)
     {
-        if (!exItem.TryGetProperty("stacktrace", out var st) || st.ValueKind != JsonValueKind.Object)
+        if (!exItem.TryGetMember("stacktrace", out var st) || st.ValueKind != JsonValueKind.Object)
         {
             return null;
         }
-        if (!st.TryGetProperty("frames", out var frames) || frames.ValueKind != JsonValueKind.Array)
+        if (!st.TryGetMember("frames", out var frames) || frames.ValueKind != JsonValueKind.Array)
         {
             return new Stacktrace();
         }
@@ -132,8 +132,8 @@ public static partial class SentryParser
     // debug_meta or image, and an image_size that is not a positive whole number.
     private static IReadOnlyList<DebugImage> ParseDebugImages(JsonElement root)
     {
-        if (!root.TryGetProperty("debug_meta", out var meta) || meta.ValueKind != JsonValueKind.Object
-            || !meta.TryGetProperty("images", out var images) || images.ValueKind != JsonValueKind.Array)
+        if (!root.TryGetMember("debug_meta", out var meta) || meta.ValueKind != JsonValueKind.Object
+            || !meta.TryGetMember("images", out var images) || images.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -163,7 +163,7 @@ public static partial class SentryParser
     // string in the pe one, so both are read. Anything that is not a positive whole number reads as absent.
     private static long? ParseImageSize(JsonElement image)
     {
-        if (!image.TryGetProperty("image_size", out var size))
+        if (!image.TryGetMember("image_size", out var size))
         {
             return null;
         }

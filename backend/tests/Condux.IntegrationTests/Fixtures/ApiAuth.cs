@@ -27,7 +27,7 @@ public static class ApiAuth
     {
         var resp = await client.PostAsJsonAsync("/api/auth/login",
             new { email, password = ControlPlaneApp.SeededAdminPassword });
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         return new SignedUpUser(body.GetProperty("id").GetInt64(), email);
     }
@@ -36,7 +36,7 @@ public static class ApiAuth
     {
         var resp = await client.PostAsJsonAsync("/api/auth/signup",
             new { email, password = "test-password-123" });
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         return new SignedUpUser(body.GetProperty("id").GetInt64(), email);
     }

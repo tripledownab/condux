@@ -23,7 +23,7 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class GithubConnectEndpoints
 {
-    // The selection token outlives the connect state (GithubConnectFlow) slightly, because the user has to
+    // The selection token outlives the connect state (ConnectFlow) slightly, because the user has to
     // read a list and choose.
     private static readonly TimeSpan SelectionLifetime = TimeSpan.FromMinutes(30);
 
@@ -41,8 +41,9 @@ internal static class GithubConnectEndpoints
                         return TypedResults.NotFound();
                     }
 
-                    var state = GithubConnectFlow.Start(
-                        http, orgId, SafeReturnPath(req.ReturnPath), config, installed: false);
+                    var state = ConnectFlow.Start(
+                        http, ConnectFlow.GitHub, config.Options!.WebhookSecret, orgId,
+                        ConnectFlow.SafeReturnPath(req.ReturnPath), installed: false);
                     return TypedResults.Ok(new GithubConnectResponse(
                         oauth.AuthorizeUrl(config.Options!.ClientId, config.OAuthRedirectUri!, state)));
                 })
@@ -61,7 +62,7 @@ internal static class GithubConnectEndpoints
                         return TypedResults.NotFound();
                     }
 
-                    if (GithubConnectFlow.Verify(http, config) is not { } state)
+                    if (ConnectFlow.Verify(http, ConnectFlow.GitHub, config.Options!.WebhookSecret) is not { } state)
                     {
                         // No verified state means no org to act for, so there is nowhere safe to return to.
                         return TypedResults.Redirect(DashboardUrl(cfg, "/", "failed"));
@@ -98,8 +99,9 @@ internal static class GithubConnectEndpoints
                     {
                         return TypedResults.Redirect(state.Installed
                             ? DashboardUrl(cfg, state.ReturnPath, "pending")
-                            : InstallUrl(config, GithubConnectFlow.Start(
-                                http, state.OrgId, state.ReturnPath, config, installed: false)));
+                            : InstallUrl(config, ConnectFlow.Start(
+                                http, ConnectFlow.GitHub, config.Options!.WebhookSecret, state.OrgId,
+                                state.ReturnPath, installed: false)));
                     }
 
                     if (reachable.Count == 1)
@@ -152,24 +154,6 @@ internal static class GithubConnectEndpoints
     private static string InstallUrl(GitHubAppConfig config, string state) =>
         $"https://github.com/apps/{config.AppSlug}/installations/new?state={Uri.EscapeDataString(state)}";
 
-    /// <summary>
-    /// Where to send the browser after a connect leg: the dashboard's base URL plus the in-app path the flow
-    /// started from, flagged with the outcome so the page can report it.
-    /// </summary>
-    internal static string DashboardUrl(IConfiguration cfg, string returnPath, string outcome)
-    {
-        var separator = returnPath.Contains('?') ? "&" : "?";
-        return $"{AppUrls.BaseUrl(cfg)}{returnPath}{separator}github={outcome}";
-    }
-
-    /// <summary>
-    /// Only a same-origin relative path may be echoed back through the connect state (an open-redirect
-    /// guard): it must be a single leading slash, no protocol-relative "//" and no backslash. Anything
-    /// else falls back to home.
-    /// </summary>
-    internal static string SafeReturnPath(string? path) =>
-        !string.IsNullOrEmpty(path) && path.Length <= 512 && path[0] == '/'
-        && !path.StartsWith("//", StringComparison.Ordinal) && !path.Contains('\\')
-            ? path
-            : "/";
+    private static string DashboardUrl(IConfiguration cfg, string returnPath, string outcome) =>
+        ConnectFlow.DashboardUrl(cfg, ConnectFlow.GitHub, returnPath, outcome);
 }

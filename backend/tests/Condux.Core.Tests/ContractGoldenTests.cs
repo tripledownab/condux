@@ -72,8 +72,11 @@ public class ContractGoldenTests
     {
         // sentry-android 8.58.0's Sentry.captureException, captured from a device and trimmed of its
         // device contexts. The event carries no level key at all, and the protocol defaults it to error.
-        var e = SentryParser.ParseEnvelope(Load("android-exception-envelope.txt")).Event!;
+        var result = SentryParser.ParseEnvelope(Load("android-exception-envelope.txt"));
+        var e = result.Event!;
 
+        // The envelope header's sent_at, which the consumer reads to correct the device's clock drift.
+        Assert.Equal(DateTimeOffset.Parse("2026-09-30T15:26:14.295Z").ToUnixTimeMilliseconds(), result.SentAtUnixMs);
         Assert.Equal(Level.Error, e.Level);
         Assert.Equal("java", e.Platform);
         Assert.Equal("IllegalStateException", Assert.Single(e.Exceptions).Type);
@@ -206,6 +209,26 @@ public class ContractGoldenTests
             """{"event_id":"f00"}""",
             """{"type":"event","length":9999}""",
             """{"message":"boom","level":"error"}""");
+
+        var result = SentryParser.ParseEnvelope(body);
+
+        Assert.Equal(ParseOutcome.Parsed, result.Outcome);
+        Assert.Equal("boom", result.Event!.Message);
+    }
+
+    // A length near int.MaxValue used to overflow the end of the item, which then indexed the body below
+    // zero and threw out of the parser as a 500. It is a lying length like any other, on any item.
+    [Theory]
+    [InlineData("""{"type":"event","length":2147483647}""")]
+    [InlineData("""{"type":"attachment","length":2147483600}""")]
+    public void Envelope_WithALengthPastAnyBody_StillFindsTheEvent(string lyingHeader)
+    {
+        var body = string.Join('\n',
+            """{"event_id":"f00"}""",
+            lyingHeader,
+            lyingHeader.Contains("event") ? """{"message":"boom"}""" : "xx",
+            """{"type":"event"}""",
+            """{"message":"boom"}""");
 
         var result = SentryParser.ParseEnvelope(body);
 

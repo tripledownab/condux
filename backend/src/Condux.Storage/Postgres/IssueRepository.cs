@@ -38,13 +38,13 @@ public sealed class IssueRepository(string connectionString)
     // New issues get a UUIDv7 (time-ordered) as their public id; on conflict the existing public_id
     // is preserved (it is not in the DO UPDATE set). A new event on a resolved issue (status 2) reopens
     // it — a regression. The `prior` CTE captures the pre-upsert status (NULL when the row is new) so
-    // RETURNING can report the reopen without a second round trip.
+    // RETURNING can report the reopen without a second round trip. created_at is left to its default, now().
     private const string UpsertSql = """
         WITH prior AS (
             SELECT status FROM issues WHERE project_id = @project AND fingerprint = @fp
         )
         INSERT INTO issues (project_id, fingerprint, title, culprit, level, first_seen, last_seen, event_count, public_id, first_release, activated_at)
-        VALUES (@project, @fp, @title, @culprit, @level, @seen, @seen, 1, @public_id, @release, @seen)
+        VALUES (@project, @fp, @title, @culprit, @level, @seen, @seen, 1, @public_id, @release, now())
         ON CONFLICT (project_id, fingerprint) DO UPDATE
           SET event_count = issues.event_count + 1,
               last_seen   = GREATEST(issues.last_seen, EXCLUDED.last_seen),
@@ -53,8 +53,12 @@ public sealed class IssueRepository(string connectionString)
               level       = EXCLUDED.level,
               status      = CASE WHEN issues.status = 2 THEN 1 ELSE issues.status END,
               -- Re-activate on a regression (a resolved issue reopening) so the new-issues badge counts it
-              -- again; an ordinary repeat event leaves activated_at untouched (ADR-0030).
-              activated_at = CASE WHEN issues.status = 2 THEN EXCLUDED.last_seen ELSE issues.activated_at END,
+              -- again; an ordinary repeat event leaves activated_at untouched (ADR-0030). Both stamps are the
+              -- time Condux processed the event, never the event's own: that is the sender's claim, and a
+              -- late one would land behind the user's last view and never reach the badge.
+              activated_at = CASE WHEN issues.status = 2 THEN now() ELSE issues.activated_at END,
+              -- The reopen itself, which the weekly digest counts as a regression.
+              reopened_at = CASE WHEN issues.status = 2 THEN now() ELSE issues.reopened_at END,
               -- A regression clears the resolution stamp (the issue is open again); the weekly digest counts
               -- resolved_at within the week (ADR-0031).
               resolved_at = CASE WHEN issues.status = 2 THEN NULL ELSE issues.resolved_at END,
@@ -210,7 +214,7 @@ public sealed class IssueRepository(string connectionString)
     }
 
     /// <summary>The week's issue movement across the given projects (an org's), computed in one grouped
-    /// query: new (first_seen in window), regressed (reactivated in window but first seen before it),
+    /// query: new (created in window), regressed (reopened in window but created before it),
     /// resolved (resolved_at in window), and the current open (status 1) count. Zeros for an empty project
     /// set (so an org with no projects is a cheap no-op, no <c>ANY</c> over an empty array).</summary>
     public async Task<WeeklyIssueCounts> WeeklyIssueCountsAsync(
@@ -222,14 +226,24 @@ public sealed class IssueRepository(string connectionString)
             return default;
         }
 
+        // created_at is NULL only on a row from before migration 0065, which also left reopened_at NULL. Such
+        // a row is read by the rule that applied when it was written: created at first_seen, and reopened at
+        // activated_at once that had moved past first_seen, which only a reopen did.
         const string sql = """
             SELECT
-                count(*) FILTER (WHERE first_seen >= @start AND first_seen < @end) AS new_issues,
-                count(*) FILTER (WHERE activated_at >= @start AND activated_at < @end AND first_seen < @start) AS regressed,
+                count(*) FILTER (WHERE created >= @start AND created < @end) AS new_issues,
+                count(*) FILTER (WHERE reopened >= @start AND reopened < @end AND created < @start) AS regressed,
                 count(*) FILTER (WHERE resolved_at >= @start AND resolved_at < @end) AS resolved,
                 count(*) FILTER (WHERE status = 1) AS open_now
-            FROM issues
-            WHERE project_id = ANY(@projects);
+            FROM (
+                SELECT status, resolved_at,
+                       COALESCE(created_at, first_seen) AS created,
+                       COALESCE(reopened_at,
+                                CASE WHEN created_at IS NULL AND activated_at > first_seen THEN activated_at END)
+                           AS reopened
+                FROM issues
+                WHERE project_id = ANY(@projects)
+            ) i;
             """;
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);

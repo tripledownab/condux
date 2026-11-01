@@ -30,31 +30,17 @@ public sealed class ClickHouseRetentionTest(ClickHouseFixture ch) : IClassFixtur
             Message = "boom",
             TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         };
-        await writer.InsertAsync([ClickHouseEventWriter.ToRow("42", 7UL, e, "fp-ret", freeRetention)]);
+        await writer.InsertAsync([ClickHouseEventWriter.ToRow("42", 7UL, e, "fp-ret", freeRetention, DateTimeOffset.UtcNow)]);
 
         // The row carries the tier's retention, stamped at ingest.
-        var stored = await QueryAsync("SELECT retention_days FROM condux.events WHERE project_id = '42'");
+        var stored = await ch.QueryAsync("SELECT retention_days FROM condux.events WHERE project_id = '42'");
         Assert.Equal(freeRetention.ToString(CultureInfo.InvariantCulture), stored.Trim());
 
         // The table TTL references the column (per-row), not a flat interval — this is what makes ClickHouse
         // expire each event on its tier's schedule with no scheduler.
-        var ddl = await QueryAsync(
+        var ddl = await ch.QueryAsync(
             "SELECT create_table_query FROM system.tables WHERE database = 'condux' AND name = 'events'");
         Assert.Contains("TTL", ddl);
         Assert.Contains("retention_days", ddl);
-    }
-
-    private async Task<string> QueryAsync(string sql)
-    {
-        using var http = new HttpClient();
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{ch.BaseUrl}/")
-        {
-            Content = new StringContent(sql),
-        };
-        req.Headers.Add("X-ClickHouse-User", ch.ChUser);
-        req.Headers.Add("X-ClickHouse-Key", ch.ChPassword);
-        using var resp = await http.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync();
     }
 }

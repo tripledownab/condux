@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using Condux.ControlPlane.Auth;
 using Condux.Core.Auth;
 using Condux.Core.Events;
@@ -15,14 +14,16 @@ namespace Condux.ControlPlane.Endpoints;
 /// <summary>
 /// Suggested code mappings (#113): derives <c>stackRoot → sourceRoot</c> rules by matching the in-app frame
 /// paths of a project's recent events, read the way the issue page shows them, against the linked repo's
-/// file tree. Best-effort: anything missing or failing yields no suggestions rather than an error.
+/// file tree. Best-effort: anything missing or failing yields no suggestions rather than an error, with an
+/// outcome (<see cref="MappingSuggestions"/>) saying which, so the dashboard can tell "connect GitHub" from
+/// "nothing to add" from "try again".
 /// </summary>
 internal static class RepoSuggestionEndpoints
 {
     public static void MapRepoSuggestionEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/projects/{projectId:long}/repos/{repoId:guid}/suggested-mappings",
-                async Task<Results<Ok<IReadOnlyList<DerivedMapping>>, NotFound>> (
+                async Task<Results<Ok<MappingSuggestions>, NotFound>> (
                     long projectId, Guid repoId, HttpContext http, RepoLinkRepository repos,
                     ProjectRepository projects, GithubInstallationRepository installations,
                     ClickHouseEventReader events, EventSymbolication symbolication,
@@ -41,7 +42,7 @@ internal static class RepoSuggestionEndpoints
                     var installs = await installations.GetByOrgAsync(project.OrgId, http.RequestAborted);
                     if (tokens is null || repoClient is null || installs.Count == 0)
                     {
-                        return TypedResults.Ok<IReadOnlyList<DerivedMapping>>([]);
+                        return TypedResults.Ok(MappingSuggestions.None(MappingSuggestions.NotConnected));
                     }
 
                     var logger = loggerFactory.CreateLogger(nameof(RepoSuggestionEndpoints));
@@ -59,12 +60,16 @@ internal static class RepoSuggestionEndpoints
                         // stored frames, which only means fewer suggestions.
                         var recent = await symbolication.SymbolicateAsync(projectId, sampled, http.RequestAborted);
 
-                        var derived = CodeMappingDeriver.Derive(InAppFramePaths(recent), tree);
-                        // Do not re-suggest a stackRoot that is already mapped.
-                        var existing = (await repos.ListCodeMappingsAsync(repoId, http.RequestAborted))
-                            .Select(mapping => mapping.StackRoot).ToHashSet();
-                        return TypedResults.Ok<IReadOnlyList<DerivedMapping>>(
-                            [.. derived.Where(suggestion => !existing.Contains(suggestion.StackRoot))]);
+                        // One read of the project's mappings: this repo's are what a suggestion may duplicate,
+                        // and the others' stack roots are what it may tie with.
+                        var projectMappings = await repos.ListProjectCodeMappingsAsync(projectId, http.RequestAborted);
+                        var existing = projectMappings.Where(mapping => mapping.RepoLinkId == repoId).ToList();
+                        var mappedElsewhere = projectMappings
+                            .Where(mapping => mapping.RepoLinkId != repoId)
+                            .Select(mapping => mapping.StackRoot)
+                            .ToList();
+                        return TypedResults.Ok(
+                            CodeMappingDeriver.Suggest(InAppFramePaths(recent), tree, existing, mappedElsewhere));
                     }
                     // Only the caller hanging up passes through: a timed-out GitHub or ClickHouse call is a
                     // TaskCanceledException too, and it is exactly the hiccup this should absorb.
@@ -72,35 +77,28 @@ internal static class RepoSuggestionEndpoints
                     {
                         // Advisory feature: a GitHub/ClickHouse hiccup yields no suggestions, never a 500.
                         logger.LogWarning(ex, "suggest-mappings failed project={ProjectId} repo={RepoId}", projectId, repoId);
-                        return TypedResults.Ok<IReadOnlyList<DerivedMapping>>([]);
+                        return TypedResults.Ok(MappingSuggestions.None(MappingSuggestions.Unavailable));
                     }
                 })
             .WithName("suggestedMappings").WithTags("Repos")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));
     }
 
-    // Default options match the ClickHouse writer's JsonSerializer.Serialize(event) (PascalCase), so a
-    // stored payload round-trips back to an Event.
-    private static readonly JsonSerializerOptions PayloadJson = new();
+    // The most distinct frame paths one suggestion considers. Whoever holds the DSN chooses how many frames
+    // an event carries, and the work of choosing the rules grows with paths and rules together, so it is
+    // bounded here.
+    private const int MaxFramePaths = 500;
 
-    // Distinct in-app stack-frame file paths across a sample of stored events: the runtime paths the
-    // deriver matches against the repo tree. Library frames (not in-app) and unreadable payloads are skipped.
+    // Distinct in-app stack-frame file paths across a sample of stored events, at most MaxFramePaths: the
+    // runtime paths the deriver matches against the repo tree. Library frames (not in-app) and unreadable
+    // payloads are skipped.
     private static IReadOnlyList<string> InAppFramePaths(IReadOnlyList<StoredEvent> events)
     {
         var paths = new List<string>();
         var seen = new HashSet<string>();
         foreach (var stored in events)
         {
-            Event? sample;
-            try
-            {
-                sample = JsonSerializer.Deserialize<Event>(stored.Payload, PayloadJson);
-            }
-            catch (JsonException)
-            {
-                continue;
-            }
-            if (sample is null)
+            if (stored.ToEvent() is not { } sample)
             {
                 continue;
             }
@@ -112,6 +110,10 @@ internal static class RepoSuggestionEndpoints
                     if (frame.InApp && !string.IsNullOrEmpty(frame.Filename) && seen.Add(frame.Filename))
                     {
                         paths.Add(frame.Filename);
+                        if (paths.Count == MaxFramePaths)
+                        {
+                            return paths;
+                        }
                     }
                 }
             }

@@ -73,7 +73,7 @@ public sealed class BillingApiTest(PostgresFixture pg) : IClassFixture<PostgresF
         await ApiAuth.SignUpAsync(client);
         var resp = await client.PostAsJsonAsync("/api/orgs",
             new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var orgId = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
         await OrgSeed.SetTierAsync(pg.ConnectionString, orgId, 0);
         return (client, orgId);

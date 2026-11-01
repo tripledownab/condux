@@ -4,8 +4,8 @@
 --   * ZSTD compression everywhere; LowCardinality for low-arity columns;
 --     DoubleDelta for timestamps.
 --   * Raw events expire via TTL (90d default) — tune per retention tier.
---   * A rollup materialized view keeps per-issue/per-hour counts so dashboards
---     query the small aggregate table, letting raw events expire sooner.
+--   * A per-issue, per-hour rollup table keeps counts so dashboards query the small
+--     aggregate table, letting raw events expire sooner.
 
 CREATE DATABASE IF NOT EXISTS condux;
 
@@ -57,15 +57,7 @@ PARTITION BY toYYYYMM(bucket)
 ORDER BY (project_id, issue_id, bucket)
 TTL bucket + INTERVAL 365 DAY;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS condux.issue_stats_1h_mv
-TO condux.issue_stats_1h
-AS
-SELECT
-    project_id,
-    issue_id,
-    toStartOfHour(timestamp) AS bucket,
-    count()        AS count,
-    min(timestamp) AS first_seen,
-    max(timestamp) AS last_seen
-FROM condux.events
-GROUP BY project_id, issue_id, bucket;
+-- The consumer writes this table's counts itself, one row for every event (0003). The materialized view
+-- this file used to create over condux.events is gone: every deploy replays every file, so a view created
+-- here and dropped by 0003 existed again between the two, and counted a second time any event a running
+-- consumer stored in that window.

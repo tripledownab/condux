@@ -4,19 +4,19 @@
 // context and locals, library frames as one dim line each. event-detail.tsx places it on the page.
 
 import { useTranslations } from "next-intl";
-import type { ParsedEvent, ParsedFrame } from "./event-payload";
+import type { FrameLink } from "@/src/api/generated/model";
+import type { ParsedEvent } from "./event-payload";
 import { primaryException, toFrameLabels } from "./event-payload";
-
-// Resolves a frame to its GitHub blob URL; null when no repo/mapping covers it.
-export type FrameUrlResolver = (frame: ParsedFrame) => string | null;
 
 // Newest (crashing) frame first, like Sentry; in-app frames carry the accent border and full opacity.
 export function StackTrace({
   event,
-  frameUrl,
+  links = [],
 }: {
   event: ParsedEvent;
-  frameUrl?: FrameUrlResolver;
+  // The server's GitHub link for each frame that has one, by the frame's position in stored order
+  // (oldest first). The server resolves the code mappings, so the browser holds no copy of the rule.
+  links?: readonly FrameLink[];
 }) {
   const translate = useTranslations("issues.event");
   const primary = primaryException(event);
@@ -27,8 +27,9 @@ export function StackTrace({
   // A stack is render-only and positional: the same frame can repeat (recursion), so the position is
   // part of each row's identity, stamped here rather than taken from the map callback. Source lines
   // are keyed by their absolute line number, derived from the culprit's lineno.
+  const urlByFrame = new Map(links.map((link) => [link.frame, link.url]));
   const frames = [...primary.frames].reverse().map((frame, position) => {
-    const url = frameUrl?.(frame) ?? null;
+    const url = urlByFrame.get(primary.frames.length - 1 - position) ?? null;
     const before = frame.contextBefore.map((text, offset) => ({
       key: `pre-${frame.lineno - frame.contextBefore.length + offset}`,
       number: frame.lineno > 0 ? frame.lineno - frame.contextBefore.length + offset : 0,

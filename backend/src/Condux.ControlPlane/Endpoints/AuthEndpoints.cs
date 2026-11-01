@@ -92,7 +92,9 @@ internal static class AuthEndpoints
                     {
                         // One 401 for an unknown email, a wrong password, a federated (no-password)
                         // account and an account in its cooldown. The gate makes them cost the same too,
-                        // so the four are not separable by a stopwatch either.
+                        // so the four are not separable by a stopwatch either. Nor by the challenge, which is
+                        // the same Password for all four.
+                        AuthChallenge.UseScheme(http, AuthChallenge.Password);
                         return TypedResults.Unauthorized();
                     }
 

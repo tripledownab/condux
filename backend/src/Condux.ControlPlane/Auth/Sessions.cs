@@ -49,6 +49,8 @@ internal static class Sessions
     public static async Task<User?> ReauthenticateAsync(
         HttpContext http, UserRepository users, string? password)
     {
+        // Every caller is behind RequireAuthorization, so the session was accepted: a 401 now is the password.
+        AuthChallenge.UseScheme(http, AuthChallenge.Password);
         var user = await users.GetByIdAsync(OrgAuthorization.CurrentUserId(http.User), http.RequestAborted);
         return await PasswordGate.VerifyAsync(user, password, users, http.RequestAborted);
     }

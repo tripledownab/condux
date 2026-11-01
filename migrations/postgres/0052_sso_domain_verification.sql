@@ -23,9 +23,11 @@ ALTER TABLE sso_configs
 ALTER TABLE sso_configs ALTER COLUMN verification_token DROP DEFAULT;
 
 -- verified_at is added and backfilled together, guarded on its own absence, so the grandfathering runs
--- exactly once in the life of a database. deploy/migrations/run.sh replays EVERY file on every upgrade,
--- so a plain `UPDATE ... WHERE verified_at IS NULL` would hand verification to every provisional claim
--- in the database on the next deploy, a squatter's included, and undo the whole of this migration.
+-- exactly once in the life of a database. A file runs again whenever the migration files change other
+-- than by new ones sorting last (deploy/migrations/apply-postgres.sh; until that kept a ledger, every
+-- file ran on every upgrade), so a plain `UPDATE ... WHERE verified_at IS NULL` would hand verification
+-- to every provisional claim in the database on such a deploy, a squatter's included, and undo the whole
+-- of this migration.
 -- Postgres runs DDL transactionally, so the column and the backfill land together or not at all.
 --
 -- Grandfathering itself is ADR-0043's decision: a self-hoster with working SSO would otherwise have it

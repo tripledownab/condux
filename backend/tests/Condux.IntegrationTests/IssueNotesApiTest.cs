@@ -68,6 +68,30 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
         Assert.Equal("note_body_required", error.GetProperty("error").GetString());
     }
 
+    /// <summary>
+    /// U+0000 is valid JSON text and Postgres text refuses it, so a note or an issue search carrying one
+    /// threw in the repository and answered 500, reported as Condux's own fault. It is the caller's text,
+    /// so it is the caller's 400, and nothing is stored.
+    /// </summary>
+    [Fact]
+    public async Task Refuses_text_postgres_cannot_store_as_the_callers_mistake()
+    {
+        var (client, _, projectId, issueId) = await ProvisionWithIssueAsync();
+
+        var note = await client.PostAsJsonAsync(
+            $"/api/projects/{projectId}/issues/{issueId}/notes", new { body = "a\0b" });
+        var search = await client.GetAsync($"/api/projects/{projectId}/issues?q=a%00b");
+
+        foreach (var resp in new[] { note, search })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+            var error = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("text_not_storable", error.GetProperty("error").GetString());
+        }
+        Assert.Equal(0, (await client.GetFromJsonAsync<JsonElement>(
+            $"/api/projects/{projectId}/issues/{issueId}/notes")).GetArrayLength());
+    }
+
     [Fact]
     public async Task Hides_notes_from_non_members()
     {
@@ -94,7 +118,7 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
         var invite = await owner.PostAsJsonAsync($"/api/orgs/{orgId}/invites",
             new { email = memberUser.Email, role = "member" });
         var token = (await invite.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessStatusCode();
+        await (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessAsync();
 
         // The member is neither the author nor an admin → forbidden, and the note survives.
         var del = await member.DeleteAsync($"{basePath}/{noteId}");
@@ -116,7 +140,7 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
         var agent = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         agent.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", raw);
-        (await agent.PostAsJsonAsync("/api/mcp", new
+        await (await agent.PostAsJsonAsync("/api/mcp", new
         {
             jsonrpc = "2.0",
             id = 1,
@@ -126,7 +150,7 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
                 name = "add_issue_note",
                 arguments = new { issueId = issueId.ToString(), body = "agent note" },
             },
-        })).EnsureSuccessStatusCode();
+        })).EnsureSuccessAsync();
 
         var created = (await owner.GetFromJsonAsync<JsonElement>(basePath))[0];
         var noteId = created.GetProperty("id").GetString();
@@ -139,7 +163,7 @@ public sealed class IssueNotesApiTest(PostgresFixture pg) : IClassFixture<Postgr
         var invite = await owner.PostAsJsonAsync($"/api/orgs/{orgId}/invites",
             new { email = memberUser.Email, role = "member" });
         var token = (await invite.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessStatusCode();
+        await (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessAsync();
 
         Assert.Equal(HttpStatusCode.Forbidden, (await member.DeleteAsync($"{basePath}/{noteId}")).StatusCode);
 

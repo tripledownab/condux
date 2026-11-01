@@ -25,7 +25,7 @@ public sealed class ReleaseRepository(string connectionString)
         """;
 
     public async Task<Release> RecordAsync(
-        long projectId, Guid repoLinkId, string version, string commitSha, CancellationToken cancellationToken = default)
+        long projectId, Guid repoLinkId, RecordableRelease release, CancellationToken cancellationToken = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
@@ -33,8 +33,8 @@ public sealed class ReleaseRepository(string connectionString)
         cmd.Parameters.AddWithValue("id", Guid.CreateVersion7());
         cmd.Parameters.AddWithValue("project", projectId);
         cmd.Parameters.AddWithValue("repo", repoLinkId);
-        cmd.Parameters.AddWithValue("version", version);
-        cmd.Parameters.AddWithValue("sha", commitSha);
+        cmd.Parameters.AddWithValue("version", release.Version);
+        cmd.Parameters.AddWithValue("sha", release.Commit);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
         return Map(reader);

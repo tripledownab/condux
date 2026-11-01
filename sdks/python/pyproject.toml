@@ -5,7 +5,7 @@ description = "Condux SDK for Python — report errors to Condux."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
-authors = [{ name = "Condux" }]
+authors = [{ name = "Triple Down AB", email = "security@condux.ai" }]
 keywords = ["error-monitoring", "condux", "sentry", "observability", "crash-reporting"]
 classifiers = [
   "Development Status :: 4 - Beta",

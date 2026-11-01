@@ -34,7 +34,7 @@ public sealed class OrgTierEscalationTest(PostgresFixture pg) : IClassFixture<Po
 
         // The request still succeeds: an unknown property is ignored, not rejected. What must not happen
         // is the tier being honoured, so assert on the persisted value rather than the status code.
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal((int)Tier.Free, body.GetProperty("tier").GetInt32());
     }
@@ -48,7 +48,7 @@ public sealed class OrgTierEscalationTest(PostgresFixture pg) : IClassFixture<Po
         var resp = await client.PostAsJsonAsync("/api/orgs",
             new { slug = "plain-" + Guid.NewGuid().ToString("N"), name = "Plain" });
 
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal((int)Tier.Free, body.GetProperty("tier").GetInt32());
     }

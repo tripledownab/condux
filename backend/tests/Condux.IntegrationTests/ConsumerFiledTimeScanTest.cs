@@ -8,7 +8,8 @@ namespace Condux.IntegrationTests;
 /// reads the time. The helpers are unit tested, but nothing runs the drain loop itself, so without this a
 /// deleted or misplaced call would leave every test green while the issue, the rollup, the inventory and
 /// the stored row all took the sender's claimed time again. A scan, because the loop needs a broker,
-/// Postgres and ClickHouse to run, and this is the one line it depends on.
+/// Postgres and ClickHouse to run, and this is the one line it depends on. The same holds for the receipt
+/// time the weekly digest counts by, which only the drain loop can read off the message.
 /// </summary>
 public class ConsumerFiledTimeScanTest
 {
@@ -42,5 +43,31 @@ public class ConsumerFiledTimeScanTest
             Assert.True(at >= 0, $"not found, so this test no longer checks it: {reader}");
             Assert.True(filed < at, $"read before the event is filed: {reader}");
         });
+    }
+
+    // The weekly digest counts by when Condux received an event (issue_received_1h, events.received_at),
+    // and only the drain loop knows that: the Kafka message's own timestamp. Every event is counted, so the
+    // count precedes the sampling decision, and the stored row carries the same instant.
+    [Fact]
+    public void The_drain_loop_counts_every_event_by_its_receipt()
+    {
+        var path = Path.Combine(RepoFiles.FindRoot(), "backend", "src", "Condux.Consumer", "ConsumerWorker.cs");
+        var code = File.ReadAllLines(path).Select(line => line.Trim())
+            .Where(line => !line.StartsWith("//", StringComparison.Ordinal)).ToList();
+        int At(string fragment)
+        {
+            var at = code.FindIndex(line => line.Contains(fragment, StringComparison.Ordinal));
+            Assert.True(at >= 0, $"ConsumerWorker no longer contains: {fragment}");
+            return at;
+        }
+
+        var received = At("var receivedAt = EventMessages.ToReceivedAt(result.Message.Timestamp);");
+        var counted = At("batch.AddReceived(ClickHouseIssueStatsWriter.ToReceivedRow(projectKey, (ulong)upsert.Id, receivedAt));");
+        var sampled = At("if (sampler.ShouldStore(");
+        var stored = At("projectKey, (ulong)upsert.Id, e, grouping.Fingerprint, retentionDays, receivedAt));");
+
+        Assert.True(received < counted, "the receipt row is built before the receipt is read");
+        Assert.True(counted < sampled, "the receipt row is subject to sampling, so it undercounts");
+        Assert.True(sampled < stored, "the stored row is no longer the sampled one");
     }
 }

@@ -12,7 +12,7 @@ posture) and point the chart at them.
 ```sh
 # 1. Create the credentials Secret (recommended for prod) with these keys:
 kubectl create secret generic condux-secrets \
-  --from-literal=CONDUX_POSTGRES='Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require' \
+  --from-literal=CONDUX_POSTGRES='Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require;GSS Encryption Mode=Disable' \
   --from-literal=CONDUX_CLICKHOUSE_USER=condux \
   --from-literal=CONDUX_CLICKHOUSE_PASSWORD=...
 
@@ -61,7 +61,7 @@ and the chart creates the Secret.
 | Service | control-plane, relay, web, symbolizer (the consumer and conductor have none) |
 | NetworkPolicy | the symbolizer's: no egress, ingress from the control-plane and the consumer only |
 | HorizontalPodAutoscaler | relay + consumer (default on), control-plane (opt-in) |
-| Ingress | opt-in: `app` host → dashboard, with `/api` and `/.well-known/mcp` (the MCP server card) → control-plane; `ingest` host → relay |
+| Ingress | opt-in: `app` host → dashboard, with `/api`, `/openapi` and `/.well-known/mcp` (the MCP server card) → control-plane; `ingest` host → relay |
 | Secret | credentials (unless `existingSecret`) |
 | Job (hook) | migrations, pre-install/pre-upgrade |
 

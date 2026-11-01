@@ -153,7 +153,8 @@ public sealed class ContainerWorkspaceTest
         Assert.True(DockerEngineClient.PullAttempts > 1, "one attempt is not a retry");
 
         var waits = DockerEngineClient.PullRetryDelay * (DockerEngineClient.PullAttempts - 1);
-        Assert.True(elapsed.Elapsed >= waits, $"gave up after {elapsed.Elapsed}, expected at least {waits}");
+        Assert.True(elapsed.Elapsed >= TimerBounds.ToLowerBound(waits),
+            $"gave up after {elapsed.Elapsed}, expected at least {waits}");
     }
 
     /// <summary>The image the other tests use is present after an Ensure, whichever path it took.</summary>

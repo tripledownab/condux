@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Condux.Core.CveScanning;
 using Condux.IntegrationTests.Fixtures;
+using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Hosting;
 using Xunit;
 
@@ -52,7 +54,7 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
         Assert.Equal(HttpStatusCode.Created, mapResp.StatusCode);
 
         var relResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/releases",
-            new { repoLinkId = repoId, version = "1.2.3", commitSha = "abc123" });
+            new { repoLinkId = repoId, version = "1.2.3", commitSha = "abc1234" });
         Assert.Equal(HttpStatusCode.Created, relResp.StatusCode);
 
         var repos = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/repos");
@@ -64,7 +66,73 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
 
         var releases = await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/releases");
         Assert.Equal("1.2.3", releases[0].GetProperty("version").GetString());
-        Assert.Equal("abc123", releases[0].GetProperty("commitSha").GetString());
+        Assert.Equal("abc1234", releases[0].GetProperty("commitSha").GetString());
+    }
+
+    // The token route always trimmed and refused a blank; this route stored whatever it was sent, so a
+    // commit like "abc " formed a frame link that answered 404.
+    [Theory]
+    [InlineData("1.2.3", "abc", "invalid_commit")]
+    [InlineData("1.2.3", "abc 1234", "invalid_commit")]
+    [InlineData("1.2.3", "", "invalid_commit")]
+    [InlineData("", "abc1234", "invalid_version")]
+    public async Task RecordRelease_RefusesWhatIsNotARelease(string version, string commit, string error)
+    {
+        var (client, projectId) = await ProvisionAsync();
+        var linkResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
+            new { repoFullName = "acme/api", defaultBranch = "main" });
+        var repoId = (await linkResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        var resp = await client.PostAsJsonAsync($"/api/projects/{projectId}/releases",
+            new { repoLinkId = repoId, version, commitSha = commit });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal(error, (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/releases")).EnumerateArray());
+    }
+
+    [Fact]
+    public async Task RecordRelease_StoresTheVersionAndCommitTrimmed()
+    {
+        var (client, projectId) = await ProvisionAsync();
+        var linkResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
+            new { repoFullName = "acme/api", defaultBranch = "main" });
+        var repoId = (await linkResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync($"/api/projects/{projectId}/releases",
+            new { repoLinkId = repoId, version = " 1.2.3 ", commitSha = " abc1234\n" })).StatusCode);
+
+        var release = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/releases"))[0];
+        Assert.Equal("1.2.3", release.GetProperty("version").GetString());
+        Assert.Equal("abc1234", release.GetProperty("commitSha").GetString());
+    }
+
+    // An empty branch names no branch: a URL that puts it in a path gets an empty segment, which
+    // RepoPaths.EscapeSegments refuses, and one that puts it in a query asks for nothing.
+    [Fact]
+    public async Task LinkRepo_StoresABlankBranchAsMain()
+    {
+        var (client, projectId) = await ProvisionAsync();
+
+        var linkResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
+            new { repoFullName = "acme/api", defaultBranch = " " });
+
+        Assert.Equal(HttpStatusCode.Created, linkResp.StatusCode);
+        Assert.Equal("main", (await linkResp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("defaultBranch").GetString());
+    }
+
+    // A padded branch names a branch that is not there, so it is trimmed as the update route trims it.
+    [Fact]
+    public async Task LinkRepo_TrimsAPaddedBranch()
+    {
+        var (client, projectId) = await ProvisionAsync();
+
+        var linkResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
+            new { repoFullName = "acme/api", defaultBranch = " release/2 " });
+
+        Assert.Equal("release/2", (await linkResp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("defaultBranch").GetString());
     }
 
     [Fact]
@@ -121,20 +189,39 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
             (await client.DeleteAsync($"/api/projects/{projectId}/repos/{repoId}/code-mappings/{drop}")).StatusCode);
     }
 
+    // A deployment with no GitHub App has no scan to offer and nothing an org could do about it, so it
+    // says nothing rather than warning under every repository.
     [Fact]
-    public async Task CveFindings_WithoutGitHubConnected_ReturnsEmpty()
+    public async Task CveFindings_WithoutAGitHubApp_ReturnsEmptyWithNoReason()
     {
         var (client, projectId) = await ProvisionAsync();
         var repoId = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
             new { repoFullName = "acme/api" })).Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("id").GetString();
 
-        // No GitHub installation → nothing to scan, but a clean 200 (not a 500).
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repoId}/cve-findings");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Empty(body.GetProperty("findings").EnumerateArray());
         Assert.False(body.GetProperty("truncated").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("unavailable").ValueKind);
+    }
+
+    // With the App configured, an org that has not connected it is told so, since the empty list would
+    // otherwise read as a repository with no alerts. The link is written directly because linking through
+    // the API needs the connection this test leaves out.
+    [Fact]
+    public async Task CveFindings_WithoutGitHubConnected_ReturnsEmptyAndSaysWhy()
+    {
+        var (client, projectId) = await ProvisionAsync(EnableGitHubApp);
+        var repo = await new RepoLinkRepository(pg.ConnectionString).LinkAsync(projectId, "acme/api", "main");
+
+        var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repo.Id}/cve-findings");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(body.GetProperty("findings").EnumerateArray());
+        Assert.False(body.GetProperty("truncated").GetBoolean());
+        Assert.Equal((int)CveScanUnavailable.NotConnected, body.GetProperty("unavailable").GetInt32());
     }
 
     [Fact]
@@ -148,7 +235,9 @@ public sealed class ReposApiTest(PostgresFixture pg) : IClassFixture<PostgresFix
         // No GitHub installation for the org → nothing to derive, but a clean 200 (not a 500).
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repoId}/suggested-mappings");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-        Assert.Empty((await resp.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray());
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(body.GetProperty("suggestions").EnumerateArray());
+        Assert.Equal("not_connected", body.GetProperty("outcome").GetString());
     }
 
     [Fact]

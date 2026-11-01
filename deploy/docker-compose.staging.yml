@@ -109,7 +109,7 @@ services:
     #
     # THIS RESTATES THE BASE FILE'S COMMAND, because Compose replaces a command whole and cannot append
     # to one. The deploy compares the two and refuses a render where they differ by anything but the
-    # flag added here, so a change to the base command cannot leave staging running the old one.
+    # --memory set here, so a change to the base command cannot leave staging running the old one.
     command:
       - redpanda
       - start

@@ -22,7 +22,7 @@ public sealed class WebhookNotifier(IHttpClientFactory httpClientFactory) : INot
             title = notification.Title,
             culprit = notification.Culprit,
             project = notification.ProjectName,
-            issueId = notification.IssuePublicId.ToString(),
+            issueId = AlertText.IssueId(notification),
             // The rendered human message (the channel's template or the default) alongside the structured
             // fields. Nothing is escaped into it because this body is data rather than markup: the value
             // is a JSON string the serializer encodes, and how it is displayed is the receiver's choice.
@@ -49,6 +49,7 @@ public sealed class WebhookNotifier(IHttpClientFactory httpClientFactory) : INot
         AlertEventType.Regression => "regression",
         AlertEventType.Resolved => "resolved",
         AlertEventType.Assigned => "assigned",
+        AlertEventType.Advisory => "advisory",
         _ => "alert",
     };
 }

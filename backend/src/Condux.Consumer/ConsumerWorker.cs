@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Linq;
-using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.Grouping;
 using Condux.Core.Sampling;
@@ -25,7 +24,8 @@ namespace Condux.Consumer;
 /// </summary>
 public sealed class ConsumerWorker(
     IConfiguration config, ILogger<ConsumerWorker> logger, IHttpClientFactory httpClientFactory,
-    AlertDispatcher alertDispatcher, AutoFixDispatcher autoFixDispatcher, ConduxSelfReporter selfReport)
+    AlertDispatcher alertDispatcher, AutoFixDispatcher autoFixDispatcher, AutoTicketDispatcher autoTicketDispatcher,
+    ConduxSelfReporter selfReport)
     : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
@@ -79,7 +79,7 @@ public sealed class ConsumerWorker(
             try
             {
                 var result = consumer.Consume(TimeSpan.FromSeconds(1));
-                if (result?.Message?.Value is { } value && JsonSerializer.Deserialize<Event>(value) is { } e)
+                if (result?.Message?.Value is { } value && EventJson.ToEvent(value) is { } e)
                 {
                     // The message key is the numeric project id (set by the relay from the DSN-authed
                     // project). issues.project_id is a bigint FK to projects, so a non-numeric key can't
@@ -91,12 +91,17 @@ public sealed class ConsumerWorker(
                         // The sender's time, bounded to its receipt, before anything reads it.
                         e = EventMessages.ToFiledEvent(e, result.Message);
                         var seenAt = DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampUnixMs);
+                        // When Condux received it, which the weekly digest counts by; never the sender's claim.
+                        var receivedAt = EventMessages.ToReceivedAt(result.Message.Timestamp);
 
                         var upsert = await issues.UpsertAsync(projectId, grouping, e.Level, seenAt, e.Release, stoppingToken);
                         await FireAlertsAsync(projectId, upsert, grouping, e.Level, stoppingToken);
                         // Auto-fix (#101): in an auto-mode org, a new/regressed error-or-worse issue
                         // publishes a fix job (quota-gated, best-effort). The event carries the context.
                         await autoFixDispatcher.DispatchAsync(projectId, upsert, e, stoppingToken);
+                        // A Linear ticket for a new error, when the project turned that on (ADR-0053). Reserved
+                        // only; the control plane's worker sends it.
+                        await autoTicketDispatcher.DispatchAsync(projectId, upsert, e.Level, stoppingToken);
                         // Live dashboard badges (ADR-0030): a new or regressed issue nudges the project's
                         // SSE stream so every viewer's "new issues" badge refetches. Best-effort — a notify
                         // failure never interrupts the drain (the badge also polls as a safety net).
@@ -107,6 +112,7 @@ public sealed class ConsumerWorker(
                         // Count EVERY event in the hourly rollup (exact time series, #102); only the raw
                         // payload row below is subject to sampling.
                         batch.AddStats(ClickHouseIssueStatsWriter.ToRow(projectKey, (ulong)upsert.Id, seenAt));
+                        batch.AddReceived(ClickHouseIssueStatsWriter.ToReceivedRow(projectKey, (ulong)upsert.Id, receivedAt));
                         var retentionDays = EventMessages.ReadRetentionDays(result.Message.Headers);
                         // Record the dependency inventory before the sampling decision. Sampling sheds
                         // redundant copies of the same payload, and the inventory is deduplicated on its
@@ -116,7 +122,7 @@ public sealed class ConsumerWorker(
                         if (sampler.ShouldStore(upsert.Occurrence))
                         {
                             batch.AddEvent(ClickHouseEventWriter.ToRow(
-                                projectKey, (ulong)upsert.Id, e, grouping.Fingerprint, retentionDays));
+                                projectKey, (ulong)upsert.Id, e, grouping.Fingerprint, retentionDays, receivedAt));
                         }
                         else
                         {

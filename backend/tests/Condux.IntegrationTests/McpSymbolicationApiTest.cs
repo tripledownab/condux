@@ -93,7 +93,7 @@ public sealed class McpSymbolicationApiTest(PostgresFixture pg, ClickHouseFixtur
         };
         await new ClickHouseEventWriter(chHttp).InsertAsync([ClickHouseEventWriter.ToRow(
             projectId.ToString(), (ulong)issue.Id, stored, grouping.Fingerprint,
-            PlanCatalog.For(Tier.Free).RetentionDays)]);
+            PlanCatalog.For(Tier.Free).RetentionDays, DateTimeOffset.UtcNow)]);
 
         // Mint an MCP token and call get_issue over /api/mcp.
         var raw = (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens", new { name = "x" }))

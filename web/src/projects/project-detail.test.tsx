@@ -22,6 +22,8 @@ vi.mock("@/src/api/generated/condux", () => ({
   useUpdateKey: () => ({ mutate: vi.fn(), isPending: false }),
   useRevokeKey: () => ({ mutate: vi.fn(), isPending: false }),
   getListKeysQueryKey: () => ["keys"],
+  // The Linear tab has its own tests; pending keeps it out of the tab bar here.
+  useGetLinearProject: () => ({ isPending: true }),
 }));
 
 // The embedded Repositories + Releases sections have their own tests; stub them here so this test stays

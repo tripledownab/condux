@@ -37,7 +37,7 @@ public sealed class ProjectEventStreamShutdownTest(PostgresFixture pg) : IClassF
 
         using var response = await client.GetAsync(
             $"/api/projects/{projectId}/events", HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
+        await response.EnsureSuccessAsync();
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
         Assert.Equal(": connected", await reader.ReadLineAsync());
 

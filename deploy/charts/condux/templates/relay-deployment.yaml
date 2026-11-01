@@ -34,6 +34,8 @@ spec:
             {{- include "condux.kafkaEnv" . | nindent 12 }}
             - name: CONDUX_VALKEY
               value: {{ .Values.externalStores.valkey.url | quote }}
+            - name: CONDUX_TRUSTED_PROXIES
+              value: {{ .Values.relay.trustedProxies | quote }}
           readinessProbe:
             httpGet:
               path: /healthz

@@ -34,6 +34,13 @@ public sealed class RepoLinkRepository(string connectionString)
         FROM code_mappings WHERE repo_link_id = @repo ORDER BY stack_root;
         """;
 
+    // Every repository's mappings for one project, in the order each repo's own list uses.
+    private const string ListProjectMappingsSql = """
+        SELECT m.id, m.repo_link_id, m.stack_root, m.source_root
+        FROM code_mappings m JOIN repo_links r ON r.id = m.repo_link_id
+        WHERE r.project_id = @project ORDER BY r.created_at, m.stack_root;
+        """;
+
     public async Task<RepoLink> LinkAsync(
         long projectId, string repoFullName, string defaultBranch, CancellationToken cancellationToken = default)
     {
@@ -146,13 +153,22 @@ public sealed class RepoLinkRepository(string connectionString)
         return MapMapping(reader);
     }
 
-    public async Task<IReadOnlyList<CodeMapping>> ListCodeMappingsAsync(
-        Guid repoLinkId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<CodeMapping>> ListCodeMappingsAsync(
+        Guid repoLinkId, CancellationToken cancellationToken = default) =>
+        ReadMappingsAsync(ListMappingsSql, "repo", repoLinkId, cancellationToken);
+
+    /// <summary>The mappings of every repository linked to the project, in one query.</summary>
+    public Task<IReadOnlyList<CodeMapping>> ListProjectCodeMappingsAsync(
+        long projectId, CancellationToken cancellationToken = default) =>
+        ReadMappingsAsync(ListProjectMappingsSql, "project", projectId, cancellationToken);
+
+    private async Task<IReadOnlyList<CodeMapping>> ReadMappingsAsync(
+        string sql, string parameter, object value, CancellationToken cancellationToken)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ListMappingsSql, conn);
-        cmd.Parameters.AddWithValue("repo", repoLinkId);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue(parameter, value);
         var list = new List<CodeMapping>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

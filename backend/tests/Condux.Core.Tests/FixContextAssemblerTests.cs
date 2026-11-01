@@ -94,6 +94,17 @@ public class FixContextAssemblerTests
         Assert.Equal(["src/checkout.js", "src/cart.js"], context.ScopedPaths);
     }
 
+    // The identity mapping ("" to "") covers every frame, so an absolute runtime path resolves to itself
+    // and must still be refused rather than fetched as a repository file.
+    [Fact]
+    public void Scopes_no_absolute_frame_under_the_identity_mapping()
+    {
+        IReadOnlyList<CodeMapping> identity = [new CodeMapping(Guid.NewGuid(), Guid.NewGuid(), "", "")];
+
+        Assert.Empty(FixContextAssembler.Assemble(SampleEvent(), identity).ScopedPaths);
+        Assert.Null(FixContextAssembler.CulpritPath(SampleEvent(), identity));
+    }
+
     [Fact]
     public void Double_scrubs_secrets_from_the_prompt()
     {

@@ -1,4 +1,5 @@
 using Condux.Storage.ClickHouse;
+using Condux.Storage.ObjectStore;
 using Condux.Storage.SourceMaps;
 using Condux.Telemetry;
 
@@ -30,7 +31,7 @@ internal static class EventReadRegistration
         // Object storage (S3-compatible) for source-map artifacts (ADR-0028), and the symbolication built
         // on it (issue detail/events, MCP tools, fix context). Opt-in: the IObjectStore client registers
         // only when CONDUX_S3_* are set, so the /api/sourcemaps routes 404 until configured.
-        services.AddEventSymbolication(cfg, postgres);
+        services.AddEventSymbolication(cfg, postgres, ObjectStoreAccess.ReadWrite);
 
         return services;
     }

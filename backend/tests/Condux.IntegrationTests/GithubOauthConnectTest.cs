@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Condux.Core.Auth;
 using Condux.GitHub;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.Postgres;
@@ -113,7 +114,7 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         Assert.Contains($"github.com/apps/{Slug}/installations/new", location);
         // The onward state still carries the org, so the Setup URL can carry the flow on.
         var state = Uri.UnescapeDataString(location.Split("state=")[1]);
-        Assert.Equal(orgId, GithubConnectState.Validate(state, DateTimeOffset.UtcNow, WebhookSecret)!.OrgId);
+        Assert.Equal(orgId, ConnectState.Validate(ConnectState.GitHub, state, DateTimeOffset.UtcNow, WebhookSecret)!.OrgId);
 
         // The browser's half has to come with it. This leg consumes the cookie it arrived with and then
         // sets a new one, so the response carries both a deletion and the replacement; the last wins, and
@@ -361,7 +362,7 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
         var attackerOrgId = await CreateOrgAsync(attacker);
         var repo = new GithubInstallationRepository(pg.ConnectionString);
 
-        var state = GithubConnectState.Create(
+        var state = ConnectState.Create(ConnectState.GitHub,
             attackerOrgId, "/", false, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
 
         var noCookie = await CallbackAsync(app, state, cookieState: null);
@@ -379,7 +380,7 @@ public sealed class GithubOauthConnectTest(PostgresFixture pg) : IClassFixture<P
     private static async Task<HttpResponseMessage> CallbackAsync(
         WebApplicationFactory<Program> app, long orgId, string returnPath, bool installed = false)
     {
-        var state = GithubConnectState.Create(
+        var state = ConnectState.Create(ConnectState.GitHub,
             orgId, returnPath, installed, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
         return await CallbackAsync(app, state, state);
     }

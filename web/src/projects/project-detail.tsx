@@ -14,29 +14,14 @@ import {
 import type { ProjectRecord } from "@/src/api/generated/model";
 import { FIELD_CLASS, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
 import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { usePlatformLabel } from "@/src/projects/platforms";
 import { ROUTES } from "@/src/routes";
-import { DsnKeys } from "@/src/settings/dsn-keys";
-import { McpTokens } from "@/src/settings/mcp-tokens";
-import { ReleaseTokens } from "@/src/settings/release-tokens";
-import { Releases } from "@/src/settings/releases";
-import { Repositories } from "@/src/settings/repositories";
-import { useGithubConnection } from "@/src/settings/use-github-connection";
+import { ProjectSections } from "./project-sections";
 
-// The management sections beneath the overview card, one per tab, so GitHub + releases + keys do not
-// crowd a single scroll.
-enum ProjectTab {
-  GitHub = "github",
-  Releases = "releases",
-  Dsn = "dsn",
-  Mcp = "mcp",
-}
-
-// A single project's page: an overview card (rename/delete, admin+) above tabbed management sections —
-// GitHub (connect + repositories), Releases, and DSN keys. Fetches one project via the lean getProject
-// endpoint (by public UUID, #125) rather than the whole org list.
+// A single project's page: an overview card (rename/delete, admin+) above the tabbed management sections
+// in ProjectSections. Fetches one project via the lean getProject endpoint (by public UUID, #125) rather
+// than the whole org list.
 export function ProjectDetail({ publicId }: { publicId: string }) {
   const translate = useTranslations("projects");
   const current = useCurrentOrg();
@@ -68,62 +53,9 @@ export function ProjectDetail({ publicId }: { publicId: string }) {
         projectId={record.id}
         publicId={record.publicId}
         projectName={record.name}
+        orgId={current.status === OrgStatus.Ready ? current.org.id : null}
         canManage={canManage}
       />
-    </div>
-  );
-}
-
-// The project's management surface, tabbed beneath the overview card: GitHub (connect + repositories),
-// Releases, and DSN keys. Each panel's data loads only while its tab is mounted (Radix unmounts the
-// inactive panels), so opening the page does not fire every section's queries at once.
-function ProjectSections({
-  projectId,
-  publicId,
-  projectName,
-  canManage,
-}: {
-  projectId: number;
-  publicId: string;
-  projectName: string;
-  canManage: boolean;
-}) {
-  const translate = useTranslations("projects.tabs");
-  return (
-    <Tabs defaultValue={ProjectTab.GitHub} className="gap-6">
-      <TabsList>
-        <TabsTrigger value={ProjectTab.GitHub}>{translate("github")}</TabsTrigger>
-        <TabsTrigger value={ProjectTab.Releases}>{translate("releases")}</TabsTrigger>
-        <TabsTrigger value={ProjectTab.Dsn}>{translate("dsn")}</TabsTrigger>
-        <TabsTrigger value={ProjectTab.Mcp}>{translate("mcp")}</TabsTrigger>
-      </TabsList>
-      <TabsContent value={ProjectTab.GitHub}>
-        <Repositories projectId={projectId} projectName={projectName} canManage={canManage} />
-      </TabsContent>
-      <TabsContent value={ProjectTab.Releases}>
-        <ReleasesTab projectId={projectId} canManage={canManage} />
-      </TabsContent>
-      <TabsContent value={ProjectTab.Dsn}>
-        <DsnKeys projectId={projectId} publicId={publicId} />
-      </TabsContent>
-      <TabsContent value={ProjectTab.Mcp}>
-        <McpTokens projectId={projectId} canManage={canManage} />
-      </TabsContent>
-    </Tabs>
-  );
-}
-
-// The Releases tab: manual release recording plus the CI release tokens. Recording a release maps a
-// version to a commit, so it needs a linked repository, and linking one needs GitHub connected when the
-// GitHub App is configured; only the record form says so. The section and the tokens always show, since a
-// token also uploads source maps and debug files, which need neither.
-function ReleasesTab({ projectId, canManage }: { projectId: number; canManage: boolean }) {
-  const github = useGithubConnection();
-  const needsGithub = !github.loading && !github.connected && !github.notConfigured;
-  return (
-    <div className="flex flex-col gap-8">
-      <Releases projectId={projectId} canManage={canManage} needsGithub={needsGithub} />
-      <ReleaseTokens projectId={projectId} canManage={canManage} />
     </div>
   );
 }

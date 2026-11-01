@@ -73,7 +73,13 @@ public static class SourceMapPaths
     }
 
     /// <summary>Installed or bundler-runtime code, which the Conductor must not treat as the app's own:
-    /// a minified chunk is in-app as a whole, but the lines inside it come from many packages.</summary>
+    /// a minified chunk is in-app as a whole, but the lines inside it come from many packages. A map's own
+    /// <c>ignoreList</c> says the same where it is present (<see cref="OriginalPosition.Ignored"/>), and
+    /// the two are combined rather than one replacing the other: a bundler's list can mark wrappers no
+    /// path gives away and still leave installed packages and its own runtime out (Next's webpack list
+    /// misses a scoped namespace's runtime and some externals), and the webpack 5 Next bundles writes none
+    /// by itself.
+    /// </summary>
     public static bool IsDependency(string repoPath) =>
         repoPath.StartsWith("node_modules/", StringComparison.Ordinal)
         || repoPath.Contains("/node_modules/", StringComparison.Ordinal)
@@ -81,5 +87,13 @@ public static class SourceMapPaths
         // webpack 4 and later name the bootstrap webpack/bootstrap, and webpack 3 appended " <hash>" to it.
         || repoPath == "webpack/bootstrap"
         || repoPath.StartsWith("webpack/bootstrap ", StringComparison.Ordinal)
-        || repoPath.StartsWith("webpack/runtime/", StringComparison.Ordinal);
+        || repoPath.StartsWith("webpack/runtime/", StringComparison.Ordinal)
+        // webpack 5's startup modules, written when the runtime is its own chunk or an entry dependsOn another.
+        || repoPath is "webpack/startup" or "webpack/before-startup" or "webpack/after-startup"
+        // webpack 4 names a file inside its own package (webpack)/..., its buildin modules among them.
+        || repoPath.StartsWith("(webpack)/", StringComparison.Ordinal)
+        // webpack 5 names a module the bundle does not contain external <type> "<request>", and one aliased
+        // to false ignored|<context>|<request>.
+        || repoPath.StartsWith("external ", StringComparison.Ordinal)
+        || repoPath.StartsWith("ignored|", StringComparison.Ordinal);
 }

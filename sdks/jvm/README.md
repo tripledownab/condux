@@ -14,14 +14,14 @@ Maven:
 <dependency>
   <groupId>ai.condux</groupId>
   <artifactId>condux</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("ai.condux:condux:0.2.0")
+implementation("ai.condux:condux:0.3.0")
 ```
 
 ## Usage

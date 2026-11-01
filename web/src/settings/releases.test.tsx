@@ -1,5 +1,6 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConduxApiError } from "@/src/api/fetcher";
 import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -9,10 +10,11 @@ vi.mock("@tanstack/react-query", () => ({
 const useListReleasesMock = vi.fn();
 const useListReposMock = vi.fn();
 const recordMutate = vi.fn();
+const useRecordReleaseMock = vi.fn();
 vi.mock("@/src/api/generated/condux", () => ({
   useListReleases: () => useListReleasesMock(),
   useListRepos: () => useListReposMock(),
-  useRecordRelease: () => ({ mutate: recordMutate, isPending: false, isError: false }),
+  useRecordRelease: () => useRecordReleaseMock(),
   getListReleasesQueryKey: () => ["releases"],
 }));
 
@@ -23,6 +25,7 @@ const repo = { id: "repo-1", repoFullName: "acme/api", defaultBranch: "main", pr
 beforeEach(() => {
   useListReleasesMock.mockReturnValue({ data: { data: [] } });
   useListReposMock.mockReturnValue({ data: { data: [repo] } });
+  useRecordReleaseMock.mockReturnValue({ mutate: recordMutate, isPending: false, isError: false });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -89,5 +92,22 @@ describe("Releases", () => {
   it("is read-only for a non-admin (no record form)", () => {
     renderWithIntl(<Releases projectId={7} canManage={false} />);
     expect(screen.queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
+  });
+
+  // A refusal the person can fix says what to fix; "Try again" would send the same commit again.
+  it.each([
+    ["invalid_commit", "Enter the commit as its SHA: 7 to 64 hex characters."],
+    ["invalid_version", "Enter a version."],
+    ["something_else", "Could not record the release. Try again."],
+    ["constructor", "Could not record the release. Try again."],
+  ])("explains the server's %s refusal", (code, message) => {
+    useRecordReleaseMock.mockReturnValue({
+      mutate: recordMutate,
+      isPending: false,
+      isError: true,
+      error: new ConduxApiError("POST", "/api/projects/7/releases", 400, code),
+    });
+    renderWithIntl(<Releases projectId={7} canManage />);
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 });

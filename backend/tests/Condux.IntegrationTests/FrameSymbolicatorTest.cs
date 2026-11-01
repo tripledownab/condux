@@ -70,6 +70,75 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         Assert.False(frame.InApp);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_line_the_map_lists_as_ignored_is_not_the_apps_own_code(bool listed)
+    {
+        // Turbopack lists its generated wrappers in ignoreList, and their paths look like the app's own: a
+        // build of the dashboard named them <component>.tsx/__nextjs-internal-proxy.mjs followed by an encoded
+        // suffix, in its server maps. Only the list says so.
+        var map = $$"""{"version":3,"sources":["turbopack:///[project]/web/app/providers.tsx/__nextjs-internal-proxy.mjs"],{{(listed ? "\"ignoreList\":[0]," : "")}}"sourcesContent":["const a = 1;\nfunction boom() {\n  throw new Error();\n}\n"],"names":["boom"],"mappings":"AAAA,CAEA;KAAGA"}""";
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
+        var objectKey = $"sourcemaps/by-debug-id/proxy-{listed}";
+        await artifacts.RecordAsync(
+            projectId, "app@1.4.2", dist: null, debugId: $"proxy-{listed}", filename: "app.min.js",
+            objectKey: objectKey, byteSize: map.Length);
+        var symbolicator = new FrameSymbolicator(
+            artifacts, new InMemoryMapStore(Encoding.UTF8.GetBytes(map), objectKey));
+
+        var result = await symbolicator.SymbolicateAsync(projectId, MinifiedEvent(
+            debugId: $"proxy-{listed}", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
+
+        var frame = Assert.Single(Assert.Single(result.Exceptions).Stacktrace!.Frames);
+        Assert.Equal("web/app/providers.tsx/__nextjs-internal-proxy.mjs", frame.Filename);
+        Assert.Equal(!listed, frame.InApp);
+    }
+
+    // A page of events from one release names the same map in every event. It used to be fetched and
+    // parsed once per event; the call now shares one cache across them.
+    [Fact]
+    public async Task A_page_of_events_sharing_a_map_reads_it_once()
+    {
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var artifacts = new SourceMapArtifactRepository(pg.ConnectionString);
+        const string objectKey = "sourcemaps/by-debug-id/shared";
+        await artifacts.RecordAsync(
+            projectId, "app@1.4.2", dist: null, debugId: "shared", filename: "app.min.js",
+            objectKey: objectKey, byteSize: Map.Length);
+        var store = new CountingMapStore(new InMemoryMapStore(Encoding.UTF8.GetBytes(Map), objectKey));
+        using var recorder = new TestMetrics.SymbolicationRecorder();
+        var symbolication = new EventSymbolication(
+            new FrameSymbolicator(artifacts, store), native: null, dartTypes: null, recorder.Metrics,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<EventSymbolication>.Instance);
+        var page = Enumerable.Range(0, 3).Select(i => new Condux.Storage.ClickHouse.StoredEvent(
+            $"e{i}", "", "error", "", "TypeError", "", System.Text.Json.JsonSerializer.Serialize(MinifiedEvent(
+                debugId: "shared", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"))))
+            .ToList();
+
+        var result = await symbolication.SymbolicateAsync(projectId, page);
+
+        Assert.Equal(1, store.Gets);
+        Assert.All(result, stored => Assert.Contains("src/app.ts", stored.Payload, StringComparison.Ordinal));
+        // One call is timed once, however many events it carries, and nothing failed.
+        Assert.Equal("condux.symbolication.duration", Assert.Single(recorder.Measurements).Instrument);
+    }
+
+    private sealed class CountingMapStore(IObjectStore inner) : IObjectStore
+    {
+        public int Gets { get; private set; }
+
+        public Task PutAsync(string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken ct = default) =>
+            inner.PutAsync(key, content, contentType, ct);
+
+        public Task<byte[]?> GetAsync(string key, CancellationToken ct = default)
+        {
+            Gets++;
+            return inner.GetAsync(key, ct);
+        }
+    }
+
     [Fact]
     public async Task A_map_that_cannot_be_read_leaves_the_fix_its_raw_frames()
     {
@@ -80,8 +149,9 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         await artifacts.RecordAsync(
             projectId, "app@1.4.2", dist: null, debugId: "broken", filename: "app.min.js",
             objectKey: "sourcemaps/by-debug-id/broken", byteSize: 1);
+        using var recorder = new TestMetrics.SymbolicationRecorder();
         var symbolication = new EventSymbolication(
-            new FrameSymbolicator(artifacts, new UnreachableMapStore()), native: null,
+            new FrameSymbolicator(artifacts, new UnreachableMapStore()), native: null, dartTypes: null, recorder.Metrics,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<EventSymbolication>.Instance);
         var raw = MinifiedEvent(
             debugId: "broken", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js");
@@ -89,20 +159,46 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         var result = await symbolication.SymbolicateAsync(projectId, raw);
 
         Assert.Same(raw, result);
+        // Counted, so a broken store is alerted on rather than only logged.
+        Assert.Equal(("condux.symbolication.failures", 1d, "source-map"),
+            Assert.Single(recorder.Measurements, m => m.Instrument == "condux.symbolication.failures"));
+        Assert.Single(recorder.Measurements, m => m.Instrument == "condux.symbolication.duration");
     }
 
     [Fact]
     public async Task A_map_that_never_arrives_leaves_the_fix_its_raw_frames()
     {
-        // The consumer runs this inside its drain, so a store that stops answering must cost the run its
-        // symbolication after a bounded wait, not hold up ingest until the store recovers. No budget is
-        // passed, so this is the one the fix paths get.
+        // A store that stops answering must cost the fix its symbolication after a bounded wait, not hold the
+        // caller until the store recovers. No budget is passed, so this is the default the manual fix path
+        // and the readers get; the consumer's drain passes a shorter one (below).
         var (projectId, raw) = await SeedSlowMapAsync();
-        var symbolication = SlowSymbolication(new HangingMapStore());
+        using var recorder = new TestMetrics.SymbolicationRecorder();
+        var symbolication = SlowSymbolication(new HangingMapStore(), recorder.Metrics);
 
         var result = await symbolication.SymbolicateAsync(projectId, raw).WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Same(raw, result);
+        // The wait is what the drain paid, so it is measured, and the budget running out counts as a failure.
+        Assert.Contains(recorder.Measurements, m => m == ("condux.symbolication.failures", 1d, "source-map"));
+        var waited = Assert.Single(recorder.Measurements, m => m.Instrument == "condux.symbolication.duration");
+        Assert.True(waited.Value >= 5, $"recorded {waited.Value}s for a call that waited out its budget");
+    }
+
+    [Fact]
+    public async Task A_caller_that_passes_a_shorter_budget_gets_the_raw_frames_within_it()
+    {
+        // The consumer's drain passes its own shorter wait; the read path above keeps the longer one.
+        var (projectId, raw) = await SeedSlowMapAsync();
+        using var recorder = new TestMetrics.SymbolicationRecorder();
+        var symbolication = SlowSymbolication(new HangingMapStore(), recorder.Metrics);
+
+        var budget = TimeSpan.FromSeconds(1);
+        var result = await symbolication.SymbolicateAsync(projectId, raw, budget)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Same(raw, result);
+        var waited = Assert.Single(recorder.Measurements, m => m.Instrument == "condux.symbolication.duration");
+        Assert.InRange(waited.Value, TimerBounds.ToLowerBound(budget).TotalSeconds, 5);
     }
 
     [Fact]
@@ -113,12 +209,16 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
         var (projectId, raw) = await SeedSlowMapAsync();
         var store = new HangingMapStore();
         using var caller = new CancellationTokenSource();
+        using var recorder = new TestMetrics.SymbolicationRecorder();
 
-        var call = SlowSymbolication(store).SymbolicateAsync(projectId, raw, cancellationToken: caller.Token);
+        var call = SlowSymbolication(store, recorder.Metrics)
+            .SymbolicateAsync(projectId, raw, cancellationToken: caller.Token);
         await store.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await caller.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call.WaitAsync(TimeSpan.FromSeconds(30)));
+        // A caller that left is not the store failing, so nothing is counted against it.
+        Assert.Empty(recorder.Measurements);
     }
 
     private async Task<(long ProjectId, Event Raw)> SeedSlowMapAsync()
@@ -131,8 +231,8 @@ public sealed class FrameSymbolicatorTest(PostgresFixture pg) : IClassFixture<Po
             debugId: "slow", codeFile: "https://app/js/app.min.js", absPath: "https://app/js/app.min.js"));
     }
 
-    private EventSymbolication SlowSymbolication(IObjectStore store) => new(
-        new FrameSymbolicator(new SourceMapArtifactRepository(pg.ConnectionString), store), native: null,
+    private EventSymbolication SlowSymbolication(IObjectStore store, SymbolicationMetrics metrics) => new(
+        new FrameSymbolicator(new SourceMapArtifactRepository(pg.ConnectionString), store), native: null, dartTypes: null, metrics,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<EventSymbolication>.Instance);
 
     [Fact]

@@ -38,8 +38,8 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var orphan = ProjectObjectKeys.ToPrefix(root, projectId) + "orphan";
         var kept = ProjectObjectKeys.ToPrefix(root, projectId) + "kept";
-        await store.PutAsync(orphan, [1], "application/octet-stream");
-        await store.PutAsync(kept, [1], "application/octet-stream");
+        await store.PutAsync(orphan, new byte[] { 1 }, "application/octet-stream");
+        await store.PutAsync(kept, new byte[] { 1 }, "application/octet-stream");
         await RecordAsync(root, projectId, kept);
 
         var result = await Sweep(store).SweepAsync(Later);
@@ -61,12 +61,12 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
         using var store = Store();
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var key = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.DebugFiles, projectId) + "uploaded-again";
-        await store.PutAsync(key, [1], "application/octet-stream");
+        await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
 
         await Sweep(store).SweepAsync(Later);
         Assert.True(await IsQueuedAsync(key));
         await RecordAsync(ProjectObjectKeys.DebugFiles, projectId, key);
-        await store.PutAsync(key, [2], "application/octet-stream");
+        await store.PutAsync(key, new byte[] { 2 }, "application/octet-stream");
         await new ObjectDeletionQueue(pg.ConnectionString, store).DrainAsync(10_000);
 
         Assert.NotNull(await store.GetAsync(key));
@@ -78,7 +78,7 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
     {
         using var store = Store();
         var key = $"{ProjectObjectKeys.SourceMaps}not-a-project-{Guid.NewGuid():N}/x";
-        await store.PutAsync(key, [1], "application/octet-stream");
+        await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
 
         var result = await Sweep(store).SweepAsync(Later);
 
@@ -101,12 +101,12 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
         var first = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId) + "first";
         var second = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId) + "second";
 
-        await store.PutAsync(first, [1], "application/json");
+        await store.PutAsync(first, new byte[] { 1 }, "application/json");
         await worker.RunOnceAsync(now, default);
         Assert.Null(await store.GetAsync(first));
 
         // Fifteen minutes on, inside the day: the next pass drains but does not sweep.
-        await store.PutAsync(second, [1], "application/json");
+        await store.PutAsync(second, new byte[] { 1 }, "application/json");
         await worker.RunOnceAsync(now.AddMinutes(15), default);
         Assert.NotNull(await store.GetAsync(second));
 
@@ -121,8 +121,8 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var queued = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId) + "queued";
         var orphan = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.SourceMaps, projectId) + "orphan";
-        await store.PutAsync(queued, [1], "application/json");
-        await store.PutAsync(orphan, [1], "application/json");
+        await store.PutAsync(queued, new byte[] { 1 }, "application/json");
+        await store.PutAsync(orphan, new byte[] { 1 }, "application/json");
         await QueueAsync(queued);
         var listing = new FailingListing(store);
         var worker = new Condux.ControlPlane.Uploads.UploadStorageWorker(
@@ -148,7 +148,7 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
         using var store = Store();
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
         var key = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.DebugFiles, projectId) + "young";
-        await store.PutAsync(key, [1], "application/octet-stream");
+        await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
 
         // A day short of the longest retention plus its margin: still too recent to judge.
         var result = await Sweep(store).SweepAsync(DateTimeOffset.UtcNow.AddDays(
@@ -249,7 +249,7 @@ public sealed class OrphanObjectSweepTest(PostgresFixture pg, S3Fixture s3)
 
     private Task RecordAsync(string root, long projectId, string key) => root == ProjectObjectKeys.DebugFiles
         ? new DebugFileRepository(pg.ConnectionString).RecordAsync(
-            projectId, new ElfBuild(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString()), key, 1, sha256: null)
+            projectId, new DebugBuild(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString()), key, 1, sha256: null)
         : new SourceMapArtifactRepository(pg.ConnectionString)
             .RecordAsync(projectId, "1.0.0", null, Guid.NewGuid().ToString(), "app.js", key, 1);
 

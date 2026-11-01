@@ -241,7 +241,12 @@ describe("Repositories", () => {
     const add = vi.fn();
     useAddCodeMappingMock.mockReturnValue({ ...idle, mutate: add });
     useSuggestedMappingsMock.mockReturnValue({
-      data: { data: [{ stackRoot: "/build/", sourceRoot: "web/", matchCount: 4 }] },
+      data: {
+        data: {
+          suggestions: [{ stackRoot: "/build/", sourceRoot: "web/", matchCount: 4 }],
+          outcome: "suggested",
+        },
+      },
       isFetched: true,
       isFetching: false,
       refetch,
@@ -263,7 +268,12 @@ describe("Repositories", () => {
 
   it("names an empty stack root, which a JVM project's suggestion has", () => {
     useSuggestedMappingsMock.mockReturnValue({
-      data: { data: [{ stackRoot: "", sourceRoot: "src/main/java/", matchCount: 2 }] },
+      data: {
+        data: {
+          suggestions: [{ stackRoot: "", sourceRoot: "src/main/java/", matchCount: 2 }],
+          outcome: "suggested",
+        },
+      },
       isFetched: true,
       isFetching: false,
       refetch: vi.fn(),
@@ -272,6 +282,64 @@ describe("Repositories", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Suggest from errors" }));
     expect(screen.getByText("(any path) → src/main/java/")).toBeInTheDocument();
+  });
+
+  // A Turbopack project's frames already name repo files, so its suggestion is the identity rule.
+  it("names both empty roots of the identity rule", () => {
+    useSuggestedMappingsMock.mockReturnValue({
+      data: {
+        data: {
+          suggestions: [{ stackRoot: "", sourceRoot: "", matchCount: 3 }],
+          outcome: "suggested",
+        },
+      },
+      isFetched: true,
+      isFetching: false,
+      refetch: vi.fn(),
+    });
+    renderWithIntl(<Repositories projectId={7} projectName="web-app" canManage />);
+
+    expect(screen.getByText("(any path) → (repo root)")).toBeInTheDocument();
+  });
+
+  // Each empty answer says why it is empty, where one message used to tell a connected project with
+  // nothing to add to connect GitHub.
+  it.each([
+    ["not_connected", "Connect GitHub to this project to suggest mappings."],
+    ["no_frames", "No recent errors with frames from your code yet. Send a few, then try again."],
+    [
+      "no_match",
+      "Not every recent error frame matches a file in this repository, so no mapping can be suggested. Check the repository and its default branch, or add a mapping by hand.",
+    ],
+    [
+      "ambiguous",
+      "Your recent errors match files in more than one directory of this repository equally well, so they cannot say which is theirs. Add a mapping by hand.",
+    ],
+    [
+      "already_mapped",
+      "Every rule your recent errors support is already a mapping. Nothing to add.",
+    ],
+    [
+      "conflicting",
+      "Your recent errors support a rule whose path prefix is already mapped elsewhere. Delete that mapping, then suggest again.",
+    ],
+    ["unavailable", "Could not reach GitHub or the event store. Try again."],
+    [
+      "an_outcome_this_build_does_not_know",
+      "Could not reach GitHub or the event store. Try again.",
+    ],
+    // A name every object inherits must not read as a message key.
+    ["constructor", "Could not reach GitHub or the event store. Try again."],
+  ])("explains an empty %s answer", (outcome, message) => {
+    useSuggestedMappingsMock.mockReturnValue({
+      data: { data: { suggestions: [], outcome } },
+      isFetched: true,
+      isFetching: false,
+      refetch: vi.fn(),
+    });
+    renderWithIntl(<Repositories projectId={7} projectName="web-app" canManage />);
+
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 
   it("hides the add-repo form until GitHub is connected", () => {

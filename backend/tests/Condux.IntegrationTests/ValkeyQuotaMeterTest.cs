@@ -1,3 +1,4 @@
+using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.Quotas;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
@@ -14,10 +15,9 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class ValkeyQuotaMeterTest : IAsyncLifetime
 {
-    private readonly IContainer _valkey = new ContainerBuilder()
-        .WithImage("valkey/valkey:8-alpine")
+    private readonly IContainer _valkey = new ContainerBuilder(ComposeImages.For("valkey/valkey"))
         .WithPortBinding(6379, assignRandomHostPort: true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(6379))
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
         .Build();
 
     private ConnectionMultiplexer _redis = null!;

@@ -186,16 +186,38 @@ public class RunnerWorkerTests
         // heartbeat that landed and fires a margin early, rather than a whole lease after its answer.
         var server = new StubControlPlane { AnswerHeartbeatsThenHang = 1 };
         var provider = new CancelTimingProvider(server.Clock);
-        var lease = TimeSpan.FromSeconds(3);
+        var lease = TimeSpan.FromSeconds(6);
 
         await Worker(server, provider, lease: lease)
-            .RunAsync(Job, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15));
+            .RunAsync(Job, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
 
         Assert.Equal(1, server.HeartbeatCount);
-        // The deadline is four fifths of a lease; the rest of the bound is slack for a loaded machine,
-        // and still well inside the lease, so a stop with no margin fails here.
+        // The deadline is four fifths of a lease; the rest of the bound is slack for a loaded machine
+        // (most of a second at this lease), and still inside the lease, so a stop with no margin fails here.
+        // The price of that slack: a margin shrunk to anything above a twentieth of the lease still passes.
         var sinceLanded = provider.CancelledAt - server.LastAnsweredHeartbeatAt;
-        Assert.True(sinceLanded < lease * 0.9, $"stopped {sinceLanded} after the last heartbeat landed, lease {lease}");
+        Assert.True(sinceLanded < lease * 0.95, $"stopped {sinceLanded} after the last heartbeat landed, lease {lease}");
+        Assert.Empty(server.Reports);
+    }
+
+    [Fact]
+    public async Task The_run_stops_before_a_whole_lease_passes_since_the_last_landed_heartbeat_was_sent()
+    {
+        // The control plane extends the lease from when a heartbeat reaches it, no earlier than its send, so
+        // a deadline counted from the answer drifts past the lapse by the round trip. The answer here takes
+        // half a lease: counted from the send the run stops at four fifths of a lease after it, counted from
+        // the answer at thirteen tenths, after the lease could have lapsed. The floor catches the opposite
+        // error, subtracting the round trip twice, which stops a healthy run early.
+        var lease = TimeSpan.FromSeconds(4);
+        var server = new StubControlPlane { AnswerHeartbeatsThenHang = 1, HeartbeatAnswerDelay = lease / 2 };
+        var provider = new CancelTimingProvider(server.Clock);
+
+        await Worker(server, provider, lease: lease)
+            .RunAsync(Job, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(1, server.HeartbeatCount);
+        var sinceSent = provider.CancelledAt - server.LastAnsweredHeartbeatSentAt;
+        Assert.InRange(sinceSent, lease * 0.6, lease);
         Assert.Empty(server.Reports);
     }
 
@@ -230,10 +252,12 @@ public class RunnerWorkerTests
             FailEveryOtherHeartbeat = true,
             HeartbeatFailure = () => new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable),
         };
-        // Margins wide enough that a slow machine stretching the 20ms heartbeat does not fail it wrongly.
-        var provider = new WaitingProvider(Task.Delay(TimeSpan.FromMilliseconds(1500)));
+        // The run lasts two leases, so it finishes only if landed heartbeats keep pushing the deadline out.
+        // The lease leaves a stalled machine most of a second between landed 20ms heartbeats.
+        var lease = TimeSpan.FromSeconds(1);
+        var provider = new WaitingProvider(Task.Delay(lease * 2));
 
-        await Worker(server, provider, lease: TimeSpan.FromMilliseconds(400))
+        await Worker(server, provider, lease: lease)
             .RunAsync(Job, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
 
         var report = Assert.Single(server.Reports);

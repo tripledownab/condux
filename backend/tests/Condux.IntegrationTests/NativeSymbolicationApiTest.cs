@@ -35,6 +35,10 @@ public sealed class NativeSymbolicationApiTest : IClassFixture<PostgresFixture>,
 {
     private const string Dart = "/private/tmp/crashapp-src/crashapp/lib/main.dart";
 
+    // Where the macOS probe's own source sat when it was built, with the build machine's directories
+    // rewritten to neutral ones of the same length (Golden/README.md).
+    private const string Probe = "/private/var/folders/xx/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/T/build.xxxxxxxxxx/probe/lib/main.dart";
+
     private readonly PostgresFixture _pg;
     private readonly ClickHouseFixture _ch;
     private readonly string _cache = Path.Combine(Path.GetTempPath(), "native-pass-" + Guid.NewGuid().ToString("N"));
@@ -84,6 +88,29 @@ public sealed class NativeSymbolicationApiTest : IClassFixture<PostgresFixture>,
         // The SDK sends no in_app for these frames; the resolved path is what says which are the app's.
         Assert.Equal([true, false, true, false, true, true], frames.Select(f => f.InApp));
         Assert.Single(store.Objects);
+    }
+
+    [Fact]
+    public async Task The_issue_page_reads_an_apple_flutter_crash_through_its_dsym()
+    {
+        // A real crash from an obfuscated Flutter build on macOS, sent by sentry-cocoa as it is on iOS: the
+        // app image is Mach-O and named by its LC_UUID. The dSYM's arm64 slice carries that UUID.
+        var (app, _) = App();
+        var (admin, project) = await ProvisionAsync(app);
+        await UploadAsync(app, admin, project, Golden("flutter-probe-macos-arm64.dwarf"));
+        await SeedAsync(project, SentryParser.ParseEnvelope(Golden("flutter-probe-macos-envelope.txt")).Event!);
+
+        var frames = await ReadFramesAsync(admin, project);
+
+        // The private class keeps its leading underscore: llvm-symbolizer drops it from Mach-O names unless
+        // asked for the name the DWARF writes.
+        Assert.Equal(
+            [
+                ("_ProbeAppState._run", Probe, 48, 7), (null, null, 0, 0), ("probeLevelOne", Probe, 20, 3),
+                ("probeLevelTwo", Probe, 15, 30), ("probeLevelThree", Probe, 11, 14),
+            ],
+            frames.Select(f => (f.Function, f.Filename, f.Lineno, f.Colno)));
+        Assert.Equal([true, false, true, true, true], frames.Select(f => f.InApp));
     }
 
     [Fact]
@@ -657,7 +684,7 @@ public sealed class NativeSymbolicationApiTest : IClassFixture<PostgresFixture>,
             // Only this app's meter, so a test running beside it cannot add to the count.
             InstrumentPublished = (instrument, l) =>
             {
-                if (instrument.Meter.Scope == meters && instrument.Meter.Name == SymbolizerMetrics.MeterName)
+                if (instrument.Meter.Scope == meters && instrument.Name == "condux.symbolizer.responses")
                 {
                     l.EnableMeasurementEvents(instrument);
                 }
@@ -678,6 +705,91 @@ public sealed class NativeSymbolicationApiTest : IClassFixture<PostgresFixture>,
         await symbolication.SymbolicateAsync(project, NativeEvent([(ElfDebugFile.ToBuild(cart).Build!.DebugId, 0x1000_0000UL)], [0x1000_4600UL]));
 
         Assert.Equal([("holds", 404), ("put", 204), ("resolve", 429)], counted);
+    }
+
+    [Fact]
+    public async Task A_symbolizer_that_is_down_is_counted_as_a_native_failure()
+    {
+        // A refused connection gets no answer, so the response counter cannot see it. This counter is the
+        // one that says the symbolizer is down.
+        var (app, _) = App(new FailingHandler());
+        var (admin, project) = await ProvisionAsync(app);
+        var cart = Golden("cart.so");
+        await UploadAsync(app, admin, project, cart);
+        var passes = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var meters = app.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Meter.Scope == meters && instrument.Name == "condux.symbolication.failures")
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+            passes.Enqueue((string)tags.ToArray().Single(t => t.Key == "pass").Value!));
+        listener.Start();
+        var symbolication = app.Services.GetRequiredService<Condux.Storage.SourceMaps.EventSymbolication>();
+
+        await symbolication.SymbolicateAsync(project, NativeEvent([(ElfDebugFile.ToBuild(cart).Build!.DebugId, 0x1000_0000UL)], [0x1000_4600UL]));
+
+        Assert.Equal(["native"], passes);
+    }
+
+    [Fact]
+    public async Task A_budget_the_source_map_pass_ran_out_is_counted_once_and_not_against_the_native_pass()
+    {
+        // The passes after it would only fail on the spent budget too, which would count one wait several
+        // times and blame passes that never got to run. The crash carries a debug image and exception types,
+        // so the class-name pass would look them up if it ran.
+        var (app, _) = App(new FailingHandler());
+        var (_, project) = await ProvisionAsync(app);
+        await new SourceMapArtifactRepository(_pg.ConnectionString).RecordAsync(
+            project, "app@1.4.2", dist: null, debugId: "slow", filename: "app.min.js",
+            objectKey: "sourcemaps/by-debug-id/slow", byteSize: 1);
+        var native = NativeEvent([("ab000000000000000000000000000000", 0x1000_0000UL)], [0x1000_4600UL]);
+        var crash = native with
+        {
+            Release = "app@1.4.2",
+            DebugImages =
+            [
+                .. native.DebugImages,
+                new DebugImage { Type = "sourcemap", CodeFile = "https://app/js/app.min.js", DebugId = "slow" },
+            ],
+            Exceptions =
+            [
+                new ExceptionValue
+                {
+                    Type = "TypeError",
+                    Stacktrace = new Stacktrace
+                    {
+                        Frames =
+                        [
+                            new Frame
+                            {
+                                InApp = true, Filename = "app.min.js", AbsPath = "https://app/js/app.min.js",
+                                Function = "n", Lineno = 2, Colno = 6,
+                            },
+                        ],
+                    },
+                },
+                .. native.Exceptions,
+            ],
+        };
+        using var recorder = new TestMetrics.SymbolicationRecorder();
+        var symbolication = new Condux.Storage.SourceMaps.EventSymbolication(
+            new Condux.Storage.SourceMaps.FrameSymbolicator(
+                new SourceMapArtifactRepository(_pg.ConnectionString), new HangingMapStore()),
+            app.Services.GetRequiredService<NativeSymbolicator>(),
+            app.Services.GetRequiredService<Condux.Storage.DebugFiles.DartTypeNames>(), recorder.Metrics,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Condux.Storage.SourceMaps.EventSymbolication>.Instance);
+
+        await symbolication.SymbolicateAsync(project, crash).WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(["source-map"], recorder.Measurements
+            .Where(m => m.Instrument == "condux.symbolication.failures").Select(m => m.Pass));
     }
 
     [Theory]
@@ -770,7 +882,8 @@ public sealed class NativeSymbolicationApiTest : IClassFixture<PostgresFixture>,
         ClickHouseRegistration.Configure(http, _ch.BaseUrl, _ch.ChUser, _ch.ChPassword);
         var stored = crash with { TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
         await new ClickHouseEventWriter(http).InsertAsync([ClickHouseEventWriter.ToRow(
-            project.ToString(), (ulong)issue.Id, stored, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays)]);
+            project.ToString(), (ulong)issue.Id, stored, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays,
+            DateTimeOffset.UtcNow)]);
     }
 
     // The frames of the last exception in the issue's latest event, as the issue page receives them.

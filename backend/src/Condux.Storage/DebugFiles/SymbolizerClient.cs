@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Condux.Core.DebugFiles;
+using Condux.Storage.SourceMaps;
 
 namespace Condux.Storage.DebugFiles;
 
@@ -9,9 +10,9 @@ namespace Condux.Storage.DebugFiles;
 /// the symbolizer does not hold them, and offsets to resolve, and nothing else: no project, no credential and
 /// no storage key, since the service parses files a stranger uploaded. An answer this caller does not expect
 /// throws, and the read around it then shows the frames as they were. Each answer received in full is
-/// counted (<see cref="SymbolizerMetrics"/>).
+/// counted (<see cref="SymbolicationMetrics"/>).
 /// </summary>
-public sealed class SymbolizerClient(HttpClient http, SymbolizerMetrics metrics)
+public sealed class SymbolizerClient(HttpClient http, SymbolicationMetrics metrics)
 {
     /// <summary>The named client registered for it, so a caller takes a fresh one from the factory.</summary>
     public const string HttpClientName = "symbolizer";
@@ -20,7 +21,7 @@ public sealed class SymbolizerClient(HttpClient http, SymbolizerMetrics metrics)
     public async Task<bool> HoldsAsync(string sha256, CancellationToken cancellationToken)
     {
         using var response = await http.GetAsync($"files/{sha256}", cancellationToken);
-        metrics.Record("holds", response.StatusCode);
+        metrics.RecordResponse("holds", response.StatusCode);
         return response.StatusCode switch
         {
             HttpStatusCode.NoContent => true,
@@ -34,7 +35,7 @@ public sealed class SymbolizerClient(HttpClient http, SymbolizerMetrics metrics)
     {
         using var body = new ByteArrayContent(content);
         using var response = await http.PutAsync($"files/{sha256}", body, cancellationToken);
-        metrics.Record("put", response.StatusCode);
+        metrics.RecordResponse("put", response.StatusCode);
         return response.StatusCode switch
         {
             HttpStatusCode.NoContent => true,
@@ -49,7 +50,7 @@ public sealed class SymbolizerClient(HttpClient http, SymbolizerMetrics metrics)
     {
         using var response = await http.PostAsJsonAsync(
             "resolve", new ResolveRequest(sha256, addresses), cancellationToken);
-        metrics.Record("resolve", response.StatusCode);
+        metrics.RecordResponse("resolve", response.StatusCode);
         return response.StatusCode switch
         {
             HttpStatusCode.OK => await response.Content.ReadFromJsonAsync<ResolveResponse>(cancellationToken),

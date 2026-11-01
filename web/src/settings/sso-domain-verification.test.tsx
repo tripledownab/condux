@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConduxApiError } from "@/src/api/fetcher";
 import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -77,6 +78,27 @@ describe("SsoDomainVerification", () => {
     renderWithIntl(<SsoDomainVerification orgId={7} config={config} canManage={true} />);
 
     expect(screen.getByRole("status")).toHaveTextContent(message);
+  });
+
+  // Both refusals are 409s, so only the code tells them apart, and anything else falls back to the
+  // generic message rather than to one of them.
+  it.each([
+    ["email_domain_taken", "That email domain is already claimed by another organization."],
+    [
+      "sso_config_changed",
+      "The SSO configuration changed while this page was open. Reload and try again.",
+    ],
+    ["constructor", "Could not verify. Try again."],
+  ])("explains a %s refusal", (code, message) => {
+    useVerifyMock.mockReturnValue({
+      mutate,
+      isPending: false,
+      isError: true,
+      error: new ConduxApiError("POST", "/api/orgs/7/sso-config/verify", 409, code),
+    });
+    renderWithIntl(<SsoDomainVerification orgId={7} config={config} canManage={true} />);
+
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 
   it("shows a member the state without offering the action", () => {

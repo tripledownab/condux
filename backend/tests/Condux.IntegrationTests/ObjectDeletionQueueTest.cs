@@ -78,7 +78,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
             if (await Task.WhenAny(reupload, WaitForLockWaiterAsync(key)) == reupload)
             {
                 await reupload;
-                await store.PutAsync(key, [1], "application/octet-stream");
+                await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
                 objectWritten = true;
             }
         });
@@ -88,7 +88,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
         await reupload;
         if (!objectWritten)
         {
-            await store.PutAsync(key, [1], "application/octet-stream");
+            await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
         }
 
         Assert.NotNull(await store.GetAsync(key));
@@ -108,7 +108,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
         var key = ProjectObjectKeys.ToPrefix(ProjectObjectKeys.DebugFiles, projectId) + "seen-by-two-drains";
         var pause = $"debug-files/{Unique()}/";
         await QueueAsync(pause, isPrefix: true, ago: TimeSpan.FromMinutes(1));
-        await store.PutAsync(key, [1], "application/octet-stream");
+        await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream");
         await QueueAsync(key, isPrefix: false);
 
         // Recorded rather than asserted inside the step: the step runs inside drain B's store call, whose
@@ -119,7 +119,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
             await new ObjectDeletionQueue(pg.ConnectionString, store).DrainAsync(10_000);
             deletedByDrainA = await store.GetAsync(key) is null;
             await RecordAsync(ProjectObjectKeys.DebugFiles, projectId, key);
-            await store.PutAsync(key, [2], "application/octet-stream");
+            await store.PutAsync(key, new byte[] { 2 }, "application/octet-stream");
         });
         await new ObjectDeletionQueue(pg.ConnectionString, drainB).DrainAsync(10_000);
 
@@ -155,7 +155,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
         var neighbour = $"debug-files/{id}0/three"; // project 10 beside project 1
         foreach (var key in gone.Append(neighbour))
         {
-            await store.PutAsync(key, [1, 2, 3], "application/octet-stream");
+            await store.PutAsync(key, new byte[] { 1, 2, 3 }, "application/octet-stream");
         }
         await QueueAsync($"debug-files/{id}/", isPrefix: true);
 
@@ -333,7 +333,7 @@ public sealed class ObjectDeletionQueueTest(PostgresFixture pg, S3Fixture s3)
 
     private Task RecordAsync(string root, long projectId, string key) => root == ProjectObjectKeys.DebugFiles
         ? new DebugFileRepository(pg.ConnectionString).RecordAsync(
-            projectId, new ElfBuild(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString()), key, 1, sha256: null)
+            projectId, new DebugBuild(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString()), key, 1, sha256: null)
         : new SourceMapArtifactRepository(pg.ConnectionString)
             .RecordAsync(projectId, "1.0.0", null, Guid.NewGuid().ToString(), "app.js", key, 1);
 

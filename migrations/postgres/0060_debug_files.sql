@@ -15,4 +15,15 @@ CREATE TABLE IF NOT EXISTS debug_files (
     UNIQUE (project_id, build_id)
 );
 
-CREATE INDEX IF NOT EXISTS debug_files_debug_idx ON debug_files (project_id, debug_id);
+-- This file runs again whenever the migration files change other than by new ones sorting last
+-- (deploy/migrations/apply-postgres.sh), and CREATE INDEX IF NOT EXISTS takes a share lock on the table
+-- before it looks for the index, so it would queue behind any write to debug_files that is still open (an
+-- obfuscation map upload holds one for seconds) and stall every later write behind it. The catalog is
+-- asked first.
+DO $$
+BEGIN
+    IF to_regclass('debug_files_debug_idx') IS NULL THEN
+        CREATE INDEX debug_files_debug_idx ON debug_files (project_id, debug_id);
+    END IF;
+END
+$$;

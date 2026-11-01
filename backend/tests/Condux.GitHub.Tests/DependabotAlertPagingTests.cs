@@ -184,8 +184,9 @@ public class DependabotAlertPagingTests
     [Fact]
     public async Task A_first_page_that_fails_is_the_callers_failure()
     {
-        // Nothing has been read, so there is no partial list to return: the scanner's caller decides.
-        var (client, _) = Create([], failing: new() { [FirstPage] = HttpStatusCode.Forbidden });
+        // Nothing has been read, so there is no partial list to return: the scanner's caller decides. A 403
+        // is a refusal with a reason instead (DependabotAlertEventTests).
+        var (client, _) = Create([], failing: new() { [FirstPage] = HttpStatusCode.InternalServerError });
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ListDependabotAlertsAsync(Token, Repo));
     }

@@ -71,8 +71,7 @@ internal static class PostgresServer
             //
             // The image's docker-entrypoint.sh prepends `postgres` to a command that begins with a
             // dash, so this arrives at the server as `postgres -c max_connections=500`.
-            var container = new PostgreSqlBuilder()
-                .WithImage("postgres:17-alpine")
+            var container = new PostgreSqlBuilder(ComposeImages.For("postgres"))
                 .WithCommand("-c", "max_connections=500")
                 .Build();
             await container.StartAsync();

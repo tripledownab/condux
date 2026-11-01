@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Condux.Core.Events;
 
 namespace Condux.Core.Ingest;
@@ -12,7 +13,7 @@ public static partial class SentryParser
     /// <summary>The string items of an array property; non-string items are skipped.</summary>
     private static IReadOnlyList<string> GetStringArray(JsonElement el, string name)
     {
-        if (!el.TryGetProperty(name, out var arr) || arr.ValueKind != JsonValueKind.Array)
+        if (!el.TryGetMember(name, out var arr) || arr.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -28,26 +29,37 @@ public static partial class SentryParser
     }
 
     private static string? GetString(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        el.TryGetMember(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static int GetInt(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : 0;
+        el.TryGetMember(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : 0;
 
     private static bool GetBool(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+        el.TryGetMember(name, out var v) && v.ValueKind == JsonValueKind.True;
 
-    // The widest instant everything downstream can represent, read from the type that decides it rather
-    // than written out, so the two cannot drift. It is narrower than both ClickHouse DateTime64 and the
-    // ECMAScript Date range the dashboard parses the value back into, so bounding here bounds those.
-    // The sender names this field, so a value outside the range is not a clock reading, and one that
-    // reaches storage costs more than the event it came with: every reader that turns it back into an
-    // instant throws on it, and the consumer's drain loop pauses before its next message.
-    private static readonly long MinTimestampMs = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
-    private static readonly long MaxTimestampMs = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
+    // The envelope spec makes sent_at an RFC 3339 string in UTC, and Sentry's relay reads it with chrono's
+    // relaxed RFC 3339 parser, which wants a date, a time and an offset. Anything looser would read a bare
+    // date as midnight and shift the event by up to a day, so a value of another shape is not read at all.
+    // Sentry refuses the whole envelope over one; dropping only the correction loses less.
+    [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$")]
+    private static partial Regex Rfc3339();
+
+    // The envelope header is already known to be a JSON object, the reader checked it.
+    private static long ParseSentAt(byte[] header)
+    {
+        using var doc = JsonDocument.Parse(header);
+        return doc.RootElement.TryGetMember("sent_at", out var sentAt)
+            && sentAt.ValueKind == JsonValueKind.String
+            && sentAt.GetString() is { } text
+            && Rfc3339().IsMatch(text)
+            && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
+                ? at.ToUnixTimeMilliseconds()
+                : 0;
+    }
 
     private static long ParseTimestamp(JsonElement el)
     {
-        if (!el.TryGetProperty("timestamp", out var ts))
+        if (!el.TryGetMember("timestamp", out var ts))
         {
             return 0;
         }
@@ -70,14 +82,14 @@ public static partial class SentryParser
     // number, is positive, and is not a time. The comparison is the whole check: NaN and the infinities
     // fail it too, so an explicit test for them would be a branch that never decides anything.
     private static long ToStorableMs(double ms) =>
-        ms >= MinTimestampMs && ms <= MaxTimestampMs ? (long)ms : 0;
+        ms >= EventTimes.MinStorableMs && ms <= EventTimes.MaxStorableMs ? (long)ms : 0;
 
     // A level as Sentry's own ingest reads one: the five documented names plus its aliases "log" and
     // "critical", or a Python logging number (10 to 50), which that ingest also reads. Null when absent or
     // unrecognised, because the protocol gives an event and a breadcrumb different defaults.
     private static Level? ParseLevel(JsonElement el)
     {
-        if (!el.TryGetProperty("level", out var v))
+        if (!el.TryGetMember("level", out var v))
         {
             return null;
         }
@@ -114,11 +126,11 @@ public static partial class SentryParser
     private static bool TryGetValuesArray(JsonElement root, string name, out JsonElement values)
     {
         values = default;
-        if (!root.TryGetProperty(name, out var el))
+        if (!root.TryGetMember(name, out var el))
         {
             return false;
         }
-        if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty("values", out var v) && v.ValueKind == JsonValueKind.Array)
+        if (el.ValueKind == JsonValueKind.Object && el.TryGetMember("values", out var v) && v.ValueKind == JsonValueKind.Array)
         {
             values = v;
             return true;
@@ -134,7 +146,7 @@ public static partial class SentryParser
     private static IReadOnlyDictionary<string, string> ParseStringMap(JsonElement root, string name)
     {
         var dict = new Dictionary<string, string>();
-        if (!root.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetMember(name, out var el) || el.ValueKind != JsonValueKind.Object)
         {
             return dict;
         }
@@ -149,7 +161,7 @@ public static partial class SentryParser
 
     private static IReadOnlyList<string> ParseStringArray(JsonElement root, string name)
     {
-        if (!root.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Array)
+        if (!root.TryGetMember(name, out var el) || el.ValueKind != JsonValueKind.Array)
         {
             return [];
         }

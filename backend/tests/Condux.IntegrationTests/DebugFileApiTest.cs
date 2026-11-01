@@ -8,14 +8,16 @@ using Npgsql;
 using Xunit;
 using static Condux.IntegrationTests.Fixtures.ReleaseTokenUploads;
 using static Condux.Tests.Shared.ElfFiles;
+using MachO = Condux.Tests.Shared.MachOFiles;
 
 namespace Condux.IntegrationTests;
 
 /// <summary>
-/// Native debug file upload over HTTP: CI posts a symbols file with only a release token, and the file is
-/// stored and indexed under the build ID read from the file itself. Also covers what is refused: a stripped
-/// library carrying the same build ID, a body that is not ELF, a body past the cap, a bad token, and the
-/// feature switched off when object storage is not configured.
+/// Native debug file upload over HTTP: CI posts a symbols file (Android) or a dSYM's DWARF file (iOS) with
+/// only a release token, and the file is stored and indexed under the build read from the file itself, a
+/// universal dSYM as one file per architecture. Also covers what is refused: a stripped library or a shipped
+/// binary carrying the same build, a body that is neither ELF nor Mach-O, a body past the cap, a bad token,
+/// and the feature switched off when object storage is not configured.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class DebugFileApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -41,6 +43,63 @@ public sealed class DebugFileApiTest(PostgresFixture pg) : IClassFixture<Postgre
         Assert.Equal($"debug-files/{projectId}/{BuildId}", stored.Key);
         Assert.Equal(file, stored.Value);
         Assert.Equal([(BuildId, DebugId)], await RowsAsync(projectId));
+    }
+
+    [Fact]
+    public async Task A_dsym_is_stored_under_its_own_uuid()
+    {
+        var store = new RecordingObjectStore();
+        var (ci, projectId) = await ConnectAsync(store);
+        // The arm64 slice of a real Flutter macOS build's dSYM; its UUID is the debug_id the crash carried.
+        var dsym = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Golden", "flutter-probe-macos-arm64.dwarf"));
+
+        var resp = await ci.PostAsync("/api/debug-files", new ByteArrayContent(dsym));
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        const string uuid = "e191a89de2c230c4bf831d9222717212";
+        Assert.Equal(uuid, body.GetProperty("buildId").GetString());
+        Assert.Equal("e191a89d-e2c2-30c4-bf83-1d9222717212", body.GetProperty("debugId").GetString());
+        var only = Assert.Single(body.GetProperty("files").EnumerateArray());
+        Assert.Equal("arm64", only.GetProperty("architecture").GetString());
+        Assert.Equal(dsym, Assert.Single(store.Objects).Value);
+        Assert.Equal([(uuid, "e191a89d-e2c2-30c4-bf83-1d9222717212")], await RowsAsync(projectId));
+    }
+
+    [Fact]
+    public async Task A_universal_dsym_is_stored_as_one_file_per_architecture()
+    {
+        var store = new RecordingObjectStore();
+        var (ci, projectId) = await ConnectAsync(store);
+        var intel = MachO.Dsym("C4905206-86BE-3B69-9564-66EEDAD3CAEB", MachO.X86_64);
+        var arm = MachO.Dsym("E191A89D-E2C2-30C4-BF83-1D9222717212", MachO.Arm64);
+
+        var resp = await ci.PostAsync("/api/debug-files", new ByteArrayContent(MachO.Universal(false, intel, arm)));
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+        var files = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("files").EnumerateArray().ToList();
+        Assert.Equal(["x86_64", "arm64"], files.Select(f => f.GetProperty("architecture").GetString()));
+        // Each architecture's object is its thin file, which is what llvm-symbolizer reads without being told
+        // which architecture to take.
+        Assert.Equal(intel, store.Objects[$"debug-files/{projectId}/c490520686be3b69956466eedad3caeb"]);
+        Assert.Equal(arm, store.Objects[$"debug-files/{projectId}/e191a89de2c230c4bf831d9222717212"]);
+        Assert.Equal(2, (await RowsAsync(projectId)).Count);
+    }
+
+    [Fact]
+    public async Task The_app_binary_that_shipped_is_refused_and_pointed_at_its_dsym()
+    {
+        var store = new RecordingObjectStore();
+        var (ci, projectId) = await ConnectAsync(store);
+        var binary = MachO.Thin(MachO.Arm64, MachO.UuidCommand("E191A89D-E2C2-30C4-BF83-1D9222717212"),
+            MachO.Segment("__TEXT", ("__text", 64)));
+
+        var resp = await ci.PostAsync("/api/debug-files", new ByteArrayContent(binary));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Contains("dSYM", await resp.Content.ReadAsStringAsync());
+        Assert.Empty(store.Objects);
+        Assert.Empty(await RowsAsync(projectId));
     }
 
     [Fact]
@@ -74,14 +133,10 @@ public sealed class DebugFileApiTest(PostgresFixture pg) : IClassFixture<Postgre
         // The row is written before the object, so storage never holds an object no row names.
         var (ci, projectId) = await ConnectAsync(new UnreachableMapStore());
 
-        try
-        {
-            await ci.PostAsync("/api/debug-files", new ByteArrayContent(SymbolsFile(BuildId)));
-        }
-        catch (HttpRequestException)
-        {
-            // The test host surfaces the store's exception; what matters is what was recorded first.
-        }
+        // The store's exception reaches the test (ServerExceptions); what matters is what was recorded first.
+        var failed = await Assert.ThrowsAsync<HttpRequestException>(
+            () => ci.PostAsync("/api/debug-files", new ByteArrayContent(SymbolsFile(BuildId))));
+        Assert.Equal(UnreachableMapStore.Message, failed.Message);
 
         Assert.Equal([(BuildId, DebugId)], await RowsAsync(projectId));
         // And no hash: the hash names the bytes the bucket holds, which here are none, or on a re-upload
@@ -121,13 +176,14 @@ public sealed class DebugFileApiTest(PostgresFixture pg) : IClassFixture<Postgre
     }
 
     [Fact]
-    public async Task A_body_that_is_not_elf_is_refused()
+    public async Task A_body_that_is_neither_elf_nor_mach_o_is_refused()
     {
         var (ci, _) = await ConnectAsync(new RecordingObjectStore());
 
         var resp = await ci.PostAsync("/api/debug-files", new StringContent("{\"version\":3}"));
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Contains("neither ELF nor Mach-O", await resp.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -142,38 +198,6 @@ public sealed class DebugFileApiTest(PostgresFixture pg) : IClassFixture<Postgre
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode);
         Assert.Empty(store.Objects);
-    }
-
-    [Fact]
-    public async Task An_upload_past_the_places_held_in_memory_is_turned_away_and_the_place_is_given_back()
-    {
-        var app = AppWithStore(pg.ConnectionString, new RecordingObjectStore());
-        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
-        var ci = Bearer(app, await MintTokenAsync(admin, projectId));
-        // Occupy every place, as uploads with unfinished bodies would. The test client sends no request
-        // until its body ends, so a slow sender cannot be staged through it.
-        var gate = app.Services.GetRequiredService<DebugFileUploadGate>();
-        var taken = 0;
-        while (gate.TryEnter())
-        {
-            taken++;
-        }
-
-        var turnedAway = await ci.PostAsync("/api/debug-files", new ByteArrayContent(SymbolsFile(BuildId)));
-        for (var i = 0; i < taken; i++)
-        {
-            gate.Leave();
-        }
-        var refused = await ci.PostAsync("/api/debug-files", new ByteArrayContent([1, 2, 3]));
-        var stored = await ci.PostAsync("/api/debug-files", new ByteArrayContent(SymbolsFile(BuildId)));
-
-        Assert.True(taken > 0);
-        Assert.Equal(HttpStatusCode.TooManyRequests, turnedAway.StatusCode);
-        Assert.NotNull(turnedAway.Headers.RetryAfter);
-        // A refused upload gives its place back too, or two bad files would close the endpoint for good.
-        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        Assert.Equal(HttpStatusCode.Created, stored.StatusCode);
-        Assert.True(gate.TryEnter() && gate.TryEnter());
     }
 
     [Fact]

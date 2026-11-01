@@ -91,8 +91,10 @@ public class JvmFramePathsTests
 
         var rule = CodeMappingDeriver.Derive(inApp, ["src/main/java/" + OwnerPath, "pom.xml"])[0];
 
-        // Every package sits under the one source root, so the rule rewrites from the start of the path.
-        Assert.Equal(("", "src/main/java/"), (rule.StackRoot, rule.SourceRoot));
+        // Every package sits under the one source root, so the rule adds it in front of the package its
+        // frames share, rather than rewriting every path from the empty root.
+        var package = OwnerPath[..(OwnerPath.LastIndexOf('/') + 1)];
+        Assert.Equal((package, "src/main/java/" + package), (rule.StackRoot, rule.SourceRoot));
         var mapping = new CodeMapping(Guid.NewGuid(), Guid.NewGuid(), rule.StackRoot, rule.SourceRoot);
         Assert.Equal("src/main/java/" + OwnerPath, CodeMapper.Resolve(OwnerPath, [mapping]));
     }

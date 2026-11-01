@@ -358,4 +358,24 @@ public class OtlpEventMapperTests
         Assert.False(OtlpLogs.ParseJson("not json").IsSuccess);
         Assert.False(OtlpLogs.ParseProtobuf([0x00, 0x00]).IsSuccess);
     }
+
+    /// <summary>
+    /// The stacktrace is the sender's text, so its numbers can be anything. A line number past an int keeps
+    /// its frame at line 0, and a frame numbered in another script's digits is not a V8 frame; either one
+    /// used to throw out of the mapper and answer the export with a 500.
+    /// </summary>
+    [Fact]
+    public void StacktraceNumbers_ThatAreNotAnInt_DoNotThrow()
+    {
+        var events = FromJson("""
+            {"resourceLogs":[{"scopeLogs":[{"logRecords":[{"severityNumber":17,"attributes":[
+              {"key":"exception.type","value":{"stringValue":"TypeError"}},
+              {"key":"exception.stacktrace","value":{"stringValue":
+                "TypeError: x\n    at f (a.js:99999999999:1)\n    at g (b.js:٣:2)\n    at h (c.js:7:3)"}}]}]}]}]}
+            """);
+
+        var frames = Assert.Single(Assert.Single(events).Exceptions).Stacktrace!.Frames;
+        Assert.Equal(["c.js", "a.js"], frames.Select(frame => frame.Filename));
+        Assert.Equal([7, 0], frames.Select(frame => frame.Lineno));
+    }
 }

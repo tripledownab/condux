@@ -67,7 +67,8 @@ public sealed class IssueDetailApiTest(PostgresFixture pg, ClickHouseFixture ch)
             TimestampUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         };
         await writer.InsertAsync([ClickHouseEventWriter.ToRow(
-            project, (ulong)r1.Id, e, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays)]);
+            project, (ulong)r1.Id, e, grouping.Fingerprint, PlanCatalog.For(Tier.Free).RetentionDays,
+            DateTimeOffset.UtcNow)]);
 
         // The API exposes the public UUID, not the internal bigint; read it from the list endpoint.
         var list = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{project}/issues"))

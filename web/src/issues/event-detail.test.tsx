@@ -1,26 +1,26 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { FrameLink } from "@/src/api/generated/model";
 import { renderWithIntl } from "@/src/test-utils/render-with-intl";
 import { EventEvidence } from "./event-detail";
 import { parseEventPayload } from "./event-payload";
 
-// Renders the stack trace the way the issue page does, through EventEvidence with a link resolver, and
-// checks each row shows the parts its frame has. Unsymbolicated native frames used to read "? ?".
-function renderFrames(frames: object[]) {
+// Renders the stack trace the way the issue page does, through EventEvidence with the server's frame
+// links (by default one for each frame with a file name), and checks each row shows the parts its frame
+// has. Unsymbolicated native frames used to read "? ?".
+function renderFrames(frames: Record<string, unknown>[], links?: FrameLink[]) {
   const event = parseEventPayload(
     JSON.stringify({ Exceptions: [{ Type: "StateError", Stacktrace: { Frames: frames } }] }),
   );
   if (event === null) {
     throw new Error("payload should parse");
   }
-  renderWithIntl(
-    <EventEvidence
-      event={event}
-      frameUrl={(frame) =>
-        frame.filename ? `https://github.com/acme/app/blob/main/${frame.filename}` : null
-      }
-    />,
+  const linked = frames.flatMap((frame, position) =>
+    typeof frame.Filename === "string"
+      ? [{ frame: position, url: `https://github.com/acme/app/blob/main/${frame.Filename}` }]
+      : [],
   );
+  renderWithIntl(<EventEvidence event={event} links={links ?? linked} />);
 }
 
 describe("EventEvidence stack trace", () => {
@@ -68,6 +68,24 @@ describe("EventEvidence stack trace", () => {
       "href",
       "https://github.com/acme/app/blob/main/src/cart.js",
     );
+  });
+
+  // Links arrive by the frame's position in stored order (oldest first), while the rows render newest
+  // first, so a link must land on its own frame's row and not on the row at the same rendered position.
+  it("puts each link on the row of the frame it names", () => {
+    renderFrames(
+      [
+        { Function: "main", Filename: "src/main.js", Lineno: 1, InApp: true },
+        { Function: "total", Filename: "src/cart.js", Lineno: 5, InApp: true },
+      ],
+      [{ frame: 0, url: "https://github.com/acme/app/blob/main/src/main.js#L1" }],
+    );
+
+    expect(screen.getByRole("link", { name: "src/main.js:1" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/blob/main/src/main.js#L1",
+    );
+    expect(screen.queryByRole("link", { name: "src/cart.js:5" })).toBeNull();
   });
 
   it("shows a question mark only for a frame with neither a name nor a location", () => {

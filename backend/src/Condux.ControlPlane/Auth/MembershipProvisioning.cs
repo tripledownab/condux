@@ -29,9 +29,11 @@ internal enum JoinOutcome
 /// </summary>
 internal static class MembershipProvisioning
 {
+    /// <param name="beforeDeletingOrg">Runs before a solo org is deleted, for what a cascade cannot do: a
+    /// grant held at a third party (a Linear workspace) outlives the row that records it unless revoked.</param>
     public static async Task<JoinOutcome> JoinSingleOrgAsync(
         OrgMemberRepository members, OrgRepository orgs, long userId, long orgId, OrgRole role,
-        CancellationToken ct = default)
+        Func<long, CancellationToken, Task> beforeDeletingOrg, CancellationToken ct = default)
     {
         foreach (var membership in await members.ListOrgsForUserAsync(userId, ct))
         {
@@ -43,6 +45,7 @@ internal static class MembershipProvisioning
             {
                 return JoinOutcome.BlockedSharedOrg;
             }
+            await beforeDeletingOrg(membership.Org.Id, ct);
             await orgs.DeleteAsync(membership.Org.Id, ct);
         }
 

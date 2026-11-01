@@ -21,6 +21,11 @@ public static class EventScrubber
     public static Event Scrub(Event e, string userKeySalt) => e with
     {
         Message = e.Message is null ? null : Scrubber.ScrubString(e.Message),
+        // What names the operation, not only what describes it: a transaction is a route or a span name,
+        // and an exception type or a fingerprint component is whatever the sender called it. Each is
+        // shown as the issue's title or used to group it, and any of them can be built from a URL.
+        Transaction = e.Transaction is null ? null : Scrubber.ScrubString(e.Transaction),
+        Fingerprint = e.Fingerprint.Select(Scrubber.ScrubString).ToList(),
         Exceptions = e.Exceptions.Select(ScrubException).ToList(),
         Breadcrumbs = e.Breadcrumbs
             .Select(b => b with
@@ -70,6 +75,7 @@ public static class EventScrubber
     private static ExceptionValue ScrubException(ExceptionValue x) =>
         x with
         {
+            Type = x.Type is null ? null : Scrubber.ScrubString(x.Type),
             Value = x.Value is null ? null : Scrubber.ScrubString(x.Value),
             Stacktrace = x.Stacktrace is null
                 ? null

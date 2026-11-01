@@ -67,13 +67,14 @@ public sealed class RecordingObjectStore : IObjectStore
     /// still storing its file.</summary>
     public Func<Task>? DuringPut { get; set; }
 
-    public async Task PutAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken = default)
+    public async Task PutAsync(
+        string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken = default)
     {
         if (DuringPut is { } duringPut)
         {
             await duringPut();
         }
-        Objects[key] = content;
+        Objects[key] = content.ToArray();
     }
 
     public Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default) =>

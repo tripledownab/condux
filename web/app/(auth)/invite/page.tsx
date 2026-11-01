@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import {
   getListMyOrgsQueryKey,
   getMeQueryKey,
@@ -15,20 +14,23 @@ import {
 } from "@/src/api/generated/condux";
 import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
+import { lookUpCodeKey, readErrorCode, readErrorStatus } from "@/src/lib/api-errors";
 import { ROUTES } from "@/src/routes";
 
 // Map an acceptInvite failure to a message key. 403 = signed in as the wrong email; 404 = the token is
 // invalid or expired; 409 carries a code (already a member of this org, or already in a different org).
+const CONFLICT_KEYS: Record<string, string> = { already_member: "alreadyMember" };
+
 function acceptErrorKey(error: unknown): string {
-  const api = error as ConduxApiError | null;
-  if (api?.status === 403) {
+  const status = readErrorStatus(error);
+  if (status === 403) {
     return "wrongEmail";
   }
-  if (api?.status === 404) {
+  if (status === 404) {
     return "invalid";
   }
-  if (api?.status === 409) {
-    return api.code === "already_member" ? "alreadyMember" : "alreadyInOrg";
+  if (status === 409) {
+    return lookUpCodeKey(CONFLICT_KEYS, readErrorCode(error)) ?? "alreadyInOrg";
   }
   return "generic";
 }
@@ -42,7 +44,7 @@ export default function InvitePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const me = useMe({ query: { retry: false } });
-  const accept = useAcceptInvite<ConduxApiError>();
+  const accept = useAcceptInvite<unknown>();
   const logout = useLogout();
 
   // Read the token from the URL on the client (not useSearchParams, which would force a Suspense

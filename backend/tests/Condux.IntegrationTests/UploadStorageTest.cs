@@ -62,6 +62,22 @@ public sealed class UploadStorageTest(PostgresFixture pg) : IClassFixture<Postgr
     }
 
     [Fact]
+    public async Task A_debug_files_obfuscation_map_counts_against_the_quota()
+    {
+        // The two files alone fit the quota exactly; only the map held on the newer one pushes the org past
+        // it, so a quota that counted byte_size alone would evict nothing.
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var oldest = await InsertDebugFileAsync(projectId, FreeQuota / 2, Now.AddDays(-2));
+        var newest = await InsertDebugFileAsync(projectId, FreeQuota / 2, Now.AddDays(-1));
+        await ExecuteAsync($"UPDATE debug_files SET dart_symbol_map_bytes = 1 WHERE object_key = '{newest}'");
+
+        Assert.Equal(1, await new UploadStorage(pg.ConnectionString).EvictBeyondQuotaAsync(projectId));
+
+        Assert.Equal([newest], await KeysAsync(projectId));
+        Assert.Equal([oldest], await QueuedAsync(oldest));
+    }
+
+    [Fact]
     public async Task Within_the_quota_nothing_goes()
     {
         var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);

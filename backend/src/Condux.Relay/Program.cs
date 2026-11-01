@@ -2,6 +2,7 @@
 // line here and the detail is one directory away, in Setup/ for the wiring and Endpoints/ for the
 // routes, so this file stays a readable statement of what the process is.
 using Condux.Relay.Endpoints;
+using Condux.Relay.Ingest;
 using Condux.Relay.Setup;
 using Condux.Telemetry;
 
@@ -28,9 +29,9 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
         }
         catch (Exception exception)
         {
-            // A cancellation from a client disconnect or graceful shutdown is expected noise, not a fault;
-            // still report a genuine OperationCanceledException thrown for any other reason.
-            if (!ConduxSelfReport.IsExpectedCancellation(exception, context.RequestAborted.IsCancellationRequested))
+            // What the CALLER got wrong is not Condux's fault, and anyone can send it at will (ADR-0044): a
+            // body past the cap once decompressed, a body cut short, a client that hung up. The SDK's rule.
+            if (!Condux.Sdk.AspNetCore.ConduxExceptionMiddleware.IsCallerCaused(context, exception))
             {
                 _ = conduxSelf.CaptureExceptionAsync(exception);
             }
@@ -39,13 +40,18 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
     });
 }
 
-// Inside the self-report wrapper above, so a decompression failure is reported like any other fault,
-// and ahead of the ingest endpoints, which read an already-decompressed body.
+// Ahead of the ingest endpoints, which read an already-decompressed body. Bytes that are not the encoding
+// they were sent as fail that read, which answers them 400 (RequestBodies): the sender's broken body, so
+// not a fault to report.
 app.UseRequestDecompression();
+
+// Every 401 carries a WWW-Authenticate challenge (RFC 9110 15.5.2), whichever ingest route refused the DSN.
+app.UseDsnChallenge();
 
 app.MapOperationalEndpoints(options);
 app.MapSentryIngestEndpoints(options);
 app.MapOtlpIngestEndpoints(options);
+app.MapOtlpTraceEndpoints(options);
 
 app.Run();
 

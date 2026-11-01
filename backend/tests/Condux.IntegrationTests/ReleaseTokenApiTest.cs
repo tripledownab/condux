@@ -95,7 +95,28 @@ public sealed class ReleaseTokenApiTest(PostgresFixture pg) : IClassFixture<Post
         var rawToken = (await mintResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
 
         var ci = BearerClient(rawToken);
-        var resp = await ci.PostAsJsonAsync("/api/releases", new { version = "1.0.0", commitSha = "abc" });
+        var resp = await ci.PostAsJsonAsync("/api/releases", new { version = "1.0.0", commitSha = "abc1234" });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("no repository is linked to this project", await resp.Content.ReadFromJsonAsync<string>());
+    }
+
+    // The same rule as the dashboard's route: a blank version or a commit that is not a commit id is refused.
+    [Theory]
+    [InlineData("1.0.0", "abc", "commitSha must be a commit SHA: 7 to 64 hex characters")]
+    [InlineData("1.0.0", "v1.0.0", "commitSha must be a commit SHA: 7 to 64 hex characters")]
+    [InlineData(" ", "abc1234", "version is required")]
+    public async Task RecordRelease_RefusesWhatIsNotARelease(string version, string commit, string message)
+    {
+        var (client, projectId) = await ProvisionAsync();
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync($"/api/projects/{projectId}/repos",
+            new { repoFullName = "acme/api", defaultBranch = "main" })).StatusCode);
+        var mintResp = await client.PostAsJsonAsync($"/api/projects/{projectId}/release-tokens", new { name = "CI" });
+        var rawToken = (await mintResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+
+        var resp = await BearerClient(rawToken).PostAsJsonAsync("/api/releases", new { version, commitSha = commit });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal(message, await resp.Content.ReadFromJsonAsync<string>());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/releases")).EnumerateArray());
     }
 }

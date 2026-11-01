@@ -1,5 +1,6 @@
 using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Invites;
+using Condux.ControlPlane.Tickets;
 using Condux.Core.Auth;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -79,7 +80,8 @@ internal static class InviteEndpoints
         app.MapPost("/api/invites/accept",
                 async Task<Results<Ok<OrgMembershipResponse>, NotFound<ErrorResponse>, Conflict<ErrorResponse>, ForbidHttpResult>> (
                     AcceptInviteRequest req, HttpContext http,
-                    OrgInviteRepository invites, OrgMemberRepository members, OrgRepository orgs, UserRepository users) =>
+                    OrgInviteRepository invites, OrgMemberRepository members, OrgRepository orgs, UserRepository users,
+                    TrackerConnectionRepository trackers) =>
                 {
                     if (string.IsNullOrEmpty(req.Token)
                         || await invites.GetActiveByTokenHashAsync(SessionTokens.HashToken(req.Token)) is not { } invite)
@@ -94,7 +96,9 @@ internal static class InviteEndpoints
 
                     var userId = OrgAuthorization.CurrentUserId(http.User);
                     var outcome = await MembershipProvisioning.JoinSingleOrgAsync(
-                        members, orgs, userId, invite.OrgId, invite.Role, http.RequestAborted);
+                        members, orgs, userId, invite.OrgId, invite.Role,
+                        (abandoned, ct) => LinearRevocation.TryRevokeOrgAsync(http.RequestServices, trackers, abandoned, ct),
+                        http.RequestAborted);
                     if (outcome == JoinOutcome.AlreadyMember)
                     {
                         return TypedResults.Conflict(new ErrorResponse("already_member"));

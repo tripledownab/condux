@@ -14,3 +14,16 @@ export function buildDsn(
   const url = new URL(ingestUrl);
   return `${url.protocol}//${publicKey}@${url.host}/${projectPublicId}`;
 }
+
+// Splits a DSN into what an OpenTelemetry OTLP/HTTP exporter is configured with: the base URL the relay
+// serves OTLP under (each signal is under it at /v1/traces or /v1/logs) and the key it sends as
+// x-condux-auth. Null for a value that is not a URL, such as the guide's placeholder before a key exists.
+export function toOtlpTarget(dsn: string): { endpoint: string; key: string } | null {
+  let url: URL;
+  try {
+    url = new URL(dsn);
+  } catch {
+    return null;
+  }
+  return { endpoint: `${url.protocol}//${url.host}/api${url.pathname}`, key: url.username };
+}

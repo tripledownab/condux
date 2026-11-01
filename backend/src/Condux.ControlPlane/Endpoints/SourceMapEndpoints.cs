@@ -1,5 +1,5 @@
 using Condux.ControlPlane.Auth;
-using Condux.Core.Http;
+using Condux.ControlPlane.Uploads;
 using Condux.Core.SourceMaps;
 using Condux.Storage.ObjectStore;
 using Condux.Storage.Postgres;
@@ -17,8 +17,7 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class SourceMapEndpoints
 {
-    // Cap an upload well under Kestrel's default request-body limit; a single map larger than this is a
-    // slice-4 (chunked upload) concern, not v1.
+    // A single map larger than this is a slice-4 (chunked upload) concern, not v1.
     private const int MaxBytes = 25 * 1024 * 1024;
 
     // Cap the metadata that flows into the S3 object key (S3 keys max 1024 bytes) and the DB row.
@@ -27,7 +26,8 @@ internal static class SourceMapEndpoints
     public static void MapSourceMapEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/sourcemaps",
-                async Task<Results<Created<SourceMapArtifactResponse>, UnauthorizedHttpResult, BadRequest<string>, NotFound>> (
+                async Task<Results<Created<SourceMapArtifactResponse>, UnauthorizedHttpResult, BadRequest<string>, NotFound,
+                    StatusCodeHttpResult>> (
                     HttpContext http, string? release, string? filename, string? dist, string? debugId,
                     ObjectStoreConfig store, ReleaseTokenRepository tokens, SourceMapArtifactRepository artifacts) =>
                 {
@@ -49,10 +49,16 @@ internal static class SourceMapEndpoints
                             $"release, filename, dist and debugId must each be at most {MaxFieldLength} characters");
                     }
 
-                    var content = await ReadBodyAsync(http);
-                    if (content is null)
+                    var read = await UploadBodies.ReadAsync(http, MaxBytes);
+                    if (read.IsRefused)
                     {
-                        return TypedResults.BadRequest($"source map body is empty or exceeds {MaxBytes} bytes");
+                        return read.Refusal;
+                    }
+                    using var body = read.Body;
+                    var content = body.Content;
+                    if (content.Length == 0)
+                    {
+                        return TypedResults.BadRequest("source map body is empty");
                     }
                     if (!SourceMapContent.LooksLikeSourceMap(content))
                     {
@@ -68,16 +74,11 @@ internal static class SourceMapEndpoints
                         projectId, release.Trim(), Trim(dist), Trim(debugId), filename.Trim(), key,
                         content.Length, http.RequestAborted);
                     await objectStore.PutAsync(key, content, "application/json", http.RequestAborted);
-                    await Uploads.UploadEviction.TryEvictAsync(http, projectId);
+                    await UploadEviction.TryEvictAsync(http, projectId);
                     return TypedResults.Created($"/api/sourcemaps/{artifact.Id}", ToResponse(artifact));
                 })
             .WithName("uploadSourceMap").WithTags("SourceMaps");
     }
-
-    private static async Task<byte[]?> ReadBodyAsync(HttpContext http) =>
-        await RequestBodies.ReadBoundedAsync(http.Request.Body, MaxBytes, http.RequestAborted) is { Length: > 0 } body
-            ? body
-            : null;
 
     private static bool TooLong(string? value) => value is { Length: > MaxFieldLength };
 

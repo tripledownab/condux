@@ -1,8 +1,8 @@
 "use client";
 
-import type { ConduxApiError } from "@/src/api/fetcher";
 import { useListGithubInstallations } from "@/src/api/generated/condux";
 import type { GithubInstallationResponse } from "@/src/api/generated/model";
+import { readErrorStatus } from "@/src/lib/api-errors";
 import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 
 // The GitHub connection state for a project's org, shared by the connect panel (github-connect.tsx) and
@@ -37,7 +37,7 @@ export function useGithubConnection(): GithubConnectionState {
   const orgId = orgReady ? current.org.id : 0;
 
   const installations = useListGithubInstallations(orgId, { query: { enabled: orgReady } });
-  const notConfigured = (installations.error as ConduxApiError | null)?.status === 404;
+  const notConfigured = readErrorStatus(installations.error) === 404;
   const linked = installations.data?.status === 200 ? installations.data.data : [];
   // The App installs once per org, and every repo operation mints its token from the first row.
   const installation = linked[0];

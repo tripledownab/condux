@@ -81,8 +81,19 @@ spec:
             - name: CONDUX_GITHUB_OAUTH_REDIRECT_URI
               value: {{ required "github.oauthRedirectUri is required when github.enabled: the App's Callback URL, e.g. https://app.example.com/api/github/oauth/callback. Connecting an org goes through user authorization, and the control-plane refuses to start without it." .Values.github.oauthRedirectUri | quote }}
             {{- end }}
+            {{- if .Values.linear.enabled }}
+            - name: CONDUX_LINEAR_CLIENT_ID
+              value: {{ required "linear.clientId is required when linear.enabled: the Linear OAuth application's client id." .Values.linear.clientId | quote }}
+            - name: CONDUX_LINEAR_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "condux.secretName" . }}
+                  key: CONDUX_LINEAR_CLIENT_SECRET
+            - name: CONDUX_LINEAR_OAUTH_REDIRECT_URI
+              value: {{ required "linear.oauthRedirectUri is required when linear.enabled: the OAuth application's callback, e.g. https://app.example.com/api/linear/oauth/callback." .Values.linear.oauthRedirectUri | quote }}
+            {{- end }}
             {{- if .Values.objectStore.enabled }}
-            {{- include "condux.objectStoreEnv" . | nindent 12 }}
+            {{- include "condux.objectStoreEnv" (dict "root" . "reader" false) | nindent 12 }}
             {{- include "condux.symbolizerEnv" . | nindent 12 }}
             {{- end }}
           {{- if .Values.github.enabled }}

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Built from the repo root (see deploy/docker-compose.yml `web` context) because the dashboard depends
 # on the @condux/brand workspace package, so the build needs the pnpm workspace, not just web/.
-FROM node:22-alpine AS build
+FROM node:22.23.4-alpine AS build
 WORKDIR /app
 RUN corepack enable
 
@@ -70,7 +70,7 @@ RUN --mount=type=secret,id=condux_release_token \
     CONDUX_RELEASE_TOKEN="$(cat /run/secrets/condux_release_token 2>/dev/null || true)" \
     pnpm --filter @condux/web build
 
-FROM node:22-alpine AS run
+FROM node:22.23.4-alpine AS run
 WORKDIR /app
 RUN corepack enable
 ENV NODE_ENV=production

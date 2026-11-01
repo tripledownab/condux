@@ -4,13 +4,14 @@ using Microsoft.Extensions.Logging;
 namespace Condux.Consumer;
 
 /// <summary>
-/// The consumer's ClickHouse write side: the three row buffers and the one flush that drains them.
+/// The consumer's ClickHouse write side: its row buffers and the one flush that drains them.
 /// Kept out of the drain loop because accumulating and writing is a separate job from consuming, and
 /// nothing else in here belongs to it.
 ///
 /// <para>Flush cadence follows the stats buffer, which fills fastest because it takes a row for every
-/// event before the sampling decision. The event buffer is sampled and the module buffer is
-/// deduplicated, so both are smaller and ride the same flush rather than keeping their own timer.</para>
+/// event before the sampling decision. The receipt-time buffer takes one per event as well, the event
+/// buffer is sampled and the module buffer is deduplicated, so they ride the same flush rather than
+/// keeping their own timer.</para>
 /// </summary>
 public sealed class ClickHouseBatch(
     ClickHouseEventWriter eventWriter,
@@ -34,10 +35,13 @@ public sealed class ClickHouseBatch(
 
     private readonly List<EventRow> events = [];
     private readonly List<IssueStatsRow> stats = [];
+    private readonly List<IssueReceivedRow> received = [];
     private readonly List<ReleaseModuleRow> modules = [];
     private int sampledOut;
 
     public void AddStats(IssueStatsRow row) => stats.Add(row);
+
+    public void AddReceived(IssueReceivedRow row) => received.Add(row);
 
     public void AddEvent(EventRow row) => events.Add(row);
 
@@ -57,11 +61,12 @@ public sealed class ClickHouseBatch(
     /// failure nothing would ever trigger their retry.</para>
     /// </summary>
     public bool ShouldFlush(bool idle) =>
-        stats.Count >= BatchSize || (idle && (stats.Count > 0 || events.Count > 0 || modules.Count > 0));
+        stats.Count >= BatchSize
+        || (idle && (stats.Count > 0 || events.Count > 0 || received.Count > 0 || modules.Count > 0));
 
     /// <summary>
     /// Write each buffer and clear it as soon as its own insert succeeds, so a failure in a later write
-    /// cannot cause an earlier one to be sent twice. That matters for the stats rollup in particular,
+    /// cannot cause an earlier one to be sent twice. That matters for the two rollups in particular,
     /// where count is a sum and a repeat inflates it permanently.
     ///
     /// <para><b>Order is by how much its failure costs, most costly first.</b> An insert that throws
@@ -71,23 +76,28 @@ public sealed class ClickHouseBatch(
     /// itself. Putting modules first, which reads as tidy because it is the idempotent one, would mean
     /// a single problem with the newest and least important table stalls the two writes the product
     /// actually depends on. That is not hypothetical: the table arrives in a migration, and a deploy
-    /// that applied the code before the schema would have done exactly this.</para>
+    /// that applied the code before the schema would have done exactly this. The receipt-time rollup
+    /// goes after the events and before the inventory for the same reason: it feeds only the weekly
+    /// digest and arrived in a migration of its own, so it must not stall the stats or the events either.</para>
     /// </summary>
     public async Task FlushAsync(CancellationToken cancellationToken)
     {
-        var (moduleCount, statsCount, eventCount, shed) = (modules.Count, stats.Count, events.Count, sampledOut);
+        var (moduleCount, statsCount, receivedCount, eventCount, shed) =
+            (modules.Count, stats.Count, received.Count, events.Count, sampledOut);
 
         await statsWriter.InsertAsync(stats, cancellationToken);
         stats.Clear();
         await eventWriter.InsertAsync(events, cancellationToken);
         events.Clear();
+        await statsWriter.InsertReceivedAsync(received, cancellationToken);
+        received.Clear();
         await moduleWriter.InsertAsync(modules, cancellationToken);
         modules.Clear();
         sampledOut = 0;
 
         logger.LogInformation(
-            "flushed {Stats} stat rows + {Events} events + {Modules} module rows to ClickHouse (sampled out {Shed})",
-            statsCount, eventCount, moduleCount, shed);
+            "flushed {Stats} stat rows + {Events} events + {Received} receipt rows + {Modules} module rows to ClickHouse (sampled out {Shed})",
+            statsCount, eventCount, receivedCount, moduleCount, shed);
     }
 
     /// <summary>

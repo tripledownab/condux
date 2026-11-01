@@ -9,9 +9,10 @@ namespace Condux.Core.Alerting;
 public static class AlertEvaluator
 {
     /// <summary>
-    /// True when <paramref name="rule"/> should fire for an issue event: the rule is enabled, the issue's
+    /// True when <paramref name="rule"/> should fire for an event: the rule is enabled, the event's
     /// <paramref name="level"/> is one of the rule's selected levels, and the rule subscribes to the
-    /// <paramref name="eventType"/> that occurred (new issue, regression, resolved or assigned).
+    /// <paramref name="eventType"/> that occurred (new issue, regression, resolved, assigned or new
+    /// advisory, whose level is its severity).
     /// </summary>
     public static bool Matches(AlertRule rule, AlertEventType eventType, Level level) =>
         rule.Enabled

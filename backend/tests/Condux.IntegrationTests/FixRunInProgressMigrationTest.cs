@@ -33,7 +33,8 @@ public sealed class FixRunInProgressMigrationTest(PostgresFixture pg) : IClassFi
         var newerPending = await InsertAsync(otherIssue, FixStatus.Pending, DateTimeOffset.UtcNow.AddHours(-1));
 
         await ApplyMigrationAsync();
-        // Every deploy replays every migration, so a second pass must change nothing.
+        // A file runs again whenever the migration files change other than by new ones sorting last, so a
+        // second pass must change nothing.
         await ApplyMigrationAsync();
 
         var fixes = new PostgresFixStore(pg.ConnectionString);

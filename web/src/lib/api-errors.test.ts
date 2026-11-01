@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConduxApiError } from "@/src/api/fetcher";
 import { lookUpCodeKey, readErrorCode, readErrorStatus } from "./api-errors";
@@ -36,5 +38,40 @@ describe("lookUpCodeKey", () => {
     // A code from a URL or a server is text anyone can choose; these name functions on every object.
     expect(lookUpCodeKey(keys, "constructor")).toBeUndefined();
     expect(lookUpCodeKey(keys, "toString")).toBeUndefined();
+  });
+});
+
+// Every read of a failed call goes through readErrorCode/readErrorStatus. A cast, a hook typed with
+// ConduxApiError as its error, or a parameter typed with it claims a type the error may not have (a network
+// failure is a TypeError), so outside the two files that own it no source file may name the type at all,
+// whichever spelling it takes. A cast to a shape with a status or a code is refused for the same reason.
+describe("reading an API error", () => {
+  const root = join(__dirname, "..", "..");
+  const owners = new Set(["src/api/fetcher.ts", "src/lib/api-errors.ts"]);
+
+  function sourceFiles(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        return entry.name === "generated" || entry.name === "node_modules" ? [] : sourceFiles(path);
+      }
+      return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+    });
+  }
+
+  it("reads a failed call only through the helpers", () => {
+    const files = [...sourceFiles(join(root, "src")), ...sourceFiles(join(root, "app"))];
+    const offenders = files
+      .map((path) => relative(root, path))
+      .filter((path) => !owners.has(path))
+      .filter((path) =>
+        /\bConduxApiError\b|as \{[^}]*\b(status|code)\b/.test(
+          readFileSync(join(root, path), "utf8"),
+        ),
+      );
+
+    // A scan that read nothing would pass too, so it has to have read the dashboard.
+    expect(files.length).toBeGreaterThan(200);
+    expect(offenders).toEqual([]);
   });
 });

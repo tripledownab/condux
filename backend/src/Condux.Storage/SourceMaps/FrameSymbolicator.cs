@@ -7,12 +7,17 @@ namespace Condux.Storage.SourceMaps;
 /// <summary>
 /// Read-time source-map symbolication (ADR-0028): rewrite a stored event's minified in-app JS frames to
 /// their original source position. The artifacts an event can reach are resolved up front, so each
-/// frame is then a dictionary lookup plus at most one fetch of the map it names (parsed once per call).
+/// frame is then a dictionary lookup plus a read of the map it names through a <see cref="SourceMapCache"/>,
+/// which a caller symbolicating a page of events shares across them.
 /// Best-effort per frame: an unmatched or undecodable map leaves the frame.
 /// </summary>
 public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IObjectStore objectStore)
 {
-    public async Task<Event> SymbolicateAsync(long projectId, Event stored, CancellationToken cancellationToken = default)
+    public Task<Event> SymbolicateAsync(long projectId, Event stored, CancellationToken cancellationToken = default) =>
+        SymbolicateAsync(projectId, stored, new SourceMapCache(), cancellationToken);
+
+    internal async Task<Event> SymbolicateAsync(
+        long projectId, Event stored, SourceMapCache cache, CancellationToken cancellationToken)
     {
         if (stored.Exceptions.Count == 0)
         {
@@ -25,7 +30,6 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
             return stored;
         }
 
-        var cache = new Dictionary<string, SourceMap?>();
         var exceptions = new List<ExceptionValue>(stored.Exceptions.Count);
         var changed = false;
 
@@ -52,15 +56,15 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
     }
 
     private async Task<Frame> SymbolicateFrameAsync(
-        Frame frame, ReachableArtifacts reachable, Dictionary<string, SourceMap?> cache,
-        CancellationToken cancellationToken)
+        Frame frame, ReachableArtifacts reachable, SourceMapCache cache, CancellationToken cancellationToken)
     {
         if (reachable.Find(frame) is not { } artifact)
         {
             return frame;
         }
 
-        var map = await LoadMapAsync(artifact, cache, cancellationToken);
+        var map = await cache.GetOrLoadAsync(
+            artifact.ObjectKey, ct => LoadMapAsync(artifact.ObjectKey, ct), cancellationToken);
         // Source-map positions are 0-based; stack frames are 1-based.
         var position = map?.OriginalPositionFor(frame.Lineno - 1, Math.Max(0, frame.Colno - 1));
         if (position is null)
@@ -69,13 +73,14 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
         }
 
         // The map names the file the way its bundler does; the frame has to name it the way the repository
-        // does, or neither a code mapping nor the Conductor can find it. A line from an installed package
-        // stops counting as the app's own, although the minified chunk it sat in did.
+        // does, or neither a code mapping nor the Conductor can find it. A line from an installed package or
+        // the bundler, by its path or by the map's ignoreList, stops counting as the app's own, although the
+        // minified chunk it sat in did.
         var path = SourceMapPaths.ToRepoPath(position.Source);
         return frame with
         {
             Filename = path,
-            InApp = frame.InApp && !SourceMapPaths.IsDependency(path),
+            InApp = frame.InApp && !position.Ignored && !SourceMapPaths.IsDependency(path),
             Lineno = position.Line + 1,
             Colno = position.Column + 1,
             Function = position.Name ?? frame.Function,
@@ -85,17 +90,9 @@ public sealed class FrameSymbolicator(SourceMapArtifactRepository artifacts, IOb
         };
     }
 
-    private async Task<SourceMap?> LoadMapAsync(
-        SourceMapArtifact artifact, Dictionary<string, SourceMap?> cache, CancellationToken cancellationToken)
+    private async Task<SourceMap?> LoadMapAsync(string objectKey, CancellationToken cancellationToken)
     {
-        if (cache.TryGetValue(artifact.ObjectKey, out var cached))
-        {
-            return cached;
-        }
-
-        var bytes = await objectStore.GetAsync(artifact.ObjectKey, cancellationToken);
-        var map = bytes is null ? null : SourceMap.Parse(bytes);
-        cache[artifact.ObjectKey] = map;
-        return map;
+        var bytes = await objectStore.GetAsync(objectKey, cancellationToken);
+        return bytes is null ? null : SourceMap.Parse(bytes);
     }
 }

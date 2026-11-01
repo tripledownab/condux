@@ -20,6 +20,7 @@ COPY backend/src/Condux.Consumer/Condux.Consumer.csproj backend/src/Condux.Consu
 COPY backend/src/Condux.ControlPlane/Condux.ControlPlane.csproj backend/src/Condux.ControlPlane/
 COPY backend/src/Condux.Core/Condux.Core.csproj backend/src/Condux.Core/
 COPY backend/src/Condux.GitHub/Condux.GitHub.csproj backend/src/Condux.GitHub/
+COPY backend/src/Condux.Linear/Condux.Linear.csproj backend/src/Condux.Linear/
 COPY backend/src/Condux.Messaging/Condux.Messaging.csproj backend/src/Condux.Messaging/
 COPY backend/src/Condux.Notifications/Condux.Notifications.csproj backend/src/Condux.Notifications/
 COPY backend/src/Condux.Relay/Condux.Relay.csproj backend/src/Condux.Relay/
@@ -27,8 +28,10 @@ COPY backend/src/Condux.Runner/Condux.Runner.csproj backend/src/Condux.Runner/
 COPY backend/src/Condux.Storage/Condux.Storage.csproj backend/src/Condux.Storage/
 COPY backend/src/Condux.Symbolizer/Condux.Symbolizer.csproj backend/src/Condux.Symbolizer/
 COPY backend/src/Condux.Telemetry/Condux.Telemetry.csproj backend/src/Condux.Telemetry/
-# The Telemetry project references the standalone .NET SDK (dogfooding), a sibling of backend/.
+# The Telemetry project references the standalone .NET SDK (dogfooding), a sibling of backend/, and the
+# relay and control-plane its ASP.NET Core adapter, for the caller-caused rule their self-reporting reads.
 COPY sdks/dotnet/Condux.Sdk/Condux.Sdk.csproj sdks/dotnet/Condux.Sdk/
+COPY sdks/dotnet/Condux.Sdk.AspNetCore/Condux.Sdk.AspNetCore.csproj sdks/dotnet/Condux.Sdk.AspNetCore/
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore backend/src/Condux.Relay/Condux.Relay.csproj && \
     dotnet restore backend/src/Condux.ControlPlane/Condux.ControlPlane.csproj && \
@@ -39,6 +42,7 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
 
 COPY backend/src/ backend/src/
 COPY sdks/dotnet/Condux.Sdk/ sdks/dotnet/Condux.Sdk/
+COPY sdks/dotnet/Condux.Sdk.AspNetCore/ sdks/dotnet/Condux.Sdk.AspNetCore/
 # No --no-restore: the NuGet packages live in the cache mount, which BuildKit may prune while the
 # restore LAYER stays cached (NETSDK1064). Restoring inside publish is a no-op when the mount is
 # warm and self-heals when it was emptied.
@@ -50,7 +54,7 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet publish backend/src/Condux.Runner/Condux.Runner.csproj -c Release -o /out/runner && \
     dotnet publish backend/src/Condux.Symbolizer/Condux.Symbolizer.csproj -c Release -o /out/symbolizer
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS relay
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14 AS relay
 WORKDIR /app
 COPY --from=build /out/relay .
 ENV ASPNETCORE_URLS=http://0.0.0.0:9000
@@ -58,7 +62,7 @@ EXPOSE 9000
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Condux.Relay.dll"]
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS controlplane
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14 AS controlplane
 WORKDIR /app
 COPY --from=build /out/controlplane .
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
@@ -66,13 +70,13 @@ EXPOSE 8080
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Condux.ControlPlane.dll"]
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS consumer
+FROM mcr.microsoft.com/dotnet/runtime:10.0.14 AS consumer
 WORKDIR /app
 COPY --from=build /out/consumer .
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Condux.Consumer.dll"]
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS conductor
+FROM mcr.microsoft.com/dotnet/runtime:10.0.14 AS conductor
 WORKDIR /app
 COPY --from=build /out/conductor .
 USER $APP_UID
@@ -81,7 +85,7 @@ ENTRYPOINT ["dotnet", "Condux.Conductor.dll"]
 # The customer-hosted runner (ADR-0033 slice 4, #68). Not in our compose stack: it runs on the customer's
 # machines, needs only outbound HTTPS to the control plane, and holds their model and source-host
 # credentials. Build it with `docker build --target runner -f backend/Dockerfile .` from the repo root.
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runner
+FROM mcr.microsoft.com/dotnet/runtime:10.0.14 AS runner
 WORKDIR /app
 COPY --from=build /out/runner .
 USER $APP_UID
@@ -94,7 +98,7 @@ ENTRYPOINT ["dotnet", "Condux.Runner.dll"]
 # so a pin there stops resolving the day an update lands and fails every deploy that builds this image.
 # The base image names its Ubuntu release for the same reason. The CI integration job reads this ARG and
 # installs the same packages, so the tests and the image run the same LLVM version.
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS symbolizer
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14-noble AS symbolizer
 ARG LLVM_VERSION=1:18.1.3-1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends llvm-18=$LLVM_VERSION llvm-18-runtime=$LLVM_VERSION \

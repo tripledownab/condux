@@ -1,3 +1,4 @@
+using Condux.Core.Text;
 using Condux.Core.CveFix;
 using Condux.Core.FixEngine;
 using Npgsql;
@@ -97,7 +98,7 @@ public sealed partial class PostgresCveFixStore(string connectionString) : ICveF
         cmd.Parameters.AddWithValue("model", r.Model);
         cmd.Parameters.AddWithValue("branch", r.Branch);
         cmd.Parameters.AddWithValue("pr", r.PrUrl);
-        cmd.Parameters.AddWithValue("summary", r.Summary);
+        cmd.Parameters.AddWithValue("summary", StorableText.ToStorable(r.Summary));
         cmd.Parameters.AddWithValue("actor", r.Actor);
         cmd.Parameters.AddWithValue("created", r.CreatedAt);
         cmd.Parameters.AddWithValue("updated", r.UpdatedAt);
@@ -188,7 +189,7 @@ public sealed partial class PostgresCveFixStore(string connectionString) : ICveF
         cmd.Parameters.AddWithValue("status", (short)r.Status);
         cmd.Parameters.AddWithValue("branch", r.Branch);
         cmd.Parameters.AddWithValue("pr", r.PrUrl);
-        cmd.Parameters.AddWithValue("summary", r.Summary);
+        cmd.Parameters.AddWithValue("summary", StorableText.ToStorable(r.Summary));
         cmd.Parameters.AddWithValue("in", r.InputTokens);
         cmd.Parameters.AddWithValue("out", r.OutputTokens);
         cmd.Parameters.AddWithValue("reason", FixFailureColumn.ToParameter(r.FailureReason));

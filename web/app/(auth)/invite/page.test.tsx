@@ -90,6 +90,29 @@ describe("InvitePage", () => {
     expect(screen.getByRole("button", { name: "Use a different account" })).toBeInTheDocument();
   });
 
+  // Both are 409s; the code says which, and a code it does not know reads as the other org case.
+  it.each([
+    ["already_member", "You are already a member of this organization."],
+    [
+      "already_in_org",
+      "You already belong to another organization. Leave it before accepting a new invitation.",
+    ],
+    [
+      "constructor",
+      "You already belong to another organization. Leave it before accepting a new invitation.",
+    ],
+  ])("explains a %s conflict", (code, message) => {
+    signedIn("invitee@acme.io");
+    useAcceptInviteMock.mockReturnValue({
+      ...idleAccept,
+      isError: true,
+      error: new ConduxApiError("POST", "/invites/accept", 409, code),
+    });
+    renderWithIntl(<InvitePage />);
+
+    expect(screen.getByText(message)).toBeInTheDocument();
+  });
+
   it("shows an invalid-link message when the URL has no token", () => {
     window.history.replaceState(null, "", "/invite");
     useMeMock.mockReturnValue({ isPending: false, isError: true });

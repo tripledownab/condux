@@ -21,8 +21,11 @@ public sealed record CveFindingWithExposure(CveFinding Finding, ModuleExposure E
 /// <summary>
 /// A repo's findings, and whether the scan stopped before the end. The list is not the total when
 /// <see cref="Truncated"/> is set, and the dashboard says so rather than showing the count as complete.
+/// <see cref="Unavailable"/> says why there are no findings at all when nothing could be read, which an
+/// empty list alone would present as a repository with no vulnerabilities.
 /// </summary>
-public sealed record CveFindingsResponse(IReadOnlyList<CveFindingWithExposure> Findings, bool Truncated);
+public sealed record CveFindingsResponse(
+    IReadOnlyList<CveFindingWithExposure> Findings, bool Truncated, CveScanUnavailable? Unavailable = null);
 
 /// <summary>
 /// The read side of the supply-chain surface (#117 slice 1): a linked repo's open CVE findings,
@@ -36,9 +39,11 @@ internal static class CveFindingEndpoints
     public static void MapCveFindingEndpoints(this IEndpointRouteBuilder app)
     {
         // Open CVE findings for a linked repo (#117): the repo's open Dependabot alerts, fetched with the
-        // org's GitHub installation token. Returns empty when GitHub is not connected or the repo has none,
-        // and empty but truncated when the scan failed (for instance the App lacks the Dependabot-alerts
-        // permission).
+        // org's GitHub installation token. Returns empty when the repo has none or the deployment has no
+        // GitHub App, and empty with the reason when nothing could be read: the org has not connected
+        // GitHub, alerts are switched off for the repository, the App lacks the Dependabot-alerts
+        // permission, or any other failure. Those that attempted a read are also marked truncated, as they
+        // were before the reason existed.
         app.MapGet("/api/projects/{projectId:long}/repos/{repoId:guid}/cve-findings",
                 async Task<Results<Ok<CveFindingsResponse>, NotFound>> (
                     long projectId, Guid repoId, HttpContext http, RepoLinkRepository repos,
@@ -56,10 +61,17 @@ internal static class CveFindingEndpoints
                     // shape stays the same whichever produced them.
                     var tokens = http.RequestServices.GetService<ISourceHostTokens>();
                     var scanner = http.RequestServices.GetService<ICveScanner>();
-                    var installs = await installations.GetByOrgAsync(project.OrgId, http.RequestAborted);
-                    if (tokens is null || scanner is null || installs.Count == 0)
+                    // A deployment with no GitHub App has no scan to offer and nothing an org can do about
+                    // it, so it names no reason; an org that has not connected the App can connect it.
+                    if (tokens is null || scanner is null)
                     {
                         return TypedResults.Ok(new CveFindingsResponse([], Truncated: false));
+                    }
+                    var installs = await installations.GetByOrgAsync(project.OrgId, http.RequestAborted);
+                    if (installs.Count == 0)
+                    {
+                        return TypedResults.Ok(new CveFindingsResponse(
+                            [], Truncated: false, CveScanUnavailable.NotConnected));
                     }
 
                     CveScan scan;
@@ -75,7 +87,9 @@ internal static class CveFindingEndpoints
                         // empty list is marked truncated and the dashboard says it could not read them all.
                         logger.LogWarning(
                             ex, "cve-findings failed project={ProjectId} repo={RepoId}", projectId, repoId);
-                        return TypedResults.Ok(new CveFindingsResponse([], Truncated: true));
+                        return TypedResults.Ok(new CveFindingsResponse(
+                            [], Truncated: true,
+                            ex is CveScanUnavailableException unavailable ? unavailable.Reason : CveScanUnavailable.Failed));
                     }
 
                     var findings = await WithExposureAsync(

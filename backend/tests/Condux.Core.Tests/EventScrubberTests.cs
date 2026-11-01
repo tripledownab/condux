@@ -13,6 +13,25 @@ public class EventScrubberTests
     private const string Salt = "0123456789abcdef0123456789abcdef";
 
     [Fact]
+    public void ScrubsWhatNamesTheOperation_NotOnlyWhatDescribesIt()
+    {
+        // A span name, a route or a fingerprint component can be built from a URL, and the exception type
+        // is the issue's title.
+        var e = new Event
+        {
+            Transaction = "GET /u/ada@example.com",
+            Fingerprint = ["otlp-span", "GET /u/ada@example.com"],
+            Exceptions = [new ExceptionValue { Type = "failed for ada@example.com", Value = "x" }],
+        };
+
+        var scrubbed = EventScrubber.Scrub(e, Salt);
+
+        Assert.Equal("GET /u/[redacted]", scrubbed.Transaction);
+        Assert.Equal(["otlp-span", "GET /u/[redacted]"], scrubbed.Fingerprint);
+        Assert.Equal("failed for [redacted]", scrubbed.Exceptions[0].Type);
+    }
+
+    [Fact]
     public void ScrubsMessageExceptionsAndSensitiveTags()
     {
         var e = new Event

@@ -4,17 +4,9 @@ import { useTranslations } from "next-intl";
 import type { AdminSpendRunResponse } from "@/src/api/generated/model";
 import { FIELD_CLASS } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
+import { fixStatusMeta } from "@/src/issues/fix-format";
 import { formatCompactNumber, formatUsd } from "@/src/lib/format";
 import { formatTimestamp } from "@/src/lib/time";
-
-// FixStatus (Condux.Core.FixEngine.FixStatus) -> an i18n key under admin.spend.statuses.
-const STATUS_KEYS: Record<number, string> = {
-  1: "pending",
-  2: "running",
-  3: "succeeded",
-  4: "failed",
-  5: "cancelled",
-};
 
 // The per-run drill-down: every Conductor run across all orgs (issue fixes + CVE bumps). The search box
 // filters the loaded rows by org or model client-side (the list is bounded server-side).
@@ -78,7 +70,7 @@ export function AdminSpendRuns({
                     {translate(`kinds.${run.kind}`)}
                   </td>
                   <td className="px-4 py-2 text-muted-foreground">
-                    {translate(`statuses.${STATUS_KEYS[run.status] ?? "pending"}`)}
+                    {translate(`statuses.${fixStatusMeta(run.status).key}`)}
                   </td>
                   <td className="px-4 py-2 text-right text-foreground tabular-nums">
                     {run.costUsd === null ? "—" : formatUsd(run.costUsd)}

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Condux.Core.DebugFiles;
+using Condux.Storage.SourceMaps;
 using Microsoft.Extensions.Logging;
 
 namespace Condux.Storage.DebugFiles;
@@ -35,6 +36,7 @@ public sealed partial class NativeSymbolicator
         }
         catch (Exception e) when (!cancellationToken.IsCancellationRequested)
         {
+            metrics.RecordFailure(SymbolicationMetrics.NativePass);
             logger.LogWarning(e, "Native symbolication of build {BuildId} failed; its frames stay as addresses",
                 file.BuildId);
             return null;

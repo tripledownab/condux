@@ -3,9 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import { getListMyOrgsQueryKey, useAiFixUsage, useUpdateOrg } from "@/src/api/generated/condux";
 import { Notice } from "@/src/components/notice";
+import { readErrorCode, readErrorStatus } from "@/src/lib/api-errors";
 import { formatUsd } from "@/src/lib/format";
 import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { tierHasSelfHostedRunner, tierIsByo } from "@/src/orgs/plan-format";
@@ -129,11 +129,10 @@ function AiFixSettings({
   };
 
   // The two 409s are different refusals with different remedies, so they get different messages.
-  const updateError = update.error as ConduxApiError | null;
   const errorKey =
-    updateError?.code === "self_hosted_runner_requires_upgrade"
+    readErrorCode(update.error) === "self_hosted_runner_requires_upgrade"
       ? "runnerUpgrade"
-      : updateError?.status === 409
+      : readErrorStatus(update.error) === 409
         ? "aiFixUpgrade"
         : "aiFixFailed";
   const spent = usage.data?.data.monthToDateUsd ?? 0;

@@ -95,9 +95,17 @@ internal sealed record McpTokenResponse(
 internal sealed record SourceMapArtifactResponse(
     Guid Id, string Release, string? Dist, string? DebugId, string Filename, long ByteSize, DateTimeOffset CreatedAt);
 // Native debug files: the uploaded file's index row, returned to the CI uploader. DebugId is the form a
-// crash from the same build carries, so a CI log can be matched against an event by eye.
+// crash from the same build carries, so a CI log can be matched against an event by eye. One upload can
+// hold several builds (a universal dSYM, one per architecture): the top-level fields name the first, and
+// Files names every build stored, with its architecture where the format has one.
 internal sealed record DebugFileResponse(
-    Guid Id, string BuildId, string DebugId, long ByteSize, DateTimeOffset CreatedAt);
+    Guid Id, string BuildId, string DebugId, long ByteSize, DateTimeOffset CreatedAt,
+    IReadOnlyList<DebugFileSliceResponse> Files);
+internal sealed record DebugFileSliceResponse(
+    Guid Id, string BuildId, string DebugId, string? Architecture, long ByteSize);
+// A Flutter obfuscation map, held for the debug file of the build it was uploaded for: how many names it
+// restores.
+internal sealed record DartSymbolMapResponse(string DebugId, int Names);
 internal sealed record ArchiveFixRequest(bool Archived);
 internal sealed record UnviewedFixCountResponse(int Count);
 internal sealed record SetLlmConfigRequest(string Provider, string Model, string? BaseUrl, string ApiKey);
@@ -148,7 +156,7 @@ internal sealed record AddAlertChannelRequest(int Channel, string Target, string
 internal sealed record AddNotificationChannelRequest(int Channel, string Target);
 internal sealed record NotificationChannelResponse(Guid Id, int Channel, string Target);
 // The result of a test send to an alert or org-notification channel: Delivered=true when the notifier
-// accepted it, else a short reason (channel_not_configured, or the delivery error message).
+// accepted it, else one of ChannelTester's closed set of reasons, never the delivery error's own text.
 internal sealed record TestChannelResponse(bool Delivered, string? Error);
 // Weekly summary email settings (ADR-0031): the per-org enable flag + schedule (DayOfWeek 0=Sun..6=Sat,
 // Hour 0..23 local, Timezone an IANA id). The test response reports whether a live send to the caller was
@@ -167,7 +175,11 @@ internal sealed record AlertChannelResponse(Guid Id, int Channel, string Target,
 internal sealed record AlertRuleResponse(
     Guid Id, string Name, IReadOnlyList<int> Events, IReadOnlyList<int> Levels, bool Enabled,
     IReadOnlyList<AlertChannelResponse> Channels);
-internal sealed record IssueDetailResponse(IssueSummary Issue, IReadOnlyList<StoredEvent> Events);
+// FrameLinks holds one list per event: the GitHub link of each frame of its primary exception that has one,
+// by the frame's position in stored order (oldest first, from 0). Built by FrameLinks in Issues/.
+internal sealed record IssueDetailResponse(
+    IssueSummary Issue, IReadOnlyList<StoredEvent> Events, IReadOnlyList<IReadOnlyList<FrameLink>> FrameLinks);
+internal sealed record FrameLink(int Frame, string Url);
 // A lazy-loaded page of an issue's sampled events for the detail's events table; HasMore drives "load more".
 internal sealed record EventsPageResponse(IReadOnlyList<StoredEvent> Events, bool HasMore);
 // The server-side issue subset (Sentry-style): a filtered, sorted, paginated page + whether more remain,

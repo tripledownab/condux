@@ -1,4 +1,6 @@
+using Condux.Core.SourceMaps;
 using Condux.Storage.DebugFiles;
+using Condux.Storage.ObjectStore;
 using Condux.Storage.SourceMaps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,11 +14,12 @@ namespace Condux.IntegrationTests;
 /// </summary>
 public sealed class EventSymbolicationRegistrationTest
 {
-    private static ServiceProvider Build(Dictionary<string, string?> settings)
+    private static ServiceProvider Build(
+        Dictionary<string, string?> settings, ObjectStoreAccess access = ObjectStoreAccess.Read)
     {
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection().AddLogging();
-        services.AddEventSymbolication(cfg, "Host=unused");
+        services.AddEventSymbolication(cfg, "Host=unused", access);
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
     }
 
@@ -46,5 +49,25 @@ public sealed class EventSymbolicationRegistrationTest
             () => Build(new() { ["CONDUX_SYMBOLIZER_URL"] = "symbolizer:9100" }));
 
         Assert.Contains("CONDUX_SYMBOLIZER_URL", refused.Message);
+    }
+
+    // The consumer handles untrusted events and only reads objects, so it is not handed the cleanup seam the
+    // deletion queue drains through.
+    [Fact]
+    public void A_reader_can_read_and_has_no_cleanup()
+    {
+        using var provider = Build(Storage());
+
+        Assert.NotNull(provider.GetService<IObjectStore>());
+        Assert.Null(provider.GetService<IObjectStoreCleanup>());
+    }
+
+    // The control-plane drains the deletion queue through the cleanup seam.
+    [Fact]
+    public void A_writer_keeps_its_cleanup()
+    {
+        using var provider = Build(Storage(), ObjectStoreAccess.ReadWrite);
+
+        Assert.NotNull(provider.GetService<IObjectStoreCleanup>());
     }
 }

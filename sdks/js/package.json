@@ -21,6 +21,11 @@
     "typescript": "^5.7.2"
   },
   "license": "Apache-2.0",
+  "author": {
+    "name": "Triple Down AB",
+    "email": "security@condux.ai",
+    "url": "https://condux.ai"
+  },
   "homepage": "https://github.com/tripledownab/condux/tree/main/sdks/js#readme",
   "repository": {
     "type": "git",

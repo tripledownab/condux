@@ -78,7 +78,7 @@ public sealed class ConduxExceptionMiddleware(RequestDelegate next, ConduxClient
     /// genuine timeout in the application.
     /// </para>
     /// </remarks>
-    private static bool IsCallerCaused(HttpContext context, Exception error) => error switch
+    public static bool IsCallerCaused(HttpContext context, Exception error) => error switch
     {
         BadHttpRequestException => true,
         InvalidDataException => context.Request.HasFormContentType,

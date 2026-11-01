@@ -21,6 +21,22 @@ internal sealed class LlvmSymbolizerRunner(SymbolizerOptions options, ILogger<Ll
     // parser that cannot write its errors stops answering.
     private const int KeptErrorChars = 500;
 
+    // A file that cannot be read is left for llvm-symbolizer to report, so it is not taken for Mach-O here.
+    private static bool IsMachO(string debugFile)
+    {
+        Span<byte> head = stackalloc byte[4];
+        try
+        {
+            using var stream = File.OpenRead(debugFile);
+            return stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false) == head.Length
+                && Condux.Core.DebugFiles.MachODebugFile.LooksLikeMachO(head);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>One JSON line per address, in the order sent, or null when the run failed or timed out.</summary>
     public async Task<IReadOnlyList<string>?> RunAsync(
         string debugFile, IReadOnlyList<ulong> addresses, CancellationToken cancellationToken)
@@ -35,6 +51,13 @@ internal sealed class LlvmSymbolizerRunner(SymbolizerOptions options, ILogger<Ll
         start.ArgumentList.Add($"--obj={debugFile}");
         start.ArgumentList.Add("--inlining");
         start.ArgumentList.Add("--output-style=JSON");
+        // For a Mach-O file the default (linkage) name drops a leading underscore, as if it were the Darwin
+        // symbol prefix, which turns a Dart private name such as _Cart.total into Cart.total. The short form
+        // prints the DWARF name as written. ELF keeps the default, which also qualifies a C++ name.
+        if (IsMachO(debugFile))
+        {
+            start.ArgumentList.Add("--functions=short");
+        }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(options.ResolveTimeout);

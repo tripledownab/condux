@@ -94,9 +94,10 @@ public static class RepoPaths
 
     /// <summary>
     /// Percent-encodes a slash-separated value one segment at a time, leaving the separators as
-    /// structure, and refuses any <c>..</c> segment. For values that are not repo paths but still go into
-    /// a URL path: a <c>owner/name</c> repository, or a branch such as <c>feature/x</c>. For a file path
-    /// use <see cref="ToUrlPath"/>, which additionally rejects rooted paths and drive letters.
+    /// structure, and refuses any <c>..</c>, <c>.</c> or empty segment. For values that are not repo paths
+    /// but still go into a URL path: a <c>owner/name</c> repository, or a branch such as <c>feature/x</c>.
+    /// For a file path use <see cref="ToUrlPath"/>, which additionally rejects rooted paths and drive
+    /// letters.
     ///
     /// The <c>..</c> check is here rather than only in <see cref="Normalize"/> because escaping does not
     /// remove it: <c>..</c> is unreserved, so an escaped value keeps it and the URI parser still collapses
@@ -104,15 +105,23 @@ public static class RepoPaths
     /// that is the same attack against a different part of the path. So there is deliberately no way to
     /// get a traversing value into a URL through this type.
     ///
+    /// A <c>.</c> or empty segment is refused too. Neither climbs, but each changes which resource the
+    /// URL names: a browser drops <c>acme/.</c> to <c>acme/</c>, so <c>acme/./blob/main</c> is the
+    /// repository <c>acme/blob</c>, and an empty segment shifts every part after it the same way.
+    ///
     /// Nothing legitimate is lost. Measured with <c>git check-ref-format --branch</c>: git itself refuses
-    /// <c>feature/../../x</c>, <c>..</c>, <c>a..b</c> and <c>feature/..</c>. A single <c>.</c> segment is
-    /// allowed because it is not traversal, it resolves to the same resource.
+    /// <c>feature/../../x</c>, <c>..</c>, <c>a..b</c>, <c>feature/..</c>, <c>feature/./x</c>, <c>.</c>,
+    /// <c>a//b</c> and <c>feature/</c>.
     /// </summary>
     public static string EscapeSegments(string value)
     {
         if (Traverses(value))
         {
             throw new ArgumentException($"Value must not traverse the URL path: {value}", nameof(value));
+        }
+        if (value.Split('/').Any(segment => segment.Length == 0 || segment == "."))
+        {
+            throw new ArgumentException($"Value must not have an empty or '.' segment: {value}", nameof(value));
         }
 
         return string.Join('/', value.Split('/').Select(Uri.EscapeDataString));

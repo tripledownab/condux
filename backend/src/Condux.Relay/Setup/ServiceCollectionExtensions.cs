@@ -4,6 +4,7 @@ using Condux.Core.Projects;
 using Condux.Core.Quotas;
 using Condux.Core.RateLimiting;
 using Condux.Messaging;
+using Condux.Relay.Ingest;
 using Condux.Storage.Postgres;
 using Condux.Storage.Quotas;
 using Condux.Storage.RateLimiting;
@@ -43,9 +44,15 @@ internal static class ServiceCollectionExtensions
 
         // Most stock Sentry SDKs compress the request body: sentry-java sets Content-Encoding: gzip
         // unconditionally, and sentry-dart compresses by default, so without this their events never parse.
-        builder.Services.AddRequestDecompression();
+        // Brotli is not accepted: the SDKs and OTLP exporters compress with gzip, and an encoding with no
+        // provider is left undecoded, so the parser refuses the raw bytes.
+        builder.Services.AddRequestDecompression(
+            decompression => decompression.DecompressionProviders.Remove("br"));
         builder.WebHost.ConfigureKestrel(
             kestrel => kestrel.Limits.MaxRequestBodySize = options.MaxIngestBytes);
+        builder.Services.AddSingleton(IngestBodyBudget.ForCap(
+            options.MaxIngestBytes, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes));
+        builder.Services.AddSingleton(TimeProvider.System);
 
         // Condux on Condux (#75): opt-in self-error reporting via the Condux .NET SDK (CONDUX_SELF_DSN).
         builder.AddConduxSelfReporting();

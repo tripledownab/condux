@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Condux.Core.Events;
 
 namespace Condux.Storage.ClickHouse;
@@ -22,7 +21,8 @@ public sealed record EventRow(
     Dictionary<string, string> tags,
     string payload,
     int retention_days,
-    string user_key);
+    string user_key,
+    long received_at);
 
 /// <summary>
 /// Writes events to ClickHouse via the HTTP JSONEachRow interface. Insert a batch at a time — the
@@ -35,8 +35,11 @@ public sealed class ClickHouseEventWriter(HttpClient http)
         ClickHouseInsert.RowsAsync(http, "condux.events", rows, cancellationToken);
 
     /// <summary>Map a normalized event to a ClickHouse row. <paramref name="retentionDays"/> (the project's
-    /// plan-tier retention) drives the row's column-based TTL (migration 0002).</summary>
-    public static EventRow ToRow(string projectId, ulong issueId, Event e, string fingerprint, int retentionDays)
+    /// plan-tier retention) drives the row's column-based TTL (migration 0002). <paramref name="receivedAt"/>
+    /// is when Condux received the event, which the weekly digest counts by; the column's own default is
+    /// the insert, which a consumer backlog moves.</summary>
+    public static EventRow ToRow(
+        string projectId, ulong issueId, Event e, string fingerprint, int retentionDays, DateTimeOffset receivedAt)
     {
         var ex = EventExceptions.ResolvePrimary(e);
         var ms = e.TimestampUnixMs > 0 ? e.TimestampUnixMs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -58,8 +61,9 @@ public sealed class ClickHouseEventWriter(HttpClient http)
             ex?.Value ?? "",
             fingerprint,
             e.Tags.ToDictionary(kv => kv.Key, kv => kv.Value),
-            JsonSerializer.Serialize(e),
+            EventJson.ToJson(e),
             retentionDays,
-            e.UserKey);
+            e.UserKey,
+            receivedAt.ToUnixTimeMilliseconds());
     }
 }

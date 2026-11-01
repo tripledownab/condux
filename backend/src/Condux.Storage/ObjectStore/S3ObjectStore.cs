@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Amazon;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -39,9 +40,12 @@ public sealed partial class S3ObjectStore : IObjectStore, IDisposable
     }
 
     public async Task PutAsync(
-        string key, byte[] content, string contentType, CancellationToken cancellationToken = default)
+        string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken = default)
     {
-        using var stream = new MemoryStream(content, writable: false);
+        // Read where the bytes lie, so a slice of a larger upload is stored without being copied out first.
+        using var stream = MemoryMarshal.TryGetArray(content, out var segment)
+            ? new MemoryStream(segment.Array!, segment.Offset, segment.Count, writable: false)
+            : new MemoryStream(content.ToArray(), writable: false);
         var request = new PutObjectRequest
         {
             BucketName = bucket,

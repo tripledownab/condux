@@ -15,12 +15,17 @@ public class EventMessagesTests
 {
     private static readonly DateTimeOffset Received = DateTimeOffset.FromUnixTimeSeconds(1790985600);
 
-    private static Message<string, string> MessageAt(DateTimeOffset received, int? retentionDays = 30)
+    private static Message<string, string> MessageAt(
+        DateTimeOffset received, int? retentionDays = 30, string? sentAt = null)
     {
         var headers = new Headers();
         if (retentionDays is { } days)
         {
             headers.Add(EventHeaders.RetentionDays, Encoding.UTF8.GetBytes(days.ToString()));
+        }
+        if (sentAt is not null)
+        {
+            headers.Add(EventHeaders.SentAt, Encoding.UTF8.GetBytes(sentAt));
         }
         return new Message<string, string> { Key = "7", Value = "{}", Headers = headers, Timestamp = new Timestamp(received) };
     }
@@ -43,6 +48,17 @@ public class EventMessagesTests
         var e = new Event { TimestampUnixMs = new DateTimeOffset(2500, 1, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds() };
 
         Assert.Equal(Received, Filed(e, MessageAt(Received)));
+    }
+
+    /// <summary>The sender's sent_at rides as a header; a malformed one reads as not said.</summary>
+    [Fact]
+    public void Corrects_the_sender_clock_drift_the_relay_carried()
+    {
+        var e = new Event { TimestampUnixMs = Received.AddHours(-2).ToUnixTimeMilliseconds() };
+        var sentAt = Received.AddHours(-1).ToUnixTimeMilliseconds().ToString();
+
+        Assert.Equal(Received.AddHours(-1), Filed(e, MessageAt(Received, sentAt: sentAt)));
+        Assert.Equal(Received.AddHours(-2), Filed(e, MessageAt(Received, sentAt: "an hour ago")));
     }
 
     [Fact]

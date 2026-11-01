@@ -9,7 +9,8 @@ namespace Condux.IntegrationTests;
 /// <summary>
 /// Exercises the real <c>S3ObjectStore</c> (AWSSDK.S3) against an S3-compatible container over the S3 API
 /// (ADR-0028): a Put/Get round-trip returns the exact bytes, a re-Put of the same key overwrites (upload
-/// idempotence), a missing key returns null rather than throwing, and a wrong secret is refused. This is
+/// idempotence), a slice of a larger buffer is stored as itself, a missing key returns null rather than
+/// throwing, and a wrong secret is refused. This is
 /// the coverage the endpoint test's in-memory fake cannot give: the actual S3 client, signing, and
 /// not-found handling. The refusal case also holds the fixture to a server that checks signatures, since
 /// every other case here passes against one that does not.
@@ -46,6 +47,20 @@ public sealed class S3ObjectStoreTest(S3Fixture s3) : IClassFixture<S3Fixture>
     }
 
     [Fact]
+    public async Task A_slice_of_a_larger_buffer_is_stored_as_itself()
+    {
+        // A universal debug file's architectures are stored as slices of the one body, so the bytes either
+        // side of a slice must not reach the object.
+        using var store = Store();
+        var body = Encoding.UTF8.GetBytes("before|the slice|after");
+        var slice = body.AsMemory(7, "the slice".Length);
+
+        await store.PutAsync("debug-files/1/slice", slice, "application/octet-stream");
+
+        Assert.Equal("the slice", Encoding.UTF8.GetString((await store.GetAsync("debug-files/1/slice"))!));
+    }
+
+    [Fact]
     public async Task Get_returns_null_for_a_missing_key()
     {
         using var store = Store();
@@ -69,7 +84,7 @@ public sealed class S3ObjectStoreTest(S3Fixture s3) : IClassFixture<S3Fixture>
         var prefix = $"debug-files/{Guid.NewGuid():N}/";
         var keys = Enumerable.Range(0, 1001).Select(i => $"{prefix}{i:D4}").ToList();
         await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = 16 },
-            async (key, ct) => await store.PutAsync(key, [1], "application/octet-stream", ct));
+            async (key, ct) => await store.PutAsync(key, new byte[] { 1 }, "application/octet-stream", ct));
 
         var listed = new List<string>();
         var pages = 0;
@@ -93,7 +108,7 @@ public sealed class S3ObjectStoreTest(S3Fixture s3) : IClassFixture<S3Fixture>
         // there and current.
         using var store = Store();
         var key = $"sourcemaps/{Guid.NewGuid():N}/written";
-        await store.PutAsync(key, [1], "application/json");
+        await store.PutAsync(key, new byte[] { 1 }, "application/json");
 
         var listed = new List<StoredObject>();
         await foreach (var page in store.ListAsync(key))

@@ -81,7 +81,7 @@ public sealed class OsvCveScannerTest
 
     private static SandboxOptions Options() => new(
         SandboxDaemon.Local(),
-        Image: "ghcr.io/google/osv-scanner:latest",
+        Image: "ghcr.io/google/osv-scanner:v2.7.0",
         MemoryBytes: 1024L * 1024 * 1024,
         PidsLimit: 256,
         CommandTimeout: TimeSpan.FromMinutes(3));

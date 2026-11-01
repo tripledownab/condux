@@ -12,9 +12,7 @@ const useGetIssueMock = vi.fn();
 vi.mock("@/src/api/generated/condux", () => ({
   useGetIssue: () => useGetIssueMock(),
   useUpdateIssueStatus: () => ({ mutate: vi.fn(), isPending: false }),
-  useListRepos: () => ({ data: undefined }),
   useListMembers: () => ({ data: undefined }),
-  useListCodeMappings: () => ({ data: undefined }),
   useMe: () => ({ data: undefined }),
   getGetIssueQueryKey: () => ["issue"],
   getListIssuesQueryKey: () => ["issues"],
@@ -29,6 +27,8 @@ vi.mock("./issue-actions", () => ({ IssueActions: () => null }));
 vi.mock("./issue-chart", () => ({ IssueChart: () => null }));
 // The notes panel has its own suite (issue-notes.test.tsx) and needs a QueryClient; stub it here.
 vi.mock("./issue-notes", () => ({ IssueNotes: () => null }));
+// The Linear action has its own tests and reads the Linear routes.
+vi.mock("./issue-ticket", () => ({ IssueTicket: () => null }));
 // The events table lazy-loads via its own hook; it has its own suite (events-table.test.tsx).
 vi.mock("./events-table", () => ({ EventsTable: () => null }));
 
@@ -84,7 +84,7 @@ describe("IssueDetail", () => {
     useGetIssueMock.mockReturnValue({
       isPending: false,
       isError: false,
-      data: { data: { issue, events: [event, older] } },
+      data: { data: { issue, events: [event, older], frameLinks: [[], []] } },
     });
     renderWithIntl(<IssueDetail issueId="018f9c4e-1a2b-7c3d-8e4f-0123456789ab" />);
 
@@ -95,12 +95,49 @@ describe("IssueDetail", () => {
     expect(screen.getAllByText("Raw payload").length).toBeGreaterThanOrEqual(1);
   });
 
+  // The links are listed per event beside detail.events, so the evidence must read the list of the event
+  // it shows: here the first event cannot be parsed and the second one is shown.
+  it("links the shown event's frames through the server's frame links", () => {
+    useCurrentProjectMock.mockReturnValue({ status: ProjectStatus.Ready, org, project });
+    const unreadable = { ...event, eventId: "e0", payload: "not json" };
+    const shown = {
+      ...event,
+      payload: JSON.stringify({
+        Exceptions: [
+          { Stacktrace: { Frames: [{ Filename: "src/cart.js", Lineno: 5, InApp: true }] } },
+        ],
+      }),
+    };
+    useGetIssueMock.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        data: {
+          issue,
+          events: [unreadable, shown],
+          frameLinks: [
+            [],
+            [{ frame: 0, url: "https://github.com/acme/app/blob/main/src/cart.js#L5" }],
+          ],
+        },
+      },
+    });
+    renderWithIntl(<IssueDetail issueId="018f9c4e-1a2b-7c3d-8e4f-0123456789ab" />);
+
+    expect(screen.getByRole("link", { name: "src/cart.js:5" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/blob/main/src/cart.js#L5",
+    );
+  });
+
   it("shows the first release on the meta rail when the issue has one", () => {
     useCurrentProjectMock.mockReturnValue({ status: ProjectStatus.Ready, org, project });
     useGetIssueMock.mockReturnValue({
       isPending: false,
       isError: false,
-      data: { data: { issue: { ...issue, firstRelease: "1.4.0" }, events: [event] } },
+      data: {
+        data: { issue: { ...issue, firstRelease: "1.4.0" }, events: [event], frameLinks: [[]] },
+      },
     });
     renderWithIntl(<IssueDetail issueId="018f9c4e-1a2b-7c3d-8e4f-0123456789ab" />);
 
@@ -108,12 +145,31 @@ describe("IssueDetail", () => {
     expect(screen.getByText("1.4.0")).toBeInTheDocument();
   });
 
+  it("shows the agent block on the rail for an event made from an agent's failed span", () => {
+    useCurrentProjectMock.mockReturnValue({ status: ProjectStatus.Ready, org, project });
+    const agentEvent = {
+      ...event,
+      payload: JSON.stringify({
+        Tags: { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "boom" },
+      }),
+    };
+    useGetIssueMock.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: { data: { issue, events: [agentEvent], frameLinks: [[]] } },
+    });
+    renderWithIntl(<IssueDetail issueId="018f9c4e-1a2b-7c3d-8e4f-0123456789ab" />);
+
+    expect(screen.getByText("Agent failure")).toBeInTheDocument();
+    expect(screen.getByText("Tool call")).toBeInTheDocument();
+  });
+
   it("omits the first-release row when the issue has none", () => {
     useCurrentProjectMock.mockReturnValue({ status: ProjectStatus.Ready, org, project });
     useGetIssueMock.mockReturnValue({
       isPending: false,
       isError: false,
-      data: { data: { issue, events: [event] } },
+      data: { data: { issue, events: [event], frameLinks: [[]] } },
     });
     renderWithIntl(<IssueDetail issueId="018f9c4e-1a2b-7c3d-8e4f-0123456789ab" />);
 

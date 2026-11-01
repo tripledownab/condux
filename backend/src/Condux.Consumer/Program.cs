@@ -5,6 +5,7 @@ using Condux.Core.Quotas;
 using Condux.Messaging;
 using Condux.Notifications;
 using Condux.Storage.ClickHouse;
+using Condux.Storage.ObjectStore;
 using Condux.Storage.Postgres;
 using Condux.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
@@ -64,9 +65,15 @@ builder.Services.AddSingleton<IPauseNotifyThrottle>(new PostgresPauseNotifyThrot
 builder.Services.AddSingleton<OrgNotificationDispatcher>();
 builder.Services.AddSingleton<ConductorPauseNotifier>();
 // Auto-fix builds its context from symbolicated frames, as the manual request does, so the consumer reads
-// uploaded source maps and debug files too (ADR-0028, ADR-0049).
-builder.Services.AddEventSymbolication(builder.Configuration, pg);
+// uploaded source maps and debug files too (ADR-0028, ADR-0049). It only reads them, and it handles untrusted
+// events, so it is not handed the cleanup seam; a deployment can also hand it a key that cannot write.
+builder.Services.AddEventSymbolication(builder.Configuration, pg, ObjectStoreAccess.Read);
 builder.Services.AddSingleton<AutoFixDispatcher>();
+// Automatic tracker tickets (ADR-0053): the consumer only reserves them, so it needs the stores and no key.
+builder.Services.AddSingleton(new ProjectTrackerMappingRepository(pg));
+builder.Services.AddSingleton(new TrackerConnectionRepository(pg));
+builder.Services.AddSingleton(new IssueTicketRepository(pg));
+builder.Services.AddSingleton<AutoTicketDispatcher>();
 
 // Weekly summary emails (ADR-0031): an hourly-wake worker sends each enabled org's digest once per week (a
 // ledger claim dedupes) to every member, via the shared branded-email path. Reuses the notifier SMTP stack

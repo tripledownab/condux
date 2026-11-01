@@ -34,12 +34,42 @@ public sealed class RelayPostgresAuthTest(PostgresFixture pg) : IClassFixture<Po
     private WebApplicationFactory<relay::Program> Relay(IEventPublisher publisher) =>
         new WebApplicationFactory<relay::Program>().WithWebHostBuilder(b =>
         {
+            b.SurfaceServerExceptions();
             b.UseSetting("CONDUX_POSTGRES", pg.ConnectionString);
             b.ConfigureServices(s => s.AddSingleton(publisher));
         });
 
     [Fact]
     public async Task ApiMintedDsn_AuthenticatesAtRelay_WrongKeyRejected()
+    {
+        var (parsed, numericId) = await MintDsnAsync();
+
+        var pub = new InMemoryEventPublisher();
+        var relay = Relay(pub).CreateClient();
+
+        // The minted (UUID) DSN authenticates → the event is accepted and published once...
+        var ok = new HttpRequestMessage(HttpMethod.Post, $"/api/{parsed.ProjectId}/store/")
+        {
+            Content = new StringContent("""{"message":"boom","level":"error"}"""),
+        };
+        ok.Headers.Add("x-condux-auth", parsed.PublicKey);
+        Assert.Equal(HttpStatusCode.OK, (await relay.SendAsync(ok)).StatusCode);
+        var published = Assert.Single(pub.Published);
+        // ...but the relay resolves the UUID to the numeric id for the Kafka key, so downstream stays numeric.
+        Assert.Equal(numericId, published.ProjectId);
+
+        // A wrong key for the same project is rejected before anything is published.
+        var bad = new HttpRequestMessage(HttpMethod.Post, $"/api/{parsed.ProjectId}/store/")
+        {
+            Content = new StringContent("{}"),
+        };
+        bad.Headers.Add("x-condux-auth", "not-the-key");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await relay.SendAsync(bad)).StatusCode);
+        Assert.Single(pub.Published); // still just the one accepted event
+    }
+
+    // Mints a DSN the way a user would, and returns it parsed with the project's numeric id.
+    private async Task<(Dsn Parsed, string NumericId)> MintDsnAsync()
     {
         var api = ControlPlane();
         await ApiAuth.SignUpAsync(api); // authenticate; the caller owns the org it creates
@@ -64,28 +94,32 @@ public sealed class RelayPostgresAuthTest(PostgresFixture pg) : IClassFixture<Po
         // The exact DSN string a user copies carries the project's public UUID (#126) — never the bigint.
         Assert.True(Dsn.TryParse(dsn!, out var parsed));
         Assert.Equal(publicId, parsed!.ProjectId);
+        return (parsed, numericId);
+    }
 
-        var pub = new InMemoryEventPublisher();
-        var relay = Relay(pub).CreateClient();
+    [Fact]
+    public async Task A_relay_exception_reaches_the_test()
+    {
+        var (parsed, _) = await MintDsnAsync();
+        var relay = Relay(new FailingPublisher()).CreateClient();
 
-        // The minted (UUID) DSN authenticates → the event is accepted and published once...
-        var ok = new HttpRequestMessage(HttpMethod.Post, $"/api/{parsed.ProjectId}/store/")
+        var send = new HttpRequestMessage(HttpMethod.Post, $"/api/{parsed.ProjectId}/store/")
         {
             Content = new StringContent("""{"message":"boom","level":"error"}"""),
         };
-        ok.Headers.Add("x-condux-auth", parsed.PublicKey);
-        Assert.Equal(HttpStatusCode.OK, (await relay.SendAsync(ok)).StatusCode);
-        var published = Assert.Single(pub.Published);
-        // ...but the relay resolves the UUID to the numeric id for the Kafka key, so downstream stays numeric.
-        Assert.Equal(numericId, published.ProjectId);
+        send.Headers.Add("x-condux-auth", parsed.PublicKey);
 
-        // A wrong key for the same project is rejected before anything is published.
-        var bad = new HttpRequestMessage(HttpMethod.Post, $"/api/{parsed.ProjectId}/store/")
-        {
-            Content = new StringContent("{}"),
-        };
-        bad.Headers.Add("x-condux-auth", "not-the-key");
-        Assert.Equal(HttpStatusCode.Unauthorized, (await relay.SendAsync(bad)).StatusCode);
-        Assert.Single(pub.Published); // still just the one accepted event
+        // ServerExceptions hands the relay's own exception to the test rather than a bare 500.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => relay.SendAsync(send));
+        Assert.Equal(FailingPublisher.Message, ex.Message);
+    }
+
+    private sealed class FailingPublisher : IEventPublisher
+    {
+        public const string Message = "broker unreachable";
+
+        public Task PublishAsync(string projectId, Condux.Core.Events.Event e, int retentionDays,
+            long sentAtUnixMs, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException(Message);
     }
 }

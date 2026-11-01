@@ -111,6 +111,87 @@ public sealed class McpApiTest(PostgresFixture pg) : IClassFixture<PostgresFixtu
         Assert.True(McpRpc.IsError(badPage));
     }
 
+    /// <summary>
+    /// A request whose string is half a surrogate pair parses as JSON and threw when the endpoint or a tool
+    /// read it, answering 500. Wherever the string sits it is now a JSON-RPC parse error, like any other
+    /// body that is not JSON.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"jsonrpc":"2.0","id":1,"method":"\uD800"}""")]
+    [InlineData("""{"jsonrpc":"2.0","id":"\uD800","method":"ping"}""")]
+    [InlineData("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"\uD800"}}""")]
+    [InlineData("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_issue","arguments":{"issueId":"\uDC00"}}}""")]
+    public async Task ARequestWhoseStringIsNotText_IsAParseError(string body)
+    {
+        var resp = await PostRawAsync(await MintTokenAsync(), System.Text.Encoding.UTF8.GetBytes(body));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var error = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+        Assert.Equal(-32700, error.GetProperty("code").GetInt32());
+    }
+
+    /// <summary>
+    /// Valid JSON of the wrong kind where the endpoint expects an object or a string threw on the read, a 500.
+    /// A root that is not an object is an invalid request, and a tool name that is not a string invalid params.
+    /// </summary>
+    [Theory]
+    [InlineData("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]""", -32600)]
+    [InlineData("1", -32600)]
+    [InlineData("null", -32600)]
+    [InlineData("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":5}}""", -32602)]
+    public async Task ARequestOfTheWrongKind_IsAJsonRpcError(string body, int code)
+    {
+        var resp = await PostRawAsync(await MintTokenAsync(), System.Text.Encoding.UTF8.GetBytes(body));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var error = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+        Assert.Equal(code, error.GetProperty("code").GetInt32());
+    }
+
+    /// <summary>
+    /// U+0000 is valid text, so the endpoint reads it, and Postgres refuses it in the query that follows.
+    /// That threw out of the tool as a 500; it is the caller's text, so it is answered 400 like the REST
+    /// routes, by the same one place.
+    /// </summary>
+    [Fact]
+    public async Task AToolArgumentPostgresCannotStore_IsTheCallersMistake()
+    {
+        var body = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_issues","arguments":{"query":"a\u0000b"}}}""";
+
+        var resp = await PostRawAsync(await MintTokenAsync(), System.Text.Encoding.UTF8.GetBytes(body));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Equal("text_not_storable",
+            (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    /// <summary>A body that opens with a UTF-8 byte order mark is still read, as it was before.</summary>
+    [Fact]
+    public async Task ARequestOpeningWithAByteOrderMark_IsServed()
+    {
+        byte[] body = [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes("""{"jsonrpc":"2.0","id":1,"method":"ping"}""")];
+
+        var resp = await PostRawAsync(await MintTokenAsync(), body);
+
+        var rpc = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(rpc.TryGetProperty("result", out _), rpc.ToString());
+    }
+
+    private async Task<string> MintTokenAsync()
+    {
+        var (client, orgId) = await ProvisionAsync();
+        var projectId = await CreateProjectAsync(client, orgId, "A");
+        return (await (await client.PostAsJsonAsync($"/api/projects/{projectId}/mcp-tokens", new { name = "x" }))
+            .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+    }
+
+    private Task<HttpResponseMessage> PostRawAsync(string token, byte[] body)
+    {
+        var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        return BearerClient(token).PostAsync("/api/mcp", content);
+    }
+
     [Fact]
     public async Task NoOrRevokedToken_Is401()
     {

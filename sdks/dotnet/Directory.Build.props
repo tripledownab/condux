@@ -7,8 +7,9 @@
        in this tree inherit these too, which is harmless (they are IsPackable=false). -->
   <PropertyGroup>
     <Version>0.1.0</Version>
-    <Authors>Condux</Authors>
-    <Company>Condux</Company>
+    <Authors>Triple Down AB</Authors>
+    <Company>Triple Down AB</Company>
+    <Copyright>Copyright 2026 Triple Down AB, Skeppargatan 55, 114 59 Stockholm, Sweden, security@condux.ai</Copyright>
     <Product>Condux SDK</Product>
     <PackageProjectUrl>https://github.com/tripledownab/condux</PackageProjectUrl>
     <RepositoryUrl>https://github.com/tripledownab/condux</RepositoryUrl>
@@ -22,6 +23,8 @@
     <!-- The icon has to travel inside the package: PackageIconUrl is deprecated and nuget.org will not
          render it. Packed from here so all three SDK packages carry the same mark. -->
     <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" Visible="false" />
+    <!-- The licence carries the manufacturer's name, address and contact, which a package must have with it. -->
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
 </Project>

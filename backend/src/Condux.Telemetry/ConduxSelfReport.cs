@@ -45,16 +45,6 @@ public static class ConduxSelfReport
         // is unset. The web services keep resolving the raw client for their request-wrapping middleware.
         builder.Services.AddSingleton(new ConduxSelfReporter(client));
     }
-
-    /// <summary>
-    /// True for a cancellation the request-wrapping middleware should not report: an
-    /// <see cref="OperationCanceledException"/> raised because the request was aborted (the client
-    /// disconnected) or the host is shutting down. Npgsql surfaces query cancellation this way, so a client
-    /// hangup mid-query would otherwise self-report as a fault. Gated on the caller's own cancellation state,
-    /// so a genuine <see cref="OperationCanceledException"/> thrown for any other reason is still reported.
-    /// </summary>
-    public static bool IsExpectedCancellation(Exception exception, bool cancellationRequested) =>
-        exception is OperationCanceledException && cancellationRequested;
 }
 
 /// <summary>

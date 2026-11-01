@@ -93,7 +93,7 @@ public sealed partial class PostgresJobLeaseStore
         cmd.Parameters.AddWithValue("actor", run.Actor);
         cmd.Parameters.AddWithValue("now", run.CreatedAt);
         cmd.Parameters.AddWithValue("reserved", run.ReservedAt ?? run.CreatedAt);
-        cmd.Parameters.AddWithValue("context", JsonSerializer.Serialize(context, ContextJson));
+        cmd.AddJsonb("context", JsonSerializer.Serialize(context, ContextJson));
         cmd.Parameters.AddWithValue("ranges", PostgresCveFixStore.ToRangesParameter(run.VulnerableRanges));
         return await cmd.ExecuteNonQueryAsync(cancellationToken) == 1;
     }

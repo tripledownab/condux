@@ -218,7 +218,7 @@ public sealed class FixCancelApiTest(PostgresFixture pg) : IClassFixture<Postgre
         var invite = await s.Client.PostAsJsonAsync($"/api/orgs/{s.OrgId}/invites",
             new { email = memberUser.Email, role = "member" });
         var token = (await invite.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessStatusCode();
+        await (await member.PostAsJsonAsync("/api/invites/accept", new { token })).EnsureSuccessAsync();
 
         Assert.Equal(
             HttpStatusCode.Forbidden, (await CancelAsync(member, s.ProjectId, await OnlyRunIdAsync(s))).StatusCode);

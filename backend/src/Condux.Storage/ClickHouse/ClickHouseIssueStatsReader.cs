@@ -101,13 +101,15 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
     }
 
     // Per-issue event volume for a project split into this week vs the prior week, in ONE grouped query over
-    // [start, end) — the weekly digest (ADR-0031). sumIf keys off the week cutoff, so the result is one row
-    // per issue (not per issue-hour), which scales; the caller sums for the project totals and ranks the top.
+    // [start, end), for the weekly digest (ADR-0031). It reads issue_received_1h, so an event counts in the
+    // week Condux received it, the clock the digest's new and regressed counts use too, not the week it
+    // claims. sumIf keys off the week cutoff, so the result is one row per issue (not per issue-hour), which
+    // scales; the caller sums for the project totals and ranks the top.
     private const string WeeklyVolumeSql = """
         SELECT issue_id,
                sumIf(count, bucket >= toDateTime({cutoff:Int64}, 'UTC')) AS this_week,
                sumIf(count, bucket < toDateTime({cutoff:Int64}, 'UTC')) AS prev_week
-        FROM condux.issue_stats_1h
+        FROM condux.issue_received_1h
         WHERE project_id = {pid:String}
           AND bucket >= toDateTime({start:Int64}, 'UTC') AND bucket < toDateTime({end:Int64}, 'UTC')
         GROUP BY issue_id
@@ -115,7 +117,8 @@ public sealed class ClickHouseIssueStatsReader(HttpClient http)
         """;
 
     /// <summary>Per-issue this-week vs prior-week volume for the project over [previousStart, weekEnd), split
-    /// at <paramref name="weekStart"/> (ADR-0031). One row per issue with events in the window.</summary>
+    /// at <paramref name="weekStart"/> and counted by when Condux received each event (ADR-0031). One row per
+    /// issue with events received in the window.</summary>
     public async Task<IReadOnlyList<IssueVolume>> WeeklyVolumesAsync(
         string projectId, DateTimeOffset previousStart, DateTimeOffset weekStart, DateTimeOffset weekEnd,
         CancellationToken cancellationToken = default)

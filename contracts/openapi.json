@@ -6,7 +6,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:8099/"
+      "url": "/"
     }
   ],
   "paths": {
@@ -1248,13 +1248,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
                 "oneOf": [
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  },
                   {
                     "$ref": "#/components/schemas/CreateKeyRequest"
                   }
-                ],
-                "nullable": true
+                ]
               }
             }
           }
@@ -1743,6 +1747,16 @@
           },
           "404": {
             "description": "Not Found"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -1811,10 +1825,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DerivedMapping"
-                  }
+                  "$ref": "#/components/schemas/MappingSuggestions"
                 }
               }
             }
@@ -2278,6 +2289,49 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DebugFileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/dart-symbol-maps": {
+      "post": {
+        "tags": [
+          "DebugFiles"
+        ],
+        "operationId": "uploadDartSymbolMap",
+        "parameters": [
+          {
+            "name": "debugId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DartSymbolMapResponse"
                 }
               }
             }
@@ -6019,6 +6073,540 @@
           }
         }
       }
+    },
+    "/api/orgs/{orgId}/linear/connect": {
+      "post": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "linearConnect",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinearConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearConnectResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/linear/oauth/callback": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "linearOauthCallback",
+        "responses": {
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/linear": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "getLinearConnection",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearOrgStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "disconnectLinear",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearDisconnectResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/linear": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "getLinearProject",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearProjectStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/linear/teams": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "listLinearTeams",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LinearTeamResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/linear/labels": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "listLinearLabels",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LinearLabelResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/linear/mapping": {
+      "put": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "setLinearMapping",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetLinearMappingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearMappingResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "deleteLinearMapping",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issues/{issueId}/ticket": {
+      "get": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "getIssueTicket",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTicketResponse"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "createIssueTicket",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTicketResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "unlinkIssueTicket",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issues/{issueId}/ticket/retry": {
+      "post": {
+        "tags": [
+          "Linear"
+        ],
+        "operationId": "retryIssueTicket",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTicketResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6655,13 +7243,17 @@
             "type": "boolean"
           },
           "impersonation": {
-            "type": "object",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/ImpersonationStateResponse"
               }
-            ],
-            "nullable": true
+            ]
           },
           "mfaRequired": {
             "type": "boolean",
@@ -7011,6 +7603,19 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "unavailable": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
+              {
+                "$ref": "#/components/schemas/CveScanUnavailable"
+              }
+            ]
           }
         }
       },
@@ -7067,13 +7672,17 @@
             "type": "boolean"
           },
           "reason": {
-            "type": "integer",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/CannotVerifyReason"
               }
-            ],
-            "nullable": true
+            ]
           },
           "sightings": {
             "type": "array",
@@ -7206,13 +7815,17 @@
             "format": "int64"
           },
           "failureReason": {
-            "type": "integer",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/FixFailureReason"
               }
-            ],
-            "nullable": true
+            ]
           },
           "mergedAt": {
             "type": "string",
@@ -7228,18 +7841,41 @@
             "nullable": true
           },
           "verifyEvidence": {
-            "type": "object",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/CveFixEvidence"
               }
-            ],
-            "nullable": true
+            ]
           }
         }
       },
+      "CveScanUnavailable": {
+        "type": "integer"
+      },
       "CveSeverity": {
         "type": "integer"
+      },
+      "DartSymbolMapResponse": {
+        "required": [
+          "debugId",
+          "names"
+        ],
+        "type": "object",
+        "properties": {
+          "debugId": {
+            "type": "string"
+          },
+          "names": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
       },
       "DebugFileResponse": {
         "required": [
@@ -7247,7 +7883,8 @@
           "buildId",
           "debugId",
           "byteSize",
-          "createdAt"
+          "createdAt",
+          "files"
         ],
         "type": "object",
         "properties": {
@@ -7268,6 +7905,42 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DebugFileSliceResponse"
+            }
+          }
+        }
+      },
+      "DebugFileSliceResponse": {
+        "required": [
+          "id",
+          "buildId",
+          "debugId",
+          "architecture",
+          "byteSize"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "buildId": {
+            "type": "string"
+          },
+          "debugId": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string",
+            "nullable": true
+          },
+          "byteSize": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -7524,13 +8197,17 @@
             }
           },
           "failureReason": {
-            "type": "integer",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/FixFailureReason"
               }
-            ],
-            "nullable": true
+            ]
           }
         }
       },
@@ -7691,13 +8368,17 @@
             "nullable": true
           },
           "failureReason": {
-            "type": "integer",
             "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
               {
                 "$ref": "#/components/schemas/FixFailureReason"
               }
-            ],
-            "nullable": true
+            ]
           },
           "verifyStatus": {
             "$ref": "#/components/schemas/VerifyStatus"
@@ -7724,6 +8405,22 @@
         "type": "object",
         "properties": {
           "email": {
+            "type": "string"
+          }
+        }
+      },
+      "FrameLink": {
+        "required": [
+          "frame",
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "url": {
             "type": "string"
           }
         }
@@ -8000,7 +8697,8 @@
       "IssueDetailResponse": {
         "required": [
           "issue",
-          "events"
+          "events",
+          "frameLinks"
         ],
         "type": "object",
         "properties": {
@@ -8011,6 +8709,15 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/StoredEvent"
+            }
+          },
+          "frameLinks": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/FrameLink"
+              }
             }
           }
         }
@@ -8155,7 +8862,243 @@
           }
         }
       },
+      "IssueTicketResponse": {
+        "required": [
+          "id",
+          "provider",
+          "state",
+          "failure",
+          "key",
+          "url",
+          "automatic"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "provider": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "state": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failure": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "key": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "automatic": {
+            "type": "boolean"
+          }
+        }
+      },
       "JsonElement": { },
+      "LinearConnectRequest": {
+        "required": [
+          "returnPath"
+        ],
+        "type": "object",
+        "properties": {
+          "returnPath": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "LinearConnectResponse": {
+        "required": [
+          "authorizeUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "authorizeUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "LinearDisconnectResponse": {
+        "required": [
+          "revoked"
+        ],
+        "type": "object",
+        "properties": {
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LinearLabelResponse": {
+        "required": [
+          "id",
+          "name",
+          "groupId",
+          "groupName"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "groupId": {
+            "type": "string",
+            "nullable": true
+          },
+          "groupName": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "LinearMappingLabelResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "LinearMappingResponse": {
+        "required": [
+          "teamId",
+          "teamName",
+          "needsAttention",
+          "autoCreate",
+          "labels"
+        ],
+        "type": "object",
+        "properties": {
+          "teamId": {
+            "type": "string"
+          },
+          "teamName": {
+            "type": "string"
+          },
+          "needsAttention": {
+            "type": "boolean"
+          },
+          "autoCreate": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinearMappingLabelResponse"
+            }
+          }
+        }
+      },
+      "LinearOrgStatusResponse": {
+        "required": [
+          "connected",
+          "workspaceName",
+          "broken",
+          "mappedProjects"
+        ],
+        "type": "object",
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "workspaceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "broken": {
+            "type": "boolean"
+          },
+          "mappedProjects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LinearProjectStatusResponse": {
+        "required": [
+          "connected",
+          "workspaceName",
+          "broken",
+          "mapping",
+          "autoCreatedToday",
+          "autoCreateDailyLimit"
+        ],
+        "type": "object",
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "workspaceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "broken": {
+            "type": "boolean"
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
+              {
+                "$ref": "#/components/schemas/LinearMappingResponse"
+              }
+            ]
+          },
+          "autoCreatedToday": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "autoCreateDailyLimit": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "LinearTeamResponse": {
+        "required": [
+          "id",
+          "key",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "LinkRepoRequest": {
         "required": [
           "repoFullName",
@@ -8243,6 +9186,24 @@
             "items": {
               "$ref": "#/components/schemas/LlmModel"
             }
+          }
+        }
+      },
+      "MappingSuggestions": {
+        "required": [
+          "suggestions",
+          "outcome"
+        ],
+        "type": "object",
+        "properties": {
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DerivedMapping"
+            }
+          },
+          "outcome": {
+            "type": "string"
           }
         }
       },
@@ -9000,6 +9961,28 @@
           }
         }
       },
+      "SetLinearMappingRequest": {
+        "required": [
+          "teamId"
+        ],
+        "type": "object",
+        "properties": {
+          "teamId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "autoCreate": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
       "SetLlmConfigRequest": {
         "required": [
           "provider",
@@ -9578,6 +10561,9 @@
     },
     {
       "name": "GitHub"
+    },
+    {
+      "name": "Linear"
     }
   ]
 }

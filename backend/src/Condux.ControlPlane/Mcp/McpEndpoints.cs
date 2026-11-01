@@ -19,8 +19,9 @@ namespace Condux.ControlPlane.Mcp;
 /// Two transport rules. Before the token is read, a request carrying a browser <c>Origin</c> that is
 /// not this deployment's own is refused with 403, since MCP 2025-06-18 (basic/transports, "Security
 /// Warning") requires the server to validate it. An agent outside a browser sends none, so absence
-/// passes. And a 401 carries a <c>Bearer</c> challenge, since RFC 9110 15.5.2 requires a
-/// <c>WWW-Authenticate</c> on every 401; it names no OAuth metadata because this server does not do OAuth.
+/// passes. And a 401 carries a <c>Bearer</c> challenge, which
+/// <see cref="Condux.ControlPlane.Auth.AuthChallenge"/> adds for every bearer route; it names no OAuth
+/// metadata because this server does not do OAuth.
 /// </summary>
 internal static class McpEndpoints
 {
@@ -47,11 +48,8 @@ internal static class McpEndpoints
         if (BearerToken.From(http) is not { } raw ||
             await tokens.ResolveIdentityAsync(McpTokens.HashToken(raw), http.RequestAborted) is not { } token)
         {
-            // RFC 6750 3.1: a token that was sent and refused is named as invalid; a missing one is not.
+            // The Bearer challenge, with error="invalid_token" for a refused token, comes from AuthChallenge.
             http.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            http.Response.Headers.WWWAuthenticate = BearerToken.From(http) is null
-                ? "Bearer realm=\"condux\""
-                : "Bearer realm=\"condux\", error=\"invalid_token\"";
             return;
         }
         var context = new McpCallContext(
@@ -64,6 +62,12 @@ internal static class McpEndpoints
             return;
         }
         var root = doc.RootElement;
+        // A request is an object (JSON-RPC 2.0 section 4); anything else has no member to read.
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            await WriteError(http, null, -32600, "Invalid Request");
+            return;
+        }
         var id = root.TryGetProperty("id", out var idEl) ? idEl.Clone() : (JsonElement?)null;
         var method = root.TryGetProperty("method", out var m) && m.ValueKind == JsonValueKind.String
             ? m.GetString()
@@ -111,6 +115,7 @@ internal static class McpEndpoints
     {
         var prms = root.TryGetProperty("params", out var p) ? p : default;
         var name = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("name", out var n)
+            && n.ValueKind == JsonValueKind.String
             ? n.GetString()
             : null;
         if (string.IsNullOrEmpty(name))
@@ -156,17 +161,36 @@ internal static class McpEndpoints
         return uri.IsDefaultPort ? $"{uri.Scheme}://{host}" : $"{uri.Scheme}://{host}:{uri.Port}";
     }
 
+    // A request whose strings are not text is a parse error like any other malformed body: the document
+    // would parse and the reads after it throw, answering 500 (JsonStrings says why). The body is read
+    // whole first because the check needs its bytes. A leading UTF-8 byte order mark is dropped, as the
+    // stream parse this replaced did; parsing bytes refuses one.
     private static async Task<JsonDocument?> TryParseAsync(HttpContext http)
     {
+        using var body = new MemoryStream();
+        await http.Request.Body.CopyToAsync(body, http.RequestAborted);
+        ReadOnlyMemory<byte> bytes = body.ToArray();
+        if (bytes.Span.StartsWith(Utf8Bom))
+        {
+            bytes = bytes[Utf8Bom.Length..];
+        }
         try
         {
-            return await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+            var doc = JsonDocument.Parse(bytes);
+            if (JsonStrings.AreText(bytes.Span))
+            {
+                return doc;
+            }
+            doc.Dispose();
+            return null;
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
 
     private static object Text(string text) => new { type = "text", text };
 

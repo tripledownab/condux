@@ -2,13 +2,17 @@ using Condux.Core.Events;
 
 namespace Condux.Core.Alerting;
 
-/// <summary>The kind of issue event a rule can fire on. Values match the wire/DB representation.</summary>
+/// <summary>The kind of event a rule can fire on. Values match the wire/DB representation.</summary>
 public enum AlertEventType
 {
     NewIssue = 1,
     Regression = 2,
     Resolved = 3,
     Assigned = 4,
+
+    /// <summary>A dependency advisory newly applies to a repository linked to the project
+    /// (<see cref="AdvisoryNotifications"/>). It has no issue behind it.</summary>
+    Advisory = 5,
 }
 
 /// <summary>Where a fired alert is delivered. Values match <c>alert_channels.channel</c>.</summary>
@@ -21,7 +25,7 @@ public enum NotificationChannel
 }
 
 /// <summary>An alert rule for a project: fires on any of its selected <see cref="Events"/> (new issue,
-/// regression, resolved, assigned) whose level is one of the rule's selected <see cref="Levels"/> (an
+/// regression, resolved, assigned, new advisory) whose level is one of the rule's selected <see cref="Levels"/> (an
 /// exact set, not a >= threshold).</summary>
 public sealed record AlertRule(
     Guid Id, long ProjectId, string Name, IReadOnlyList<AlertEventType> Events,

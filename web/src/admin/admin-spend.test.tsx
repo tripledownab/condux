@@ -72,6 +72,18 @@ describe("AdminSpend", () => {
             costUsd: null,
             createdAt: "2026-01-01T00:00:00Z",
           },
+          {
+            id: "c",
+            orgId: 3,
+            orgName: "Initech",
+            model: "gpt-4o",
+            kind: "issue_fix",
+            status: 9,
+            inputTokens: 0,
+            outputTokens: 0,
+            costUsd: null,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
         ],
       },
     });
@@ -81,6 +93,10 @@ describe("AdminSpend", () => {
     expect(screen.getAllByText("$37.50").length).toBeGreaterThan(0);
     expect(screen.getByText("$30.00")).toBeInTheDocument(); // Acme's run cost, unique to its run row
     expect(screen.getByText("CVE bump")).toBeInTheDocument(); // Globex's run
+    expect(screen.getByText("Succeeded")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    // A status this build does not know reads as unknown, never as a real state such as pending.
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
 
     // Filtering the runs to "globex" drops the Acme run row; the Globex run stays.
     fireEvent.change(screen.getByPlaceholderText("Filter by org or model"), {

@@ -47,7 +47,7 @@ public sealed class AdminAuditRepository(string connectionString)
         cmd.Parameters.AddWithValue("action", action);
         cmd.Parameters.AddWithValue("targetOrgId", (object?)targetOrgId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("targetUserId", (object?)targetUserId ?? DBNull.Value);
-        cmd.Parameters.Add(new NpgsqlParameter("details", NpgsqlDbType.Jsonb) { Value = detailsJson });
+        cmd.AddJsonb("details", detailsJson);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

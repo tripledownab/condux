@@ -26,8 +26,13 @@ internal static class AlertText
         AlertEventType.Regression => "Regression",
         AlertEventType.Resolved => "Resolved",
         AlertEventType.Assigned => "Assigned",
+        AlertEventType.Advisory => "New advisory",
         _ => "Alert",
     };
+
+    /// <summary>The issue's public id, or null for an event with no issue behind it (an advisory).</summary>
+    public static string? IssueId(AlertNotification n) =>
+        n.IssuePublicId == Guid.Empty ? null : n.IssuePublicId.ToString();
 
     // The template token values for an event (keys are AlertTemplate.KnownTokens).
     private static IReadOnlyDictionary<string, string> Values(AlertNotification n) =>
@@ -38,6 +43,6 @@ internal static class AlertText
             ["level"] = n.Level.ToString(),
             ["event"] = EventLabel(n.EventType),
             ["project"] = n.ProjectName,
-            ["issue"] = n.IssuePublicId.ToString(),
+            ["issue"] = IssueId(n) ?? "",
         };
 }

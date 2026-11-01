@@ -123,7 +123,7 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
     private static async Task<JsonElement> ReadResponseAsync(HttpClient client, long projectId, string repoId)
     {
         var resp = await client.GetAsync($"/api/projects/{projectId}/repos/{repoId}/cve-findings");
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         return await resp.Content.ReadFromJsonAsync<JsonElement>();
     }
 
@@ -268,6 +268,33 @@ public sealed class CveFindingExposureApiTest(PostgresFixture pg, ClickHouseFixt
 
         Assert.Empty(body.GetProperty("findings").EnumerateArray());
         Assert.True(body.GetProperty("truncated").GetBoolean());
+        Assert.Equal((int)CveScanUnavailable.Failed, body.GetProperty("unavailable").GetInt32());
+    }
+
+    /// <summary>A refusal the scanner can name reaches the dashboard as that reason, so it can say what to
+    /// change rather than that something failed.</summary>
+    [Theory]
+    [InlineData(CveScanUnavailable.AlertsDisabled)]
+    [InlineData(CveScanUnavailable.PermissionMissing)]
+    public async Task A_named_refusal_returns_its_reason(CveScanUnavailable reason)
+    {
+        var (client, projectId, repoId) =
+            await ProvisionAsync(new FailingScanner(new CveScanUnavailableException(reason, "refused")));
+
+        var body = await ReadResponseAsync(client, projectId, repoId);
+
+        Assert.Empty(body.GetProperty("findings").EnumerateArray());
+        Assert.Equal((int)reason, body.GetProperty("unavailable").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_complete_scan_names_no_reason()
+    {
+        var (client, projectId, repoId) = await ProvisionAsync(Finding("lodash", "npm"));
+
+        var body = await ReadResponseAsync(client, projectId, repoId);
+
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("unavailable").ValueKind);
     }
 
     [Fact]

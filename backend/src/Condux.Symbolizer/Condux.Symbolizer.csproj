@@ -6,7 +6,7 @@
     <InternalsVisibleTo Include="Condux.Symbolizer.Tests" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Core for the ELF reader, Telemetry for ProcessTermination only. Nothing that opens a database, a
+    <!-- Core for the debug file readers (ELF, Mach-O), Telemetry for ProcessTermination only. Nothing that opens a database, a
          broker or object storage: this service parses files a stranger chose, so it holds no credential. -->
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
     <ProjectReference Include="../Condux.Telemetry/Condux.Telemetry.csproj" />

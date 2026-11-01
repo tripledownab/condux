@@ -103,17 +103,34 @@ internal static class SentryIngestEndpoints
 
         // 5. Parse → scrub → publish. Read bytes, not text: envelope items are length-delimited and an
         // attachment payload is raw binary, so decoding the whole body to a string first corrupts it.
-        var body = await RequestBodies.ReadBoundedAsync(ctx.Request.Body, options.MaxIngestBytes, ctx.RequestAborted);
-        if (body is null)
+        using var read = await ReadOrRefundAsync(ctx, options, project, limits, quotaMeter);
+        var held = read.Body;
+        if (held is null)
         {
-            // What the body decompressed to ran past CONDUX_MAX_INGEST_BYTES. Answered rather than thrown
-            // so a hostile payload reads as a client error, and refused before it is ever held in full.
-            ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-            await ctx.Response.WriteAsJsonAsync(new { error = "payload_too_large" });
+            // Past CONDUX_MAX_INGEST_BYTES once decompressed, not the encoding it was sent as, or no room in
+            // the relay's body budget. Answered rather than thrown so a hostile payload reads as a client
+            // error, and refused before it is ever held in full. The budget's 429 is the relay's own lack of
+            // room, not the sender's error, and stores nothing, so the event step 4 counted is given back, or
+            // a sender that sends it again pays twice; no token, for the reason the no-event branch below
+            // gives. The other two are the sender's, like a malformed payload, and keep it.
+            if (read.Refusal == BodyRefusal.OverBudget && limits.MonthlyEvents > 0)
+            {
+                await quotaMeter.RefundAsync(project.QuotaKey, 1, CancellationToken.None);
+            }
+            ctx.Response.StatusCode = IngestBodies.ToStatus(read.Refusal);
+            await ctx.Response.WriteAsJsonAsync(new
+            {
+                error = read.Refusal switch
+                {
+                    BodyRefusal.TooLarge => "payload_too_large",
+                    BodyRefusal.Undecodable => "invalid_payload",
+                    _ => "ingest_busy",
+                },
+            });
             return;
         }
 
-        var result = parse(body);
+        var result = parse(held.Content);
 
         if (result.Outcome == ParseOutcome.Malformed)
         {
@@ -141,8 +158,9 @@ internal static class SentryIngestEndpoints
         }
 
         var scrubbed = EventScrubber.Scrub(normalized, project.UserKeySalt);
-        // Carry the tier's retention so the consumer can stamp it on the ClickHouse row (column-driven TTL).
-        await publisher.PublishAsync(projectKey, scrubbed, limits.RetentionDays, ctx.RequestAborted);
+        // Carry the tier's retention so the consumer can stamp it on the ClickHouse row (column-driven TTL),
+        // and the sender's sent_at so it can correct the sender's clock drift.
+        await publisher.PublishAsync(projectKey, scrubbed, limits.RetentionDays, result.SentAtUnixMs, ctx.RequestAborted);
 
         logger.LogInformation(
             "ingest project={ProjectId} event={EventId} remaining={Remaining}",
@@ -152,5 +170,22 @@ internal static class SentryIngestEndpoints
         // parses the body on that status alone), and Sentry's own ingest answers 200 here.
         ctx.Response.StatusCode = StatusCodes.Status200OK;
         await ctx.Response.WriteAsJsonAsync(new { id = scrubbed.EventId });
+    }
+
+    // A body that never arrives whole (the sender went away, Kestrel refused it as malformed, or it stopped
+    // arriving and was aborted) stores nothing, so the event step 4 counted is given back, with no token for the reason
+    // the no-event branch gives. The exception carries on.
+    private static async Task<IngestRead> ReadOrRefundAsync(
+        HttpContext ctx, RelayOptions options, Project project, Limits limits, IQuotaMeter quotaMeter)
+    {
+        try
+        {
+            return await IngestBodies.ReadAsync(ctx, options, project);
+        }
+        catch when (limits.MonthlyEvents > 0)
+        {
+            await quotaMeter.RefundAsync(project.QuotaKey, 1, CancellationToken.None);
+            throw;
+        }
     }
 }

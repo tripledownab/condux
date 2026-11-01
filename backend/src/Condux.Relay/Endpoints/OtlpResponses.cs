@@ -13,17 +13,24 @@ internal static class OtlpResponses
 {
     // OTLP requires a server to answer in the content type it was sent, so the encoding is chosen from
     // the request rather than fixed. A full success is an empty message in both encodings.
-    public static async Task WriteAsync(HttpContext ctx, bool isProtobuf, ExportLogsServiceResponse response)
+    public static Task WriteAsync(HttpContext ctx, bool isProtobuf, ExportLogsServiceResponse response)
+        => WriteAsync(ctx, isProtobuf, response.ToProtobuf, response.ToJson);
+
+    public static Task WriteAsync(HttpContext ctx, bool isProtobuf, ExportTraceServiceResponse response)
+        => WriteAsync(ctx, isProtobuf, response.ToProtobuf, response.ToJson);
+
+    private static async Task WriteAsync(
+        HttpContext ctx, bool isProtobuf, Func<byte[]> toProtobuf, Func<string> toJson)
     {
         if (isProtobuf)
         {
             ctx.Response.ContentType = "application/x-protobuf";
-            await ctx.Response.Body.WriteAsync(response.ToProtobuf(), ctx.RequestAborted);
+            await ctx.Response.Body.WriteAsync(toProtobuf(), ctx.RequestAborted);
             return;
         }
 
         ctx.Response.ContentType = "application/json";
-        await ctx.Response.WriteAsync(response.ToJson(), ctx.RequestAborted);
+        await ctx.Response.WriteAsync(toJson(), ctx.RequestAborted);
     }
 
     // The protocol requires the body of every 4xx and 5xx to be a google.rpc.Status describing the

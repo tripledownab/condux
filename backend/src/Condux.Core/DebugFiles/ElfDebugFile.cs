@@ -17,10 +17,6 @@ public enum ElfRejection
     NoDebugInfo,
 }
 
-/// <summary>A debug file's identity: its GNU build ID in lowercase hex, and the <c>debug_id</c> an event
-/// carries for the same build.</summary>
-public sealed record ElfBuild(string BuildId, string DebugId);
-
 public static class ElfDebugFile
 {
     private const uint SectionNote = 7;
@@ -29,7 +25,7 @@ public static class ElfDebugFile
     /// <summary>The build a file belongs to, or the reason it cannot be used. A stripped binary such as
     /// <c>libapp.so</c> carries the same build ID as its symbols but no DWARF, so it is refused rather than
     /// stored as if it could resolve a frame.</summary>
-    public static (ElfBuild? Build, ElfRejection? Rejection) ToBuild(ReadOnlySpan<byte> file)
+    public static (DebugBuild? Build, ElfRejection? Rejection) ToBuild(ReadOnlySpan<byte> file)
     {
         if (file.Length < 16 || file[0] != 0x7F || file[1] != (byte)'E' || file[2] != (byte)'L' || file[3] != (byte)'F')
         {
@@ -76,7 +72,7 @@ public static class ElfDebugFile
             return (null, ElfRejection.NoBuildId);
         }
 
-        return hasInfo && hasLine ? (new ElfBuild(buildId, ToDebugId(buildId)), null) : (null, ElfRejection.NoDebugInfo);
+        return hasInfo && hasLine ? (new DebugBuild(buildId, ToDebugId(buildId)), null) : (null, ElfRejection.NoDebugInfo);
     }
 
     /// <summary>The <c>debug_id</c> for an ELF build ID, by Sentry's own server-side rule (symbolic's
@@ -89,19 +85,6 @@ public static class ElfDebugFile
         var raw = Convert.FromHexString(buildId);
         raw.AsSpan(0, Math.Min(16, raw.Length)).CopyTo(bytes);
         return new Guid(bytes).ToString();
-    }
-
-    /// <summary>An event's <c>debug_id</c> in the form <see cref="ToDebugId"/> writes, or null when it is not
-    /// one. Senders vary the spelling (case, no dashes, braces) and may append an age after a dash, as
-    /// Sentry's own format allows, so a plain string match would miss files that are there.</summary>
-    public static string? ToStoredDebugId(string debugId)
-    {
-        if (Guid.TryParse(debugId, out var whole))
-        {
-            return whole.ToString();
-        }
-        var age = debugId.LastIndexOf('-');
-        return age > 0 && Guid.TryParse(debugId.AsSpan(0, age), out var aged) ? aged.ToString() : null;
     }
 
     // Notes are 4-byte aligned records of (namesz, descsz, type, name, desc). Only the GNU build ID is read.

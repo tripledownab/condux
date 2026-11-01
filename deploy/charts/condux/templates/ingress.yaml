@@ -18,25 +18,21 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    # The dashboard host serves the API under /api (same-origin) and the dashboard at /.
+    # The dashboard host serves the control-plane's paths (same-origin) and the dashboard at /. The
+    # control-plane's are the same three the Caddyfiles route: the API, its OpenAPI document, and the MCP
+    # server card that directories read without a token.
     - host: {{ .Values.ingress.appHost | quote }}
       http:
         paths:
-          - path: /api
+          {{- range list "/api" "/openapi" "/.well-known/mcp" }}
+          - path: {{ . }}
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-controlplane
+                name: {{ $.Release.Name }}-controlplane
                 port:
-                  number: {{ .Values.controlplane.port }}
-          # The MCP server card, which directories read without a token.
-          - path: /.well-known/mcp
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ .Release.Name }}-controlplane
-                port:
-                  number: {{ .Values.controlplane.port }}
+                  number: {{ $.Values.controlplane.port }}
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:

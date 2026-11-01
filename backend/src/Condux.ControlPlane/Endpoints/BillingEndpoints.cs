@@ -121,6 +121,7 @@ internal static class BillingEndpoints
                             payload, http.Request.Headers["Stripe-Signature"], config.WebhookSecret!,
                             DateTimeOffset.UtcNow))
                     {
+                        AuthChallenge.UseScheme(http, "Stripe-Signature");
                         return TypedResults.Unauthorized();
                     }
 

@@ -43,4 +43,23 @@ public sealed class AdminAuditRepositoryTest(PostgresFixture pg) : IClassFixture
         Assert.NotEmpty(entries);
         Assert.All(entries, e => Assert.Equal(11, e.TargetOrgId));
     }
+
+    /// <summary>
+    /// Postgres refuses <c>\u0000</c> in jsonb with 22P05, and every jsonb column here is written from caller
+    /// or model text, so a NUL in one failed the statement (a runner fix request answered 503, a fix audit
+    /// row was dropped unseen). The jsonb parameter replaces it with U+FFFD; the text <c>\u0000</c>, a
+    /// backslash and five letters, is not a NUL and is kept as written.
+    /// </summary>
+    [Fact]
+    public async Task A_nul_in_jsonb_details_is_stored_as_the_replacement_character()
+    {
+        var audit = new AdminAuditRepository(pg.ConnectionString);
+        await audit.WriteAsync(1, "boss@condux.test", "org.update", targetOrgId: 13, targetUserId: null,
+            """{"name":"a\u0000b","literal":"x\\u0000"}""");
+
+        var details = Assert.Single(await audit.ListAsync(orgId: 13)).Details;
+
+        Assert.Equal("a\uFFFDb", details.GetProperty("name").GetString());
+        Assert.Equal("x\\u0000", details.GetProperty("literal").GetString());
+    }
 }

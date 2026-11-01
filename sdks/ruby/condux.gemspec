@@ -6,7 +6,8 @@ Gem::Specification.new do |spec|
   spec.summary = "Report errors to a Condux relay (Sentry store wire shape)."
   spec.description = "The Condux SDK for Ruby: report errors to a Condux relay with a resilient, " \
                      "never-raising transport. Zero runtime dependencies (standard library only)."
-  spec.authors = ["Condux"]
+  spec.authors = ["Triple Down AB"]
+  spec.email = ["security@condux.ai"]
   spec.license = "Apache-2.0"
   spec.homepage = "https://condux.ai"
   spec.files = Dir["lib/**/*.rb", "exe/*", "README.md", "LICENSE"]

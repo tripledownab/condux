@@ -13,7 +13,7 @@ import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { useSelectedProject } from "@/src/projects/selected-project";
 import { projectDetailPath, ROUTES } from "@/src/routes";
 import { CodeBlock } from "./code-block";
-import { defaultPlatform, PLATFORMS, type Snippet } from "./platforms";
+import { DSN_PLACEHOLDER, defaultPlatform, PLATFORMS, type Snippet } from "./platforms";
 
 // The in-app SDK setup guide: pick a project + one of its DSN keys, choose a platform, and copy the
 // prefilled snippets. Scoped to the current org; the selectors let a developer target any project/key.
@@ -165,7 +165,7 @@ function ProjectSetup({
             key={`${platform.id}-${snippet.titleKey}`}
             title={snippetTitle(snippet)}
             language={snippet.language}
-            code={snippet.code(dsn ?? "<your-dsn>")}
+            code={snippet.code(dsn ?? DSN_PLACEHOLDER)}
           />
         ))}
       </section>

@@ -12,6 +12,7 @@ import {
 import type { RepoLink } from "@/src/api/generated/model";
 import { FIELD_CLASS, PRIMARY_BUTTON_CLASS } from "@/src/components/form";
 import { Combobox } from "@/src/components/ui/combobox";
+import { lookUpCodeKey, readErrorCode } from "@/src/lib/api-errors";
 
 // Releases (#89/#144): map a deployed version to its commit, so the Conductor can fix against the exact
 // ref and issues can show the release they first appeared in. A release is normally POSTed from CI on
@@ -74,6 +75,12 @@ export function Releases({
   );
 }
 
+// The server's refusals that the person filling the form can fix; anything else reads as a retry.
+const RECORD_ERROR_KEYS: Record<string, string> = {
+  invalid_commit: "invalidCommit",
+  invalid_version: "invalidVersion",
+};
+
 function RecordForm({
   projectId,
   repos,
@@ -91,8 +98,9 @@ function RecordForm({
   const [commitSha, setCommitSha] = useState("");
   const [repoLinkId, setRepoLinkId] = useState("");
 
-  // Recording needs a linked repository and nothing else (the server checks only that), and linking one
-  // needs GitHub connected when the App is configured, so the hint names the step that is missing.
+  // Recording needs a linked repository, and linking one needs GitHub connected when the App is
+  // configured, so the hint names the step that is missing. The server checks the version and the
+  // commit itself, and its refusal names which one is wrong.
   if (repos.length === 0) {
     return (
       <p className="mt-3 text-xs text-muted-foreground">
@@ -154,7 +162,11 @@ function RecordForm({
         {record.isPending ? translate("recording") : translate("record")}
       </button>
       {record.isError ? (
-        <p className="w-full text-sm text-error">{translate("recordError")}</p>
+        <p className="w-full text-sm text-error">
+          {translate(
+            lookUpCodeKey(RECORD_ERROR_KEYS, readErrorCode(record.error)) ?? "recordError",
+          )}
+        </p>
       ) : null}
     </form>
   );

@@ -9,21 +9,19 @@ namespace Condux.Consumer;
 
 /// <summary>
 /// What a consumed event message says beyond the event itself, and the time the event is filed under,
-/// which needs both: the retention the relay stamped, and when the message was received.
+/// which needs all three: the retention the relay stamped, when the sender says it sent the event, and when
+/// the message was received.
 /// </summary>
 public static class EventMessages
 {
     /// <summary>
-    /// The event as it is filed: its own time bounded to its receipt and the project's retention
-    /// (<see cref="EventTimes"/>), so a sender cannot file it under any hour it likes. The event carries
-    /// the bounded time, so the issue, the rollup and the stored row all read the same one.
+    /// The event as it is filed: its own time corrected for the sender's clock drift and bounded to its
+    /// receipt and the project's retention (<see cref="EventTimes"/>), so a sender cannot file it under any
+    /// hour it likes. The event carries the filed time, so the issue, the rollup and the stored row all
+    /// read the same one.
     /// </summary>
-    public static Event ToFiledEvent(Event e, Message<string, string> message) => e with
-    {
-        TimestampUnixMs = EventTimes
-            .ToFiledTime(e.TimestampUnixMs, ToReceivedAt(message.Timestamp), ReadRetentionDays(message.Headers))
-            .ToUnixTimeMilliseconds(),
-    };
+    public static Event ToFiledEvent(Event e, Message<string, string> message) => EventTimes.ToFiledEvent(
+        e, ToReceivedAt(message.Timestamp), ReadRetentionDays(message.Headers), ReadSentAt(message.Headers));
 
     // The relay stamps the project's plan-tier retention as a Kafka header. Fall back to the single
     // PlanCatalog default when it is absent (an older message) or malformed, so an event is never written
@@ -38,6 +36,13 @@ public static class EventMessages
         }
         return PlanCatalog.DefaultRetentionDays;
     }
+
+    // 0 when absent or malformed, which is what EventTimes reads as "the sender did not say".
+    public static long ReadSentAt(Headers headers) =>
+        headers.TryGetLastBytes(EventHeaders.SentAt, out var bytes)
+        && long.TryParse(Encoding.UTF8.GetString(bytes), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var ms)
+            ? ms
+            : 0;
 
     // The instant the broker holds for the message: the relay's producer stamps it when it publishes, or
     // the broker does on append, either way moments after the relay received the event, and neither is

@@ -7,7 +7,7 @@ namespace Condux.ControlPlane.Auth;
 /// <summary>
 /// Shared CSRF-state and post-flow redirect helpers for the browser flows that leave the site and come
 /// back: Google sign-in (#71), per-org enterprise SSO (#72), and GitHub connect through
-/// <see cref="GithubConnectFlow"/>. The state cookie is a double-submit CSRF defense (no server-side state
+/// <see cref="ConnectFlow"/>. The state cookie is a double-submit CSRF defense (no server-side state
 /// table). The dashboard origin comes from <see cref="AppOrigins"/>: the first CORS origin in split-origin
 /// dev, empty (a same-host relative redirect) in same-origin production.
 /// </summary>

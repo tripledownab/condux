@@ -41,4 +41,33 @@ public sealed class ConductorTest(PostgresFixture pg) : IClassFixture<PostgresFi
         Assert.Equal("acme/api", fetched.RepoFullName);
         Assert.Equal("fake", fetched.Provider);
     }
+
+    /// <summary>
+    /// A run's summary is the model's text, and Postgres text refuses U+0000, so a summary carrying one
+    /// failed the success write after the draft PR existed, leaving the PR recorded nowhere. The character
+    /// is stored as U+FFFD and the run as succeeded.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_StoresASummaryHoldingANul()
+    {
+        var projectId = await ProjectSeed.CreateProjectAsync(pg.ConnectionString);
+        var upsert = await new IssueRepository(pg.ConnectionString).UpsertAsync(
+            projectId, new Grouping("fp-nul-summary", "ValueError: boom", "run"), Level.Error, DateTimeOffset.UtcNow);
+        var store = new PostgresFixStore(pg.ConnectionString);
+        var job = new FixJob(upsert.Id, "acme/api", "main", "dev@example.com", "claude-opus-4-8");
+
+        var result = await new FixOrchestrator(store, new NulSummaryProvider()).RunAsync(job);
+
+        var fetched = await store.GetAsync(result!.Id);
+        Assert.Equal(FixStatus.Succeeded, fetched!.Status);
+        Assert.Equal("fixed a\uFFFDb", fetched.Summary);
+    }
+
+    private sealed class NulSummaryProvider : IFixProvider
+    {
+        public string Name => "fake";
+
+        public Task<FixResult> GenerateFixAsync(FixRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FixResult("condux/fix", "https://example.invalid/pull/1", "fixed a\0b"));
+    }
 }

@@ -6,13 +6,15 @@
 // issue level catalog ("issues.level") via levelMeta.
 export const LEVEL_OPTIONS: ReadonlyArray<number> = [2, 3, 4, 5];
 
-// Issue events a rule can fire on (mirrors Condux.Core.Alerting.AlertEventType). Labels resolve under
-// "settings.alerts.event.<key>".
+// Events a rule can fire on (the values of Condux.Core.Alerting.AlertEventType, compared with it by
+// alert-format.test.ts): four issue events, and a dependency advisory newly raised on a linked
+// repository, whose level is its severity. Labels resolve under "settings.alerts.event.<key>".
 export const EVENT_OPTIONS: ReadonlyArray<{ value: number; key: string }> = [
   { value: 1, key: "newIssue" },
   { value: 2, key: "regression" },
   { value: 3, key: "resolved" },
   { value: 4, key: "assigned" },
+  { value: 5, key: "advisory" },
 ];
 
 export function eventKey(value: number): string {

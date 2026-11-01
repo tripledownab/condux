@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.TestHost;
 using Condux.Core.Alerting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Xunit;
 
 namespace Condux.IntegrationTests.Fixtures;
 
@@ -140,7 +139,7 @@ internal sealed class SsoDomainClaim(string connectionString)
         await OrgSeed.SetTierAsync(connectionString, orgId, 2); // Business has Sso
 
         var put = await client.PutAsJsonAsync($"/api/orgs/{orgId}/sso-config", ConfigBody(domain));
-        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        await put.EnsureStatusAsync(HttpStatusCode.OK);
         var body = await put.Content.ReadFromJsonAsync<JsonElement>();
         return new Claim(orgId, client,
             body.GetProperty("verificationRecordName").GetString()!,
@@ -152,7 +151,7 @@ internal sealed class SsoDomainClaim(string connectionString)
     public static async Task<JsonElement> VerifyAsync(HttpClient client, long orgId)
     {
         var resp = await client.PostAsync($"/api/orgs/{orgId}/sso-config/verify", null);
-        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        await resp.EnsureStatusAsync(HttpStatusCode.OK);
         return await resp.Content.ReadFromJsonAsync<JsonElement>();
     }
 

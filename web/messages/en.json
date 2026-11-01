@@ -202,6 +202,7 @@
         "cve_bump": "CVE bump"
       },
       "statuses": {
+        "unknown": "Unknown",
         "pending": "Pending",
         "running": "Running",
         "succeeded": "Succeeded",
@@ -689,7 +690,7 @@
       "confirm": "Confirm",
       "cancel": "Cancel",
       "mappingsTitle": "Code mappings",
-      "mappingsEmpty": "No code mappings. Stack paths are used as-is.",
+      "mappingsEmpty": "No code mappings. Stack frames link to GitHub only through a mapping.",
       "repoRoot": "(repo root)",
       "anyPath": "(any path)",
       "stackRootLabel": "Stack path prefix",
@@ -701,7 +702,13 @@
       "add": "Add",
       "suggestMappings": "Suggest from errors",
       "suggesting": "Suggesting",
-      "suggestNone": "No mappings suggested. Connect GitHub and send a few errors first.",
+      "suggestNotConnected": "Connect GitHub to this project to suggest mappings.",
+      "suggestNoFrames": "No recent errors with frames from your code yet. Send a few, then try again.",
+      "suggestNoMatch": "Not every recent error frame matches a file in this repository, so no mapping can be suggested. Check the repository and its default branch, or add a mapping by hand.",
+      "suggestAmbiguous": "Your recent errors match files in more than one directory of this repository equally well, so they cannot say which is theirs. Add a mapping by hand.",
+      "suggestAlreadyMapped": "Every rule your recent errors support is already a mapping. Nothing to add.",
+      "suggestConflicting": "Your recent errors support a rule whose path prefix is already mapped elsewhere. Delete that mapping, then suggest again.",
+      "suggestUnavailable": "Could not reach GitHub or the event store. Try again.",
       "suggestMatches": "{count, plural, one {# frame} other {# frames}}",
       "repoSelect": "Select a repository",
       "branchSelect": "Default branch",
@@ -774,11 +781,17 @@
       "pager": {
         "range": "{from} to {to} of {total}"
       },
-      "truncated": "This list may be incomplete: Condux could not read every open Dependabot alert for this repository."
+      "truncated": "This list may be incomplete: Condux could not read every open Dependabot alert for this repository.",
+      "unavailable": {
+        "notConnected": "Condux has no GitHub connection to read this repository's Dependabot alerts.",
+        "alertsDisabled": "Dependabot alerts are turned off for this repository. Turn them on in the repository's GitHub settings, under Advanced Security.",
+        "permissionMissing": "The Condux GitHub App cannot read Dependabot alerts. It needs read access to Dependabot alerts, which an owner of the GitHub organization may still have to approve in the App's installation settings.",
+        "failed": "Condux could not read this repository's Dependabot alerts. Check that the GitHub App installation includes this repository and that the repository is not archived, then try again."
+      }
     },
     "alerts": {
       "title": "Alert rules",
-      "description": "Notify a channel when a new issue appears or a resolved one regresses.",
+      "description": "Notify a channel when a new issue appears, a resolved one regresses or a linked repository gets a new dependency advisory.",
       "noProject": "Create a project first, then add alert rules for it.",
       "loading": "Loading rules.",
       "error": "Could not load rules. Try again.",
@@ -790,7 +803,8 @@
         "newIssue": "New issue",
         "regression": "Regression",
         "resolved": "Resolved",
-        "assigned": "Assigned"
+        "assigned": "Assigned",
+        "advisory": "New advisory"
       },
       "create": "Create rule",
       "creating": "Creating",
@@ -827,7 +841,9 @@
       "repo": "Repository",
       "record": "Record",
       "recording": "Recording",
-      "recordError": "Could not record the release. Try again."
+      "recordError": "Could not record the release. Try again.",
+      "invalidCommit": "Enter the commit as its SHA: 7 to 64 hex characters.",
+      "invalidVersion": "Enter a version."
     },
     "appearance": {
       "title": "Appearance",
@@ -1036,6 +1052,21 @@
       "locals": "locals",
       "openInGitHub": "Open in GitHub"
     },
+    "agent": {
+      "title": "Agent failure",
+      "operation": "Failed",
+      "tool": "Tool",
+      "agent": "Agent",
+      "model": "Model",
+      "provider": "Provider",
+      "errorType": "Error type",
+      "operations": {
+        "chat": "Model call",
+        "embeddings": "Embeddings call",
+        "tool": "Tool call",
+        "agent": "Agent run"
+      }
+    },
     "facets": {
       "title": "Impact",
       "sampledNote": "Based on sampled events",
@@ -1108,6 +1139,25 @@
       "firstSeen": "by first seen",
       "events": "by events",
       "severity": "by severity"
+    },
+    "ticket": {
+      "heading": "Linear",
+      "createLinear": "Create Linear issue",
+      "confirm": "Create an issue in the {team} team titled “{title}”? Its title and culprit are sent to Linear.",
+      "create": "Create issue",
+      "cancel": "Cancel",
+      "createFailed": "Couldn't create the Linear issue. Try again.",
+      "creating": "Creating the Linear issue…",
+      "uncertain": "Creating the Linear issue may have failed. Check Linear before retrying, since it may already be there.",
+      "retry": "Retry",
+      "unlink": "Unlink",
+      "failureNotMapped": "This project has no Linear team any more. Choose one on the project's Linear tab.",
+      "failureNotConnected": "Linear is no longer connected to the workspace this issue was meant for.",
+      "failureConnectionBroken": "Linear stopped accepting Condux's access. Reconnect on the project's Linear tab.",
+      "failureTeamUnavailable": "Linear refused the team, which usually means the app lost access to it.",
+      "failureRefused": "Linear refused to create the issue.",
+      "openedAutomatically": "Opened automatically",
+      "notAutomatic": "Auto-create opens a Linear issue on its own only for a new issue at error or fatal level, up to a daily limit."
     }
   },
   "invite": {
@@ -1292,7 +1342,54 @@
       "github": "GitHub",
       "releases": "Releases",
       "dsn": "DSN keys",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "linear": "Linear"
     }
+  },
+  "linear": {
+    "loading": "Loading Linear…",
+    "loadFailed": "Couldn't load the Linear connection. Try again in a moment.",
+    "connectPrompt": "Connect Linear to open a Linear issue from any Condux issue in this project. Your organization connects one Linear workspace, and each project picks its own team.",
+    "connected": "Connected to the {workspace} Linear workspace.",
+    "broken": "Linear stopped accepting Condux's access to {workspace}. Reconnect to keep creating issues.",
+    "connect": "Connect Linear",
+    "reconnect": "Reconnect Linear",
+    "connecting": "Connecting…",
+    "workspaceAdminNeeded": "A Linear workspace admin has to approve the app, since issues are created by Condux rather than by you.",
+    "adminOnly": "An admin of this organization can connect Linear.",
+    "connectFailed": "Couldn't start connecting to Linear. Try again.",
+    "outcomeFailed": "Linear didn't finish connecting. Try again, or ask a Linear workspace admin to approve the app.",
+    "outcomeDeclined": "The Linear connection was cancelled.",
+    "mappedTo": "New Linear issues from this project go to the {team} team.",
+    "needsAttention": "Linear refused the last issue for this project, which usually means the app lost access to the team or one of its labels was deleted. Check the team and its labels.",
+    "noTeamYet": "No Linear team has been chosen for this project yet. An admin can choose one.",
+    "chooseTeam": "Linear team for this project",
+    "loadingTeams": "Loading teams…",
+    "changeTeam": "Change team",
+    "unmap": "Stop using Linear here",
+    "saveTeam": "Save team",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "teamsFailed": "Couldn't load the teams from Linear. Try again in a moment.",
+    "saveFailed": "Couldn't save the team. Try again.",
+    "disconnect": "Disconnect Linear",
+    "disconnecting": "Disconnecting…",
+    "disconnectConfirm": "This disconnects Linear for the whole organization. These projects lose their team:",
+    "disconnectFailed": "Couldn't disconnect Linear. Try again.",
+    "revokeFailed": "Linear was disconnected here, but Linear didn't confirm the access was revoked. Remove the Condux app in your Linear workspace settings to be sure.",
+    "labels": "Labels on every Linear issue from this project",
+    "noLabels": "No labels.",
+    "addLabel": "Add a label",
+    "removeLabel": "Remove {label}",
+    "loadingLabels": "Loading labels…",
+    "labelsFailed": "Couldn't load the labels from Linear. Try again in a moment.",
+    "autoCreate": "Create a Linear issue automatically for each new error",
+    "autoCreateHint": "Only the first time an issue appears, at error or fatal level, with a daily limit for this project.",
+    "autoCreatedToday": "{count} of today's {limit} automatic Linear issues used (UTC).",
+    "autoCreateLimitReached": "Today's limit of {limit} is reached: new errors get no automatic Linear issue until tomorrow (UTC).",
+    "labelGone": "(no longer in Linear)",
+    "saveLabelUnknown": "One of the labels is no longer in Linear for this team. Remove it and save again.",
+    "saveLabelsSameGroup": "Two of the labels belong to the same Linear label group, and an issue can carry only one of them. Remove one.",
+    "labelInGroup": "{group} / {label}"
   }
 }

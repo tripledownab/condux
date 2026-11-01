@@ -215,7 +215,8 @@ test("a stamped chunk whose map lost its debugId is counted as failed, not silen
 
 test("a failed upload is counted and logged, never thrown into the build", async () => {
   const { distDir } = await serverBuild();
-  const { doFetch } = recordingFetch(500);
+  // Refused rather than failed for now, which would be retried.
+  const { doFetch } = recordingFetch(403);
   const logs: string[] = [];
 
   const result = await processServerBuild({ distDir, upload, fetch: doFetch, log: (m) => logs.push(m) });

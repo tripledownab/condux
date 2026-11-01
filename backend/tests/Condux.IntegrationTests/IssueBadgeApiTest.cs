@@ -12,10 +12,9 @@ namespace Condux.IntegrationTests;
 
 /// <summary>
 /// The per-user "new issues" nav badge (ADR-0030): new-count counts issues activated (new or regressed)
-/// since the user's watermark; POST seen clears it. The watermark is stamped with the database's clock
-/// (<c>now()</c>), so every activation time here is set relative to that clock rather than the host's: a
-/// database clock behind the host's would leave issues activated "just now" newer than the watermark
-/// written after them.
+/// since the user's watermark; POST seen clears it. The watermark and the activation are both stamped with
+/// the database's clock (<c>now()</c>), never the event's own time, so the order the test performs them in
+/// is the order they compare in.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class IssueBadgeApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -66,6 +65,10 @@ public sealed class IssueBadgeApiTest(PostgresFixture pg) : IClassFixture<Postgr
         Assert.Equal(HttpStatusCode.NoContent, seen.StatusCode);
         Assert.Equal(0, await NewCountAsync(client, projectId));
 
+        // A repeat event on an open issue is not an activation, so it leaves the badge alone.
+        await repo.UpsertAsync(projectId, new Grouping("fp-b", "B boom", "b"), Level.Error, dbNow.AddMinutes(1));
+        Assert.Equal(0, await NewCountAsync(client, projectId));
+
         // A new issue activated after the watermark counts again.
         await repo.UpsertAsync(projectId, new Grouping("fp-c", "C boom", "c"), Level.Error, dbNow.AddMinutes(5));
         Assert.Equal(1, await NewCountAsync(client, projectId));
@@ -75,6 +78,29 @@ public sealed class IssueBadgeApiTest(PostgresFixture pg) : IClassFixture<Postgr
         Assert.True(await repo.UpdateStatusAsync(projectId, a.PublicId, 2));
         var reopened = await repo.UpsertAsync(
             projectId, new Grouping("fp-a", "A boom", "a"), Level.Error, dbNow.AddMinutes(10));
+        Assert.True(reopened.Reopened);
+        Assert.Equal(2, await NewCountAsync(client, projectId));
+    }
+
+    // An event's own time is whatever the sender claims, and an offline client delivers it late. A new issue
+    // and a reopen processed after the user's last view count, however far back the event says it happened.
+    [Fact]
+    public async Task Counts_events_dated_before_the_last_view()
+    {
+        var (client, projectId) = await ProvisionAsync();
+        var repo = new IssueRepository(pg.ConnectionString);
+        var longAgo = (await DatabaseNowAsync()).AddDays(-30);
+
+        var old = await repo.UpsertAsync(projectId, new Grouping("fp-old", "Old boom", "o"), Level.Error, longAgo);
+        Assert.True(await repo.UpdateStatusAsync(projectId, old.PublicId, 2));
+        await client.PostAsync($"/api/projects/{projectId}/issues/seen", null);
+        Assert.Equal(0, await NewCountAsync(client, projectId));
+
+        await repo.UpsertAsync(projectId, new Grouping("fp-late", "Late boom", "l"), Level.Error, longAgo);
+        Assert.Equal(1, await NewCountAsync(client, projectId));
+
+        var reopened = await repo.UpsertAsync(
+            projectId, new Grouping("fp-old", "Old boom", "o"), Level.Error, longAgo.AddMinutes(1));
         Assert.True(reopened.Reopened);
         Assert.Equal(2, await NewCountAsync(client, projectId));
     }

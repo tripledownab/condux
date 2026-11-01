@@ -18,6 +18,9 @@ internal sealed class ReachableArtifacts
     // cap bites it drops the entry points rather than the failure.
     private const int MaxLookupKeys = 32;
 
+    /// <summary>The most maps one event can reach: one per lookup key, of either kind.</summary>
+    public const int MaxArtifactsPerEvent = 2 * MaxLookupKeys;
+
     private readonly IReadOnlyDictionary<string, string> _debugImages;
     private readonly IReadOnlyDictionary<string, SourceMapArtifact> _byDebugId;
     private readonly IReadOnlyDictionary<string, SourceMapArtifact> _byFilename;

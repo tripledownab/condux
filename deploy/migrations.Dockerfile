@@ -5,11 +5,12 @@
 #   docker build -f deploy/migrations.Dockerfile -t ghcr.io/condux/migrations:<tag> .
 #
 # Base on the ClickHouse image (ships clickhouse-client for multi-statement files) and add psql.
-FROM clickhouse/clickhouse-server:24.8
+FROM clickhouse/clickhouse-server:24.8.14.39
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY migrations /migrations
 COPY deploy/migrations/run.sh /usr/local/bin/run-migrations
-RUN chmod +x /usr/local/bin/run-migrations
+COPY deploy/migrations/apply-postgres.sh /usr/local/bin/apply-postgres
+RUN chmod +x /usr/local/bin/run-migrations /usr/local/bin/apply-postgres
 ENTRYPOINT ["/usr/local/bin/run-migrations"]

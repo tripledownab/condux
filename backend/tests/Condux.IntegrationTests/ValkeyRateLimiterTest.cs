@@ -1,3 +1,4 @@
+using Condux.IntegrationTests.Fixtures;
 using Condux.Core.RateLimiting;
 using Condux.Storage.RateLimiting;
 using DotNet.Testcontainers.Builders;
@@ -15,10 +16,9 @@ namespace Condux.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class ValkeyRateLimiterTest : IAsyncLifetime
 {
-    private readonly IContainer _valkey = new ContainerBuilder()
-        .WithImage("valkey/valkey:8-alpine")
+    private readonly IContainer _valkey = new ContainerBuilder(ComposeImages.For("valkey/valkey"))
         .WithPortBinding(6379, assignRandomHostPort: true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(6379))
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
         .Build();
 
     private ConnectionMultiplexer _redis = null!;

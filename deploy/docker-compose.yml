@@ -15,6 +15,12 @@ name: condux
 #   cp deploy/.env.example deploy/.env
 #   docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 
+# The one Postgres connection string, for the services that connect through Npgsql (the postgres-init
+# step runs psql with its own variables). Npgsql 10 tries GSSAPI encryption by default, and these images
+# have no libgssapi, so each start would print a harmless "Error:" line; Disable stops the attempt. One
+# definition, so a setting added here reaches each of them.
+x-postgres-connection: &postgres-connection "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB};GSS Encryption Mode=Disable"
+
 # Object storage (S3) for source-map artifacts (ADR-0028), merged into the control-plane, which stores
 # uploads and symbolicates the events it shows, and the consumer, whose auto-fix builds its context from a
 # symbolicated event. One block, so the two cannot point at different buckets. Dev points at the bundled
@@ -30,7 +36,7 @@ x-object-store-env: &object-store-env
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -44,7 +50,7 @@ services:
       retries: 10
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.8.14.39
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
@@ -71,7 +77,7 @@ services:
   # external (host → localhost:19092), each advertised at the address its clients
   # actually use — the piece that has to be right for consumer groups to work.
   redpanda:
-    image: redpandadata/redpanda:v24.2.7
+    image: redpandadata/redpanda:v24.2.27
     command:
       - redpanda
       - start
@@ -80,6 +86,12 @@ services:
       - --default-log-level=warn
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      # A budget inside a limit, with no swap: dev-container mode lets Seastar budget all the memory it
+      # can see, which on a shared machine is everyone's. deploy/check-redpanda-budget.py says why and
+      # holds the rule; the production and staging overlays set all three with their own values.
+      - --memory=1G
+    deploy: { resources: { limits: { memory: 1280m } } }
+    memswap_limit: 1280m
     ports: ["127.0.0.1:19092:19092"]
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:.+true'"]
@@ -89,7 +101,7 @@ services:
 
   # Valkey (BSD-3) — the permissive, Redis-compatible fork; drop-in for Redis.
   valkey:
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:8.1.10-alpine
     ports: ["127.0.0.1:6379:6379"]
 
   # S3-compatible object store for LOCAL DEV ONLY (source maps, ADR-0028). Production targets the S3 API
@@ -100,13 +112,13 @@ services:
   # is why it was chosen over the lighter mocks; S3ObjectStoreTest holds that with a wrong-secret case.
   # Pulled from ghcr.io, since Docker Hub rate-limits anonymous pulls, and PINNED: a floating tag on
   # someone else's image turns their publishing decisions into our outage. The integration fixture
-  # (S3Fixture) pins the same image, and S3FixtureImageTest fails if the two drift apart.
+  # (S3Fixture) reads its image from this line, so the two cannot drift apart.
   #
   # The bucket directory is created before the server starts, which RustFS treats as an existing bucket,
   # so no second client container is needed. A named volume rather than a bind mount because the image
   # runs as a non-root uid, and a host directory Docker creates on Linux is root-owned.
   object-store:
-    image: ghcr.io/rustfs/rustfs:1.0.0
+    image: ghcr.io/rustfs/rustfs:1.0.1
     entrypoint: ["sh", "-c", "mkdir -p \"/data/$$CONDUX_S3_BUCKET\" && exec /entrypoint.sh rustfs"]
     environment:
       RUSTFS_ACCESS_KEY: ${DEV_S3_ACCESS_KEY}
@@ -121,7 +133,7 @@ services:
   # delivery works with no config; read the caught mail in the web inbox at http://localhost:8025. Dev-only:
   # the prod override parks it behind a profile so it never starts there (same pattern as object-store).
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.31.5
     ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
 
   # Keycloak (Apache-2.0) — a local OIDC identity provider to manually verify enterprise SSO (#72, ADR-0032)
@@ -134,7 +146,7 @@ services:
   # Settings -> SSO. No other service depends_on it (it is optional), so leaving the profile off
   # cannot affect the rest of the stack.
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.0
+    image: quay.io/keycloak/keycloak:26.8.1
     profiles: ["sso-test"]
     command: ["start-dev", "--import-realm"]
     environment:
@@ -170,8 +182,7 @@ services:
       # provisioning API now authenticate at ingest end-to-end; there is no seeded
       # in-memory dev key in compose (that fallback only applies when CONDUX_POSTGRES
       # is unset, e.g. a bare `dotnet run`).
-      # checked-out commit; unset in dev, where the process reports its own placeholder. Worth having
-      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      CONDUX_POSTGRES: *postgres-connection
     ports: ["127.0.0.1:9010:9000"]
     depends_on:
       redpanda: { condition: service_healthy }
@@ -196,7 +207,7 @@ services:
       # placeholder. The first question of any incident is which build this is.
       CONDUX_VERSION: ${CONDUX_VERSION:-}
       CONDUX_COMMIT: ${CONDUX_COMMIT:-}
-      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      CONDUX_POSTGRES: *postgres-connection
       # RequestFix publishes FixJobs to the topic the conductor drains.
       CONDUX_KAFKA_BOOTSTRAP: "redpanda:9092"
       # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
@@ -248,6 +259,11 @@ services:
       CONDUX_GOOGLE_CLIENT_ID: ${CONDUX_GOOGLE_CLIENT_ID}
       CONDUX_GOOGLE_CLIENT_SECRET: ${CONDUX_GOOGLE_CLIENT_SECRET}
       CONDUX_GOOGLE_REDIRECT_URI: ${CONDUX_GOOGLE_REDIRECT_URI}
+      # Linear tickets (ADR-0053). Opt-in: leave these unset and the Linear routes 404 and no Linear surface
+      # shows. Needs CONDUX_SECRET_KEY too, since the grant is stored encrypted.
+      CONDUX_LINEAR_CLIENT_ID: ${CONDUX_LINEAR_CLIENT_ID}
+      CONDUX_LINEAR_CLIENT_SECRET: ${CONDUX_LINEAR_CLIENT_SECRET}
+      CONDUX_LINEAR_OAUTH_REDIRECT_URI: ${CONDUX_LINEAR_OAUTH_REDIRECT_URI}
       # Stripe billing (#billing). Opt-in: unset -> the billing + webhook routes 404 and the upgrade UI hides.
       CONDUX_STRIPE_SECRET_KEY: ${CONDUX_STRIPE_SECRET_KEY}
       CONDUX_STRIPE_WEBHOOK_SECRET: ${CONDUX_STRIPE_WEBHOOK_SECRET}
@@ -333,7 +349,7 @@ services:
       # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-} # Condux on Condux (#75): the worker reports its own errors, opt-in
-      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      CONDUX_POSTGRES: *postgres-connection
       CONDUX_CLICKHOUSE_URL: "http://clickhouse:8123"
       CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CONDUX_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
@@ -383,7 +399,7 @@ services:
       # OpenTelemetry traces + metrics (#75) — opt-in, off unless set. Point at an OTLP collector to enable.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       CONDUX_SELF_DSN: ${CONDUX_SELF_DSN:-} # Condux on Condux (#75): the workers report their own errors, opt-in
-      CONDUX_POSTGRES: "Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}"
+      CONDUX_POSTGRES: *postgres-connection
       # The fix-verification watcher (ADR-0019) reads issue stats from ClickHouse.
       CONDUX_CLICKHOUSE_URL: "http://clickhouse:8123"
       CONDUX_CLICKHOUSE_USER: ${CLICKHOUSE_USER}
@@ -458,9 +474,13 @@ services:
           memory: 1G
           cpus: "1.0"
 
-  # One-shot: apply the ClickHouse schema once the server is up.
+  # One-shot: apply the ClickHouse schema once the server is up. Every file runs on every deploy, so the
+  # script stops at the first one that fails: the services waiting on service_completed_successfully then do
+  # not start, where a loop that carried on would report the last file's result and start them on a schema
+  # missing a migration. An empty directory is a wrong mount, not success. deploy/migrations/run.sh, the Helm
+  # job's runner, has both rules too.
   clickhouse-init:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.8.14.39
     depends_on: [clickhouse]
     volumes:
       - ../migrations/clickhouse:/migrations:ro
@@ -468,35 +488,37 @@ services:
       - bash
       - -c
       - |
+        set -eu
         until clickhouse-client --host clickhouse --user "$$CH_USER" --password "$$CH_PASSWORD" --query 'SELECT 1' >/dev/null 2>&1; do sleep 1; done
+        applied=0
         for f in $$(ls /migrations/*.sql | sort); do
           echo "applying $$f"
           clickhouse-client --host clickhouse --user "$$CH_USER" --password "$$CH_PASSWORD" --multiquery < "$$f"
+          applied=$$((applied + 1))
         done
+        [ "$$applied" -gt 0 ] || { echo "no migrations found under /migrations" >&2; exit 1; }
     environment:
       CH_USER: ${CLICKHOUSE_USER}
       CH_PASSWORD: ${CLICKHOUSE_PASSWORD}
     restart: "no"
 
-  # One-shot: apply all Postgres migrations in filename order (idempotent).
+  # One-shot: apply the Postgres migrations, stopping at the first failure, through the same script the Helm
+  # job runs (deploy/migrations/apply-postgres.sh says which files run).
   postgres-init:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine
     depends_on:
       postgres: { condition: service_healthy }
     volumes:
       - ../migrations/postgres:/migrations:ro
-    entrypoint:
-      - sh
-      - -c
-      - |
-        for f in $$(ls /migrations/*.sql | sort); do
-          echo "applying $$f"
-          PGPASSWORD="$$PG_PASSWORD" psql -v ON_ERROR_STOP=1 -h postgres -U "$$PG_USER" -d "$$PG_DB" -f "$$f"
-        done
+      # The directory, not the file: a single-file bind keeps the inode it was created with, so the
+      # container `up` starts again after a deploy replaced the script would run the old one.
+      - ./migrations:/runner:ro
+    entrypoint: ["sh", "/runner/apply-postgres.sh", "/migrations"]
     environment:
-      PG_USER: ${POSTGRES_USER}
-      PG_PASSWORD: ${POSTGRES_PASSWORD}
-      PG_DB: ${POSTGRES_DB}
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
     restart: "no"
 
 volumes:

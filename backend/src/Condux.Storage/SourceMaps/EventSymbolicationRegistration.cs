@@ -11,8 +11,9 @@ namespace Condux.Storage.SourceMaps;
 
 /// <summary>
 /// DI registration for read-time symbolication, shared by the control-plane, which shows events, and the
-/// consumer, whose auto-fix builds a fix context from one. Both passes read their files from object storage,
-/// so each registers only when CONDUX_S3_* are set, and the native pass also needs CONDUX_SYMBOLIZER_URL.
+/// consumer, whose auto-fix builds a fix context from one. Every pass reads what CI uploaded, which needs
+/// object storage, so each registers only when CONDUX_S3_* are set, and the native pass also needs
+/// CONDUX_SYMBOLIZER_URL.
 /// The service around them always registers, with optional passes, so it does nothing when they are off and
 /// no caller branches. It registers the repositories the passes read too, unless the caller already has,
 /// so a service cannot turn a pass on and leave it unable to start.
@@ -27,15 +28,23 @@ public static class EventSymbolicationRegistration
     // small fraction of this; a larger one fails its image rather than taking the memory.
     private const long MaxAnswerBytes = 8L * 1024 * 1024;
 
+    /// <summary><paramref name="access"/> is the service's own: the consumer only reads, so it is not
+    /// handed the cleanup seam.</summary>
     public static IServiceCollection AddEventSymbolication(
-        this IServiceCollection services, IConfiguration cfg, string postgres)
+        this IServiceCollection services, IConfiguration cfg, string postgres, ObjectStoreAccess access)
     {
-        services.AddObjectStore(cfg);
+        services.AddObjectStore(cfg, access);
+        services.AddMetrics();
+        services.TryAddSingleton<SymbolicationMetrics>();
         var symbolizer = ToSymbolizerUrl(cfg);
         if (ObjectStoreConfig.FromEnv(cfg).Enabled)
         {
             services.TryAddSingleton(new SourceMapArtifactRepository(postgres));
             services.AddSingleton<FrameSymbolicator>();
+            // Obfuscation maps are held on debug file rows, and debug files are uploaded only with object
+            // storage configured; restoring names needs no symbolizer.
+            services.TryAddSingleton(new DartSymbolMapRepository(postgres));
+            services.AddSingleton<DartTypeNames>();
             if (symbolizer is not null)
             {
                 services.TryAddSingleton(new DebugFileRepository(postgres));
@@ -47,15 +56,13 @@ public static class EventSymbolicationRegistration
                 });
                 services.AddSingleton<DebugFileReadGate>();
                 services.AddSingleton<SymbolizerCaches>();
-                // Its meter factory comes with AddHttpClient above.
-                services.AddSingleton<SymbolizerMetrics>();
                 services.AddSingleton<NativeSymbolicator>();
             }
         }
 
         services.AddSingleton(sp => new EventSymbolication(
-            sp.GetService<FrameSymbolicator>(), sp.GetService<NativeSymbolicator>(),
-            sp.GetRequiredService<ILogger<EventSymbolication>>()));
+            sp.GetService<FrameSymbolicator>(), sp.GetService<NativeSymbolicator>(), sp.GetService<DartTypeNames>(),
+            sp.GetRequiredService<SymbolicationMetrics>(), sp.GetRequiredService<ILogger<EventSymbolication>>()));
         return services;
     }
 

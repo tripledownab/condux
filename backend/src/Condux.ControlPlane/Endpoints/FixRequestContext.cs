@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.FixEngine;
 using Condux.Core.Repos;
@@ -20,10 +19,6 @@ namespace Condux.ControlPlane.Endpoints;
 /// </summary>
 internal static class FixRequestContext
 {
-    // Default options match the ClickHouse writer's JsonSerializer.Serialize(event) (PascalCase, integer
-    // enums), so the stored payload round-trips back to an Event here.
-    private static readonly JsonSerializerOptions PayloadJson = new();
-
     /// <summary>The context for one issue's fix and the installation it will run under (0 when GitHub is
     /// not connected): a real provider mints a repo-scoped token from it, and the suspect-commit lookup
     /// needs it too.</summary>
@@ -84,7 +79,7 @@ internal static class FixRequestContext
         }
 
         if (recent.Count == 0
-            || JsonSerializer.Deserialize<Event>(recent[0].Payload, PayloadJson) is not { } stored)
+            || recent[0].ToEvent() is not { } stored)
         {
             return new FixContext("", []);
         }

@@ -3,10 +3,11 @@
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import { useDisconnectGithub, useGithubConnect, useGithubHealth } from "@/src/api/generated/condux";
 import type { GithubHealthResponse } from "@/src/api/generated/model";
 import { PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "@/src/components/form";
+import { lookUpCodeKey, readErrorStatus } from "@/src/lib/api-errors";
+import { readSearchParam, removeSearchParams } from "@/src/lib/url-params";
 import { GitHubInstallationPicker } from "./github-installation-picker";
 import { useGithubConnection } from "./use-github-connection";
 
@@ -61,7 +62,7 @@ function healthMessage(
   }
 
   // A status we have no wording for means the API moved; say nothing rather than guess a remedy.
-  const key = HEALTH_MESSAGE_KEYS[health.status];
+  const key = lookUpCodeKey(HEALTH_MESSAGE_KEYS, health.status);
   return key ? { healthy: false, text: translate(key) } : null;
 }
 
@@ -88,22 +89,15 @@ const OUTCOME_MESSAGES: Partial<Record<ConnectOutcome, { key: string; failed: bo
 
 type ReturnedOutcome = { status: ConnectOutcome; selection: string | null };
 
-// Read from window rather than useSearchParams, which would force a Suspense boundary on every page that
-// renders this panel (same reason as the auth pages).
 function readOutcome(): ReturnedOutcome | null {
-  const params = new URLSearchParams(window.location.search);
-  const status = params.get("github");
+  const status = readSearchParam("github");
   return Object.values(ConnectOutcome).includes(status as ConnectOutcome)
-    ? { status: status as ConnectOutcome, selection: params.get("selection") }
+    ? { status: status as ConnectOutcome, selection: readSearchParam("selection") }
     : null;
 }
 
-// Drop the flow's params once they have been acted on, so a reload doesn't replay a finished outcome.
 function clearOutcome() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("github");
-  url.searchParams.delete("selection");
-  window.history.replaceState(null, "", url.toString());
+  removeSearchParams("github", "selection");
 }
 
 // The GitHub connection, surfaced inside a project (#134 — connection is per-project, not a separate org
@@ -118,7 +112,7 @@ export function GitHubConnect({ projectName }: { projectName?: string }) {
   const pathname = usePathname();
   const { orgId, loading, notConfigured, connected, canManage, installation, refetch } =
     useGithubConnection();
-  const connect = useGithubConnect<ConduxApiError>();
+  const connect = useGithubConnect<unknown>();
   // On demand only: a check spends a real GitHub call, so it must not fire on every page view.
   const [checking, setChecking] = useState(false);
   const health = useGithubHealth(orgId, { query: { enabled: checking } });
@@ -130,7 +124,7 @@ export function GitHubConnect({ projectName }: { projectName?: string }) {
   const disconnect = useDisconnectGithub();
 
   // Feature off on this server (both routes 404 behind the same opt-in config): show nothing.
-  if (loading || notConfigured || connect.error?.status === 404) {
+  if (loading || notConfigured || readErrorStatus(connect.error) === 404) {
     return null;
   }
 
@@ -168,7 +162,7 @@ export function GitHubConnect({ projectName }: { projectName?: string }) {
   const connectPromptText = projectName
     ? translate("connectPromptFor", { project: projectName })
     : translate("connectPrompt");
-  const connectFailed = connect.isError && connect.error?.status !== 404;
+  const connectFailed = connect.isError && readErrorStatus(connect.error) !== 404;
 
   // The check is offered in both states on purpose: a stored link can be dead on GitHub, and a missing
   // one can still have a live installation behind it, so neither state is trustworthy on its own.

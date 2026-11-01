@@ -117,7 +117,8 @@ test("processing is idempotent: a second pass leaves a stamped chunk alone", asy
 
 test("a failed upload keeps the map and the pointer, and never throws into the build", async () => {
   const { distDir, jsPath, mapPath } = await buildDir();
-  const { doFetch } = recordingFetch(500);
+  // Refused rather than failed for now, which would be retried.
+  const { doFetch } = recordingFetch(403);
 
   const result = await processClientBuild({
     distDir,

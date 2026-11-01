@@ -176,6 +176,32 @@ describe("GitHubConnect", () => {
     expect(screen.getByText(/could not be reached/)).toBeTruthy();
   });
 
+  // The health status is a string the server sends, so one named like a property every object has must
+  // read as a status with no wording, not as a function handed to the translator.
+  it("says nothing for a health status it has no wording for", () => {
+    useListGithubInstallationsMock.mockReturnValue({
+      isPending: false,
+      error: null,
+      data: {
+        status: 200,
+        data: [{ installationId: 7, accountLogin: "acme", createdAt: "", manageUrl: MANAGE_URL }],
+      },
+    });
+    useGithubHealthMock.mockReturnValue({
+      ...idleHealth,
+      data: {
+        status: 200,
+        data: { status: "constructor", installationId: 7, accountLogin: "acme" },
+      },
+    });
+
+    renderWithIntl(<GitHubConnect />);
+
+    expect(screen.queryByText(/uninstalled or suspended|could not be reached/)).toBeNull();
+    // A plain lookup found Object's constructor and rendered it as a message key.
+    expect(document.body.textContent).not.toContain("native code");
+  });
+
   it("shows the connected account and no button once installed", () => {
     useListGithubInstallationsMock.mockReturnValue({
       isPending: false,

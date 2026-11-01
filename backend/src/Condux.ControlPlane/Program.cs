@@ -39,6 +39,13 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "Condux Control Plane API";
         document.Info.Version = "v1";
+        // One relative server, "/", which OAS 3.0.4 resolves against wherever the document was fetched. The
+        // generator would otherwise write the request's own scheme and host, and behind a proxy that ends
+        // TLS that is http, so a client generated from the document would send its credentials over plain
+        // http before being redirected. Explicit rather than absent, though the spec makes the two mean the
+        // same: openapi-generator and Kiota resolve an explicit "/" against the document's URL, while for
+        // an absent list they fall back to http://localhost or ask for a base URL by hand.
+        document.Servers = [new Microsoft.OpenApi.OpenApiServer { Url = "/" }];
         return Task.CompletedTask;
     });
 });
@@ -64,9 +71,9 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
         }
         catch (Exception exception)
         {
-            // A cancellation from a client disconnect or graceful shutdown is expected noise, not a fault;
-            // still report a genuine OperationCanceledException thrown for any other reason.
-            if (!ConduxSelfReport.IsExpectedCancellation(exception, context.RequestAborted.IsCancellationRequested))
+            // What the CALLER got wrong is not Condux's fault, and anyone can send it at will (ADR-0044): a
+            // body Kestrel refused, a form past its limits, a client that hung up. The SDK's rule.
+            if (!Condux.Sdk.AspNetCore.ConduxExceptionMiddleware.IsCallerCaused(context, exception))
             {
                 _ = conduxSelf.CaptureExceptionAsync(exception);
             }
@@ -74,6 +81,13 @@ if (app.Services.GetService<Condux.Sdk.ConduxClient>() is { } conduxSelf)
         }
     });
 }
+
+// Inside the self-report wrapper, so text Postgres cannot store is answered as the caller's 400 and not
+// reported as Condux's own fault.
+app.UseUnstorableTextRefusal();
+
+// Every 401 carries a WWW-Authenticate challenge (RFC 9110 15.5.2), whichever route or handler produced it.
+app.UseAuthChallenge();
 
 // Secure is decided here for EVERY cookie the app writes, before anything writes one, so no individual
 // writer decides it and a cookie added later inherits the answer. See Setup/CookieSecurity for why the
@@ -111,6 +125,7 @@ app.MapRunnerEndpoints();
 app.MapMcpEndpoints();
 app.MapSourceMapEndpoints();
 app.MapDebugFileEndpoints();
+app.MapDartSymbolMapEndpoints();
 app.MapFixEndpoints();
 app.MapCveFindingEndpoints();
 app.MapCveFixEndpoints();
@@ -140,6 +155,9 @@ app.MapGithubEndpoints();
 app.MapGithubInstallationEndpoints();
 app.MapGithubConnectEndpoints();
 app.MapGithubSelectionEndpoints();
+app.MapLinearConnectEndpoints();
+app.MapLinearProjectEndpoints();
+app.MapIssueTicketEndpoints();
 
 // Dev-only dogfood lever (#75): GET /api/boom throws so the control-plane self-reports its own error to
 // CONDUX_SELF_DSN (parity with the dashboard's boom). Never mapped in production.

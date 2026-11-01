@@ -2,10 +2,10 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import { getGetSsoConfigQueryKey, useVerifySsoDomain } from "@/src/api/generated/condux";
 import type { SsoConfigResponse } from "@/src/api/generated/model";
 import { SECONDARY_BUTTON_CLASS } from "@/src/components/form";
+import { lookUpCodeKey, readErrorCode } from "@/src/lib/api-errors";
 
 // Proving that the org controls the domain its SSO config claims (ADR-0043). Its own component because
 // naming a domain and proving one are separate acts the org does minutes or days apart, and because the
@@ -47,15 +47,13 @@ const STATE_CLASS: Record<DomainState, string> = {
 
 // A refusal, as opposed to a check that ran. Both are 409s and the generic message fits neither: one says
 // somebody else proved this domain first, the other that the config moved under the open page.
+const VERIFY_ERROR_KEYS: Record<string, string> = {
+  email_domain_taken: "domainTaken",
+  sso_config_changed: "verifyConfigChanged",
+};
+
 function verifyErrorKey(error: unknown): string {
-  const code = (error as ConduxApiError | null)?.code;
-  if (code === "email_domain_taken") {
-    return "domainTaken";
-  }
-  if (code === "sso_config_changed") {
-    return "verifyConfigChanged";
-  }
-  return "verifyFailed";
+  return lookUpCodeKey(VERIFY_ERROR_KEYS, readErrorCode(error)) ?? "verifyFailed";
 }
 
 export function SsoDomainVerification({

@@ -20,9 +20,10 @@ public enum ParseOutcome
 /// <summary>
 /// The outcome of a parse plus the event when there is one. The outcome is explicit because
 /// "nothing to store" and "this payload is broken" are different answers to the caller, and
-/// collapsing them into a null event reports a failure as a success.
+/// collapsing them into a null event reports a failure as a success. <c>SentAtUnixMs</c> is when the
+/// sender says it sent the payload, which only an envelope header says, and 0 otherwise.
 /// </summary>
-public readonly record struct ParseResult(ParseOutcome Outcome, Event? Event)
+public readonly record struct ParseResult(ParseOutcome Outcome, Event? Event, long SentAtUnixMs = 0)
 {
     public static ParseResult Parsed(Event parsed) => new(ParseOutcome.Parsed, parsed);
 

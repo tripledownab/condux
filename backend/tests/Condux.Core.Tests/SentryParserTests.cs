@@ -134,6 +134,27 @@ public class SentryParserTests
         Assert.Equal(Level.Error, e!.Level);
     }
 
+    // Only an envelope says when it was sent; anything unreadable there reads as not said.
+    [Theory]
+    [InlineData("""{"sent_at":"2026-10-14T10:00:00.5Z"}""", 1791972000500L)]
+    [InlineData("""{}""", 0L)]
+    [InlineData("""{"sent_at":"2026-10-14 10:00:00+02:00"}""", 1791964800000L)]
+    [InlineData("""{"sent_at":"yesterday"}""", 0L)]
+    [InlineData("""{"sent_at":{"at":1}}""", 0L)]
+    // Forms .NET would read and the envelope spec (RFC 3339, with a time and an offset) does not allow:
+    // a bare date or time, a time with no offset, and a number.
+    [InlineData("""{"sent_at":"2026-10-14"}""", 0L)]
+    [InlineData("""{"sent_at":"10:00"}""", 0L)]
+    [InlineData("""{"sent_at":"2026-10-14T10:00:00"}""", 0L)]
+    [InlineData("""{"sent_at":1791972000}""", 0L)]
+    public void Envelope_ReadsSentAtFromItsHeader(string header, long expected)
+    {
+        var envelope = string.Join("\n", header, """{"type":"event"}""", """{"message":"m"}""");
+
+        Assert.Equal(expected, SentryParser.ParseEnvelope(envelope).SentAtUnixMs);
+        Assert.Equal(0L, SentryParser.ParseStore("""{"message":"m","sent_at":"2026-10-14T10:00:00Z"}""").SentAtUnixMs);
+    }
+
     // Sentry's protocol docs send image_size as a number for elf and macho and as a decimal string for pe.
     [Theory]
     [InlineData("8192", 8192L)]
@@ -401,6 +422,16 @@ public class SentryParserTests
         var record = Record.Exception(() => DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampUnixMs));
 
         Assert.Null(record);
+    }
+
+    // The other side of 253402300800 above: the last second an instant can hold is still a time, so the
+    // range ends exactly where DateTimeOffset's does and not somewhere short of it.
+    [Fact]
+    public void TheLastStorableSecondIsKept()
+    {
+        var e = SentryParser.ParseStore(EventAtSeconds("253402300799")).Event!;
+
+        Assert.Equal(253402300799000, e.TimestampUnixMs);
     }
 
     [Fact]

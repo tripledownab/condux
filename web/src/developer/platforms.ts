@@ -4,6 +4,11 @@
 // takes the adapter's name). Platform + framework display names are proper nouns, kept here with the code.
 // Extend this array to add a platform; nothing else changes.
 
+import { toOtlpTarget } from "@/src/lib/dsn";
+
+// What the guide passes to `code(dsn)` before the project has an active key. Every snippet must render it.
+export const DSN_PLACEHOLDER = "<your-dsn>";
+
 export type SnippetTitle =
   | "install"
   | "initialize"
@@ -340,7 +345,7 @@ app.UseConduxExceptionReporting(); // register early, before UseRouting`,
   },
   {
     id: "flutter",
-    name: "Flutter (Android)",
+    name: "Flutter",
     snippets: [
       { titleKey: "install", language: "bash", code: () => "flutter pub add sentry_flutter" },
       {
@@ -362,25 +367,98 @@ Future<void> main() async {
       {
         titleKey: "build",
         language: "bash",
-        code: () => `# An obfuscated release reports bare addresses. Split the debug info out so Condux can name
-# them, and upload it for every build: a symbols file matches only the build that wrote it.
-flutter build appbundle --release --obfuscate --split-debug-info=build/symbols`,
+        code: () => `# An obfuscated release reports bare addresses and renamed classes. Split the debug info out so
+# Condux can name the addresses, save the obfuscation map so it can restore the class names in an
+# exception's type and message, and upload both for every build: each matches only the build that wrote it.
+flutter build appbundle --release --obfuscate --split-debug-info=build/symbols \\
+  --extra-gen-snapshot-options=--save-obfuscation-map=build/symbols/obfuscation-map-android.json
+flutter build ipa --release --obfuscate --split-debug-info=build/symbols \\
+  --extra-gen-snapshot-options=--save-obfuscation-map=build/symbols/obfuscation-map-ios.json`,
       },
       {
         titleKey: "symbols",
         language: "yaml",
         code: () => `# GitHub Actions, after the build step. Mint a release token in the project's Releases tab and
 # store it as the CONDUX_RELEASE_TOKEN secret. One request per file; a busy server answers 429,
-# which curl's --retry waits out.
+# which curl's --retry waits out. Android: its .symbols files. iOS: the DWARF file inside the app's
+# dSYM, which names the crash's build; the .symbols file an iOS build writes does not, so it is skipped.
+# Each platform's obfuscation map is uploaded once for each build its debug files hold, named by the
+# debugId each upload answered; jq reads it.
 - name: Upload debug symbols to Condux
   env:
     CONDUX_RELEASE_TOKEN: \${{ secrets.CONDUX_RELEASE_TOKEN }}
   run: |
-    for file in build/symbols/*.symbols; do
-      curl --fail --silent --show-error --retry 5 \\
+    set -euo pipefail
+    uploaded=0
+    rm -f build/symbols/maps-uploaded
+    upload() {  # a debug file, and the obfuscation map its build saved
+      answer=$(curl --fail --silent --show-error --retry 5 \\
         -H "Authorization: Bearer $CONDUX_RELEASE_TOKEN" \\
-        --data-binary "@$file" https://app.condux.ai/api/debug-files
+        --data-binary "@$1" https://app.condux.ai/api/debug-files)
+      uploaded=$((uploaded + 1))
+      [ -f "$2" ] || return 0
+      ids=$(printf '%s' "$answer" | jq -r '.files[].debugId')
+      for id in $ids; do
+        curl --fail --silent --show-error --retry 5 \\
+          -H "Authorization: Bearer $CONDUX_RELEASE_TOKEN" -H "Content-Type: application/json" \\
+          --data-binary "@$2" "https://app.condux.ai/api/dart-symbol-maps?debugId=$id"
+        echo "$2" >> build/symbols/maps-uploaded
+      done
+    }
+    for file in build/symbols/app.android-*.symbols; do
+      [ -f "$file" ] || continue
+      upload "$file" build/symbols/obfuscation-map-android.json
+    done
+    for file in $(find build/ios -path '*App.framework.dSYM/Contents/Resources/DWARF/App' 2>/dev/null); do
+      upload "$file" build/symbols/obfuscation-map-ios.json
+    done
+    # A build that wrote no debug file, or a saved map that went nowhere, would otherwise pass here and
+    # leave every crash unreadable.
+    [ "$uploaded" -gt 0 ] || { echo "no debug files found under build/"; exit 1; }
+    for map in build/symbols/obfuscation-map-*.json; do
+      [ -f "$map" ] || continue
+      grep -qxF "$map" build/symbols/maps-uploaded 2>/dev/null || { echo "$map was saved but not uploaded"; exit 1; }
     done`,
+      },
+    ],
+  },
+  {
+    id: "opentelemetry",
+    name: "OpenTelemetry (AI agents)",
+    snippets: [
+      {
+        titleKey: "install",
+        language: "bash",
+        code: () =>
+          "pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http opentelemetry-instrumentation-openai-agents-v2",
+      },
+      {
+        titleKey: "initialize",
+        language: "python",
+        code: (dsn) => {
+          // Before the project has a key the guide passes a placeholder, which names no endpoint.
+          const { endpoint, key } = toOtlpTarget(dsn) ?? {
+            endpoint: "<your-ingest-url>/api/<project-id>",
+            key: "<your-key>",
+          };
+          return `from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# Traces go to Condux, which turns failed model calls, tools and agent runs into issues and drops the
+# prompts and tool arguments the spans carry. The endpoint and key come from your DSN: ${dsn}
+provider = TracerProvider(resource=Resource.create({"service.name": "my-agent", "service.version": "1.0.0"}))
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+    endpoint="${endpoint}/v1/traces",
+    headers={"x-condux-auth": "${key}"},
+)))
+trace.set_tracer_provider(provider)
+
+OpenAIAgentsInstrumentor().instrument()`;
+        },
       },
     ],
   },

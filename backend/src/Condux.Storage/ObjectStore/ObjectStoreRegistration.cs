@@ -11,7 +11,8 @@ namespace Condux.Storage.ObjectStore;
 /// </summary>
 public static class ObjectStoreRegistration
 {
-    public static IServiceCollection AddObjectStore(this IServiceCollection services, IConfiguration cfg)
+    public static IServiceCollection AddObjectStore(
+        this IServiceCollection services, IConfiguration cfg, ObjectStoreAccess access)
     {
         var config = ObjectStoreConfig.FromEnv(cfg);
         services.AddSingleton(config);
@@ -20,10 +21,13 @@ public static class ObjectStoreRegistration
             // A factory (not an eager instance) so the S3 client is built only when first resolved, and one
             // instance behind both seams. A test can still override IObjectStore with a fake; the control-plane's
             // upload storage worker resolves the cleanup seam at startup, which builds the client but opens no
-            // connection until its first pass.
+            // connection until its first pass. A reader is not handed the cleanup seam.
             services.AddSingleton(_ => new S3ObjectStore(config));
             services.AddSingleton<IObjectStore>(sp => sp.GetRequiredService<S3ObjectStore>());
-            services.AddSingleton<IObjectStoreCleanup>(sp => sp.GetRequiredService<S3ObjectStore>());
+            if (access == ObjectStoreAccess.ReadWrite)
+            {
+                services.AddSingleton<IObjectStoreCleanup>(sp => sp.GetRequiredService<S3ObjectStore>());
+            }
         }
 
         return services;

@@ -3,6 +3,6 @@
        backend/Directory.Build.props (TFM, nullable, implicit usings) that every project inherits. -->
   <ItemGroup>
     <!-- coverlet.collector enables the "XPlat Code Coverage" data collector (Cobertura) in every test project. -->
-    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
   </ItemGroup>
 </Project>

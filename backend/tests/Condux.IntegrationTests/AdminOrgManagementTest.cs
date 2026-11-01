@@ -143,7 +143,7 @@ public sealed class AdminOrgManagementTest(PostgresFixture pg) : IClassFixture<P
     {
         var resp = await client.PostAsJsonAsync("/api/orgs",
             new { slug = "org-" + Guid.NewGuid().ToString("N"), name = "Acme" });
-        resp.EnsureSuccessStatusCode();
+        await resp.EnsureSuccessAsync();
         var id = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
         await OrgSeed.SetTierAsync(pg.ConnectionString, id, tier);
         return id;

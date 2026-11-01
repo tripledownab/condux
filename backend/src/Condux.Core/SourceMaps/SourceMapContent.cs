@@ -20,12 +20,7 @@ public static class SourceMapContent
 
         try
         {
-            using var doc = JsonDocument.Parse(content);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("version", out var version)
-                || version.ValueKind != JsonValueKind.Number
-                || !version.TryGetInt32(out var v) || v != 3)
+            if (SourceMapJson.Scan(content) is not { IsVersion3: true } root)
             {
                 return false;
             }
@@ -33,14 +28,30 @@ public static class SourceMapContent
             // The one thing here that is not a shape check, and the reason is that the caller is not asking
             // a question about shape: mappings the decoder will refuse make a map that uploads, stores and
             // then silently symbolicates nothing. The decoder owns the rule, and as in the decoder, a
-            // "sections" field makes it an index map whatever else it holds.
-            if (root.TryGetProperty("sections", out var sections))
+            // "sections" field makes it an index map whatever else it holds. An index map with no usable
+            // section is accepted, though a read finds nothing in it: Turbopack writes empty index maps for
+            // its own build transforms, and the upload CLI sends every map it finds, so refusing them failed
+            // the CLI on any such build. The strings a read would decode are confirmed to be text, so a map
+            // accepted here is one a read can use.
+            if (root.HasSections)
             {
-                return SourceMapSections.IsDecodable(sections);
+                if (!SourceMapSections.IsDecodable(content, root.Sections))
+                {
+                    return false;
+                }
+                foreach (var section in root.Sections!)
+                {
+                    SourceMapJson.CheckStrings(content, section.Map);
+                }
+                return true;
             }
 
-            return root.TryGetProperty("mappings", out var mappings) && mappings.ValueKind == JsonValueKind.String
-                && SourceMapMappings.IsDecodable(mappings.GetString()!);
+            if (root.Mappings is not { } mappings || !SourceMapMappings.Fits(SourceMapJson.MeasureMappings(content, mappings)))
+            {
+                return false;
+            }
+            SourceMapJson.CheckStrings(content, root);
+            return true;
         }
         catch (JsonException)
         {

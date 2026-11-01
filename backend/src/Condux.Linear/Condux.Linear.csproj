@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The neutral ITicketSink contract lives in Core (ADR-0053); this is the Linear implementation.
+         Like Condux.GitHub it keeps no external NuGet deps: a thin client over Linear's OAuth and GraphQL. -->
+    <ProjectReference Include="..\Condux.Core\Condux.Core.csproj" />
+  </ItemGroup>
+</Project>

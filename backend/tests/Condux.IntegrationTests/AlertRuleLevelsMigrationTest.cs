@@ -26,7 +26,8 @@ public sealed class AlertRuleLevelsMigrationTest(PostgresFixture pg) : IClassFix
         var untouched = await InsertRuleAsync(projectId, [5, 2]);
 
         await ApplyMigrationAsync();
-        // Every deploy replays every migration, so a second pass must change nothing.
+        // A file runs again whenever the migration files change other than by new ones sorting last, so a
+        // second pass must change nothing.
         await ApplyMigrationAsync();
 
         Assert.Equal([4], await LevelsAsync(onlyZero));

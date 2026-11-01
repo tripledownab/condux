@@ -51,7 +51,7 @@ public sealed class IssueEventsApiTest(PostgresFixture pg, ClickHouseFixture ch)
             };
             await writer.InsertAsync([ClickHouseEventWriter.ToRow(
                 projectId.ToString(), (ulong)upsert.Id, e, grouping.Fingerprint,
-                PlanCatalog.For(Tier.Free).RetentionDays)]);
+                PlanCatalog.For(Tier.Free).RetentionDays, DateTimeOffset.UtcNow)]);
         }
 
         var list = (await client.GetFromJsonAsync<JsonElement>($"/api/projects/{projectId}/issues"))

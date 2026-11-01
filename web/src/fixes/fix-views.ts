@@ -1,5 +1,5 @@
 import type { FixListItem } from "@/src/api/generated/model";
-import { FixStatus, VerifyStatus } from "@/src/issues/fix-format";
+import { canRequestAnotherFix, FixStatus, VerifyStatus } from "@/src/issues/fix-format";
 
 // The lifecycle buckets a fix falls into, in display order. Mutually exclusive: fixBucketOf assigns
 // exactly one. Archived is not a bucket here — archived fixes are fetched separately (?archived=true).
@@ -23,7 +23,8 @@ export const FIX_BUCKETS: FixBucket[] = [
 ];
 
 // Which bucket a fix belongs to. Verification state leads (a merged fix is verifying or has
-// concluded), then a failed/cancelled run, then a draft PR ready for review, else it is still running.
+// concluded), then a run that ended without a PR (the ones a fix may be requested again for), then a
+// draft PR ready for review, else it is still running.
 export function fixBucketOf(item: Pick<FixListItem, "status" | "verifyStatus">): FixBucket {
   if (item.verifyStatus === VerifyStatus.Held) {
     return FixBucket.Held;
@@ -34,7 +35,7 @@ export function fixBucketOf(item: Pick<FixListItem, "status" | "verifyStatus">):
   if (item.verifyStatus === VerifyStatus.Watching) {
     return FixBucket.Verifying;
   }
-  if (item.status === FixStatus.Failed || item.status === FixStatus.Cancelled) {
+  if (canRequestAnotherFix(item.status)) {
     return FixBucket.Failed;
   }
   if (item.status === FixStatus.Succeeded) {

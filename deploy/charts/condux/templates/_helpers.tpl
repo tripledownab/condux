@@ -113,33 +113,37 @@ email delivery. Emit only inside `{{- if .Values.email.enabled }}`. */}}
 {{/*
 Object storage for source maps (ADR-0028). The control-plane stores uploads and symbolicates the events it
 shows; the consumer symbolicates the event an auto-fix is built from. One block for both, so the two cannot
-be pointed at different buckets.
+be pointed at different buckets. Called with (dict "root" . "reader" <bool>): a reader, the consumer, gets
+the read-only key in the shared key's place when objectStore.readOnlyKey is set, so it never holds the shared
+key, which can write and delete.
 */}}
 {{- define "condux.objectStoreEnv" -}}
+{{- $values := .root.Values -}}
+{{- $prefix := ternary "CONDUX_S3_READ_" "CONDUX_S3_" (and .reader $values.objectStore.readOnlyKey) -}}
 - name: CONDUX_S3_BUCKET
-  value: {{ .Values.objectStore.bucket | quote }}
-{{- if .Values.objectStore.endpoint }}
+  value: {{ $values.objectStore.bucket | quote }}
+{{- if $values.objectStore.endpoint }}
 - name: CONDUX_S3_ENDPOINT
-  value: {{ .Values.objectStore.endpoint | quote }}
+  value: {{ $values.objectStore.endpoint | quote }}
 {{- end }}
-{{- if .Values.objectStore.region }}
+{{- if $values.objectStore.region }}
 - name: CONDUX_S3_REGION
-  value: {{ .Values.objectStore.region | quote }}
+  value: {{ $values.objectStore.region | quote }}
 {{- end }}
-{{- if .Values.objectStore.serverSideEncryption }}
+{{- if $values.objectStore.serverSideEncryption }}
 - name: CONDUX_S3_SSE
-  value: {{ .Values.objectStore.serverSideEncryption | quote }}
+  value: {{ $values.objectStore.serverSideEncryption | quote }}
 {{- end }}
 - name: CONDUX_S3_ACCESS_KEY
   valueFrom:
     secretKeyRef:
-      name: {{ include "condux.secretName" . }}
-      key: CONDUX_S3_ACCESS_KEY
+      name: {{ include "condux.secretName" .root }}
+      key: {{ $prefix }}ACCESS_KEY
 - name: CONDUX_S3_SECRET_KEY
   valueFrom:
     secretKeyRef:
-      name: {{ include "condux.secretName" . }}
-      key: CONDUX_S3_SECRET_KEY
+      name: {{ include "condux.secretName" .root }}
+      key: {{ $prefix }}SECRET_KEY
 {{- end }}
 
 {{/* Where the control-plane and the consumer reach the symbolizer (ADR-0049). Its pass reads files from

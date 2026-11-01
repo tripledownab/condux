@@ -3,15 +3,20 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <InternalsVisibleTo Include="Condux.Relay.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.0" />
     <!-- Reads both OTLP encodings. It sits here rather than in Condux.Core because Core stays
          dependency-light for Condux.Agent, which references it and decodes no OTLP. -->
-    <PackageReference Include="Condux.Otlp" Version="0.2.0" />
+    <PackageReference Include="Condux.Otlp" Version="0.3.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
     <ProjectReference Include="../Condux.Messaging/Condux.Messaging.csproj" />
     <ProjectReference Include="../Condux.Storage/Condux.Storage.csproj" />
     <ProjectReference Include="../Condux.Telemetry/Condux.Telemetry.csproj" />
+    <!-- The SDK's caller-caused rule (ADR-0044), so self-reporting files only Condux's own faults. -->
+    <ProjectReference Include="../../../sdks/dotnet/Condux.Sdk.AspNetCore/Condux.Sdk.AspNetCore.csproj" />
   </ItemGroup>
 </Project>

@@ -54,7 +54,7 @@ public sealed class CookieSecurityApiTest(PostgresFixture pg) : IClassFixture<Po
     {
         var secured = await App("https://app.example.test").CreateClient().PostAsJsonAsync(
             "/api/auth/signup", new { email = $"u-{Guid.NewGuid():N}@condux.test", password = "test-password-123" });
-        secured.EnsureSuccessStatusCode();
+        await secured.EnsureSuccessAsync();
         var securedCookie = SetCookie(secured, "condux_session");
         Assert.NotNull(securedCookie);
         Assert.True(IsSecure(securedCookie), $"expected Secure on an https deployment, got: {securedCookie}");
@@ -63,7 +63,7 @@ public sealed class CookieSecurityApiTest(PostgresFixture pg) : IClassFixture<Po
         // also stops the assertion above being satisfiable by hardcoding Secure on.
         var plain = await App(baseUrl: null).CreateClient().PostAsJsonAsync(
             "/api/auth/signup", new { email = $"u-{Guid.NewGuid():N}@condux.test", password = "test-password-123" });
-        plain.EnsureSuccessStatusCode();
+        await plain.EnsureSuccessAsync();
         var plainCookie = SetCookie(plain, "condux_session");
         Assert.NotNull(plainCookie);
         Assert.False(IsSecure(plainCookie), $"expected no Secure on an http deployment, got: {plainCookie}");

@@ -76,7 +76,7 @@ public sealed class McpTokenApiTest(PostgresFixture pg) : IClassFixture<Postgres
         // Revoked, and the same token stops working immediately.
         var tokenId = row.GetProperty("id").GetString()!;
         var revokeResp = await client.DeleteAsync($"/api/projects/{projectId}/mcp-tokens/{tokenId}");
-        Assert.True(revokeResp.IsSuccessStatusCode);
+        await revokeResp.EnsureSuccessAsync();
 
         var afterRevoke = await BearerClient(rawToken).PostAsync("/api/mcp", ToolsList());
         Assert.Equal(HttpStatusCode.Unauthorized, afterRevoke.StatusCode);

@@ -38,7 +38,10 @@ internal static class RepoEndpoints
                         }
                     }
 
-                    var link = await repos.LinkAsync(projectId, req.RepoFullName, req.DefaultBranch ?? "main");
+                    // A blank branch is stored as main, as a missing one is, and any other is trimmed as the update
+                    // route trims it: an empty one names no branch, and a padded one names a branch that is not there.
+                    var branch = string.IsNullOrWhiteSpace(req.DefaultBranch) ? "main" : req.DefaultBranch.Trim();
+                    var link = await repos.LinkAsync(projectId, req.RepoFullName, branch);
                     return TypedResults.Created($"/api/projects/{projectId}/repos/{link.Id}", link);
                 })
             .WithName("linkRepo").WithTags("Repos")
@@ -119,14 +122,19 @@ internal static class RepoEndpoints
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Admin));
 
         app.MapPost("/api/projects/{projectId:long}/releases",
-                async Task<Results<Created<Release>, NotFound>> (
+                async Task<Results<Created<Release>, NotFound, BadRequest<ErrorResponse>>> (
                     long projectId, RecordReleaseRequest req, RepoLinkRepository repos, ReleaseRepository releases) =>
                 {
+                    var (recordable, error) = ReleaseRecords.ToRecordable(req.Version, req.CommitSha);
+                    if (recordable is null)
+                    {
+                        return TypedResults.BadRequest(new ErrorResponse(error!));
+                    }
                     if (await repos.GetAsync(projectId, req.RepoLinkId) is null)
                     {
                         return TypedResults.NotFound();
                     }
-                    var release = await releases.RecordAsync(projectId, req.RepoLinkId, req.Version, req.CommitSha);
+                    var release = await releases.RecordAsync(projectId, req.RepoLinkId, recordable);
                     return TypedResults.Created($"/api/projects/{projectId}/releases/{release.Id}", release);
                 })
             .WithName("recordRelease").WithTags("Repos")

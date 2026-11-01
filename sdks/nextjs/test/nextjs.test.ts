@@ -96,3 +96,53 @@ test("initClient initializes reporting from the client DSN", async () => {
   assert.equal(last().message, "client ready");
   assert.equal(last().level, "info");
 });
+
+// Next 16.4.1's InvariantError for a POST to a path with no page that asks for RSC and that Next takes for a
+// possible Server Action is not reported, whatever made it one. The contexts are the ones Next passed the
+// hook in measurements: the scanner's against the dashboard and a scratch app, the real client's against a
+// scratch app with a custom not-found page whose action fails, once in React and once loading the module. The headers only
+// show which request each stands for; the rule reads none. The last case is a variant, not a measurement.
+test("Next's not-found invariant is not reported, the app's not-found errors are", async () => {
+  const sent: string[] = [];
+  const fetch: FetchLike = async (_url, init) => {
+    sent.push(init.body);
+    return { status: 202, headers: { get: () => null } };
+  };
+  register({ dsn: DSN, fetch });
+
+  const invariant = (got: string) => new Error(`Invariant: Expected RSC response, got ${got}. This is a bug in Next.js.`);
+  const notFoundRender = { routerKind: "App Router", routePath: "/_not-found/page", routeType: "render" };
+  const scans = [
+    { path: "/signin", method: "POST", headers: { "next-action": "abc" } },
+    { path: "/signin", method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { path: "/signin", method: "POST", headers: { "content-type": "multipart/form-data; boundary=x" } },
+    { path: "/signin.rsc", method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" } },
+  ];
+  await captureRequestError(invariant("text/plain"), scans[0], notFoundRender);
+  await captureRequestError(invariant("text/html; charset=utf-8"), scans[1], notFoundRender);
+  await captureRequestError(invariant("text/plain"), scans[2], notFoundRender);
+  await captureRequestError(invariant("text/plain"), scans[3], notFoundRender);
+  assert.equal(sent.length, 0);
+
+  // A real client's action on a custom not-found page whose module fails to load arrives with the same
+  // route; only the error differs, and it is the app's.
+  const realClient = {
+    path: "/does-not-exist",
+    method: "POST",
+    headers: { "next-action": "401e41be", "next-router-state-tree": "%5B%22%22%5D" },
+  };
+  await captureRequestError(new Error("Missing env var DATABASE_URL"), realClient, notFoundRender);
+  assert.equal(sent.length, 1);
+
+  // The same page's action failing in React is reported as an action of /_not-found.
+  await captureRequestError(new Error("custom not-found action broke"), realClient, {
+    routerKind: "App Router",
+    routePath: "/_not-found",
+    routeType: "action",
+  });
+  assert.equal(sent.length, 2);
+
+  // The invariant on any other route is reported: its meaning there has not been measured.
+  await captureRequestError(invariant("text/plain"), scans[0], { ...notFoundRender, routePath: "/settings/page" });
+  assert.equal(sent.length, 3);
+});

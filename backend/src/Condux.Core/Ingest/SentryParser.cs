@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Condux.Core.Events;
+using Condux.Core.Http;
 
 namespace Condux.Core.Ingest;
 
@@ -21,13 +22,14 @@ public static partial class SentryParser
     /// <inheritdoc cref="ParseStore(ReadOnlySpan{byte})"/>
     public static ParseResult ParseStore(string json) => FromPayload(Encoding.UTF8.GetBytes(json));
 
-    /// <summary>Parse an <c>/envelope/</c> payload, returning its first event item.</summary>
+    /// <summary>Parse an <c>/envelope/</c> payload, returning its first event item and the envelope
+    /// header's <c>sent_at</c>.</summary>
     public static ParseResult ParseEnvelope(ReadOnlySpan<byte> body)
     {
-        var outcome = SentryEnvelopeReader.TryFindEventPayload(body, out var payload);
+        var outcome = SentryEnvelopeReader.TryFindEventPayload(body, out var payload, out var header);
         return outcome switch
         {
-            ParseOutcome.Parsed => FromPayload(payload),
+            ParseOutcome.Parsed => FromPayload(payload) with { SentAtUnixMs = ParseSentAt(header) },
             ParseOutcome.Malformed => ParseResult.Malformed,
             _ => ParseResult.NoEvent,
         };
@@ -41,7 +43,7 @@ public static partial class SentryParser
         try
         {
             using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !JsonStrings.AreText(payload))
             {
                 return ParseResult.Malformed;
             }
@@ -62,7 +64,7 @@ public static partial class SentryParser
     {
         string? sdkName = null;
         string? sdkVersion = null;
-        if (root.TryGetProperty("sdk", out var sdk) && sdk.ValueKind == JsonValueKind.Object)
+        if (root.TryGetMember("sdk", out var sdk) && sdk.ValueKind == JsonValueKind.Object)
         {
             sdkName = GetString(sdk, "name");
             sdkVersion = GetString(sdk, "version");
@@ -102,7 +104,7 @@ public static partial class SentryParser
 
     private static EventUser? ParseUser(JsonElement root)
     {
-        if (!root.TryGetProperty("user", out var user) || user.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetMember("user", out var user) || user.ValueKind != JsonValueKind.Object)
         {
             return null;
         }
@@ -118,7 +120,7 @@ public static partial class SentryParser
 
     private static RequestInfo? ParseRequest(JsonElement root)
     {
-        if (!root.TryGetProperty("request", out var request) || request.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetMember("request", out var request) || request.ValueKind != JsonValueKind.Object)
         {
             return null;
         }
@@ -136,14 +138,14 @@ public static partial class SentryParser
     private static IReadOnlyDictionary<string, string> ParseContexts(JsonElement root)
     {
         var dict = new Dictionary<string, string>();
-        if (!root.TryGetProperty("contexts", out var contexts) || contexts.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetMember("contexts", out var contexts) || contexts.ValueKind != JsonValueKind.Object)
         {
             return dict;
         }
 
         foreach (var name in (string[])["browser", "os", "runtime", "device"])
         {
-            if (contexts.TryGetProperty(name, out var ctx) && ctx.ValueKind == JsonValueKind.Object)
+            if (contexts.TryGetMember(name, out var ctx) && ctx.ValueKind == JsonValueKind.Object)
             {
                 var label = GetString(ctx, "name") ?? GetString(ctx, "model");
                 var version = GetString(ctx, "version");
@@ -158,14 +160,14 @@ public static partial class SentryParser
     }
 
     private static string? ParseTraceId(JsonElement root) =>
-        root.TryGetProperty("contexts", out var contexts) && contexts.ValueKind == JsonValueKind.Object
-        && contexts.TryGetProperty("trace", out var trace) && trace.ValueKind == JsonValueKind.Object
+        root.TryGetMember("contexts", out var contexts) && contexts.ValueKind == JsonValueKind.Object
+        && contexts.TryGetMember("trace", out var trace) && trace.ValueKind == JsonValueKind.Object
             ? GetString(trace, "trace_id")
             : null;
 
     private static string? ParseMessage(JsonElement root)
     {
-        if (!root.TryGetProperty("message", out var m))
+        if (!root.TryGetMember("message", out var m))
         {
             return null;
         }

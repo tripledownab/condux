@@ -26,8 +26,13 @@ internal static class OtlpStacktrace
     //
     // The lazy quantifiers are kept because a file can contain colons (`https://…`, a Windows path), so a
     // negated class here would stop reading real stacks.
+    //
+    // A line number is the sender's text, and int.Parse threw on two kinds of it, failing the export. The
+    // digits are [0-9], never \d, which also matches every other script's digits, so a line numbered that
+    // way is not read as a frame; and the numbers are read with TryParse, so one past an int keeps its
+    // frame at 0.
     private static readonly Regex V8Frame = new(
-        @"^\s*at (?:(?<fn>.+?) \()?(?<file>.+?):(?<line>\d+):(?<col>\d+)\)?\s*$",
+        @"^\s*at (?:(?<fn>.+?) \()?(?<file>.+?):(?<line>[0-9]+):(?<col>[0-9]+)\)?\s*$",
         RegexOptions.NonBacktracking);
 
     // A real stack is dozens of frames. Reading a bounded prefix keeps a 20 MiB attribute of newlines from
@@ -63,8 +68,8 @@ internal static class OtlpStacktrace
             {
                 Filename = filename,
                 Function = match.Groups["fn"].Success ? match.Groups["fn"].Value : "<anonymous>",
-                Lineno = int.Parse(match.Groups["line"].Value, CultureInfo.InvariantCulture),
-                Colno = int.Parse(match.Groups["col"].Value, CultureInfo.InvariantCulture),
+                Lineno = ToNumber(match.Groups["line"].Value),
+                Colno = ToNumber(match.Groups["col"].Value),
                 InApp = IsInApp(filename),
             });
         }
@@ -79,6 +84,10 @@ internal static class OtlpStacktrace
         frames.Reverse();
         return new Stacktrace { Frames = frames };
     }
+
+    /// <summary>A line or column number, or 0 when it does not fit an int, as the Sentry parser reads one.</summary>
+    private static int ToNumber(string digits)
+        => int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var number) ? number : 0;
 
     /// <summary>
     /// Whether a frame is the application's own code rather than a dependency or the runtime.

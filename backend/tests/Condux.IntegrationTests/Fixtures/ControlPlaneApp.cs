@@ -90,6 +90,7 @@ public static class ControlPlaneApp
     {
         var app = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
+            b.SurfaceServerExceptions();
             if (appBaseUrl is not null)
             {
                 b.UseSetting("CONDUX_APP_BASE_URL", appBaseUrl);

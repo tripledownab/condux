@@ -45,3 +45,17 @@ public sealed record ObjectStoreConfig(
         return new ObjectStoreConfig(endpoint, bucket, accessKey, secretKey, region, sse);
     }
 }
+
+/// <summary>
+/// What a service does with object storage. A reader is not handed the cleanup seam the deletion queue
+/// drains through. What its key may do is the deployment's choice, made by what it passes as
+/// <c>CONDUX_S3_ACCESS_KEY</c>, and that key is the real limit.
+/// </summary>
+public enum ObjectStoreAccess
+{
+    /// <summary>Stores and deletes objects as well as reading them: the control-plane.</summary>
+    ReadWrite,
+
+    /// <summary>Reads objects and has no use for the rest: the consumer, which handles untrusted events.</summary>
+    Read,
+}

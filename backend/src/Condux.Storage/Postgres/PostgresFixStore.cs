@@ -1,3 +1,4 @@
+using Condux.Core.Text;
 using Condux.Core.FixEngine;
 using Npgsql;
 
@@ -76,7 +77,7 @@ public sealed partial class PostgresFixStore(string connectionString) : IFixStor
         cmd.Parameters.AddWithValue("model", s.Model);
         cmd.Parameters.AddWithValue("branch", s.Branch);
         cmd.Parameters.AddWithValue("pr", s.PrUrl);
-        cmd.Parameters.AddWithValue("summary", s.Summary);
+        cmd.Parameters.AddWithValue("summary", StorableText.ToStorable(s.Summary));
         cmd.Parameters.AddWithValue("created", s.CreatedAt);
         cmd.Parameters.AddWithValue("updated", s.UpdatedAt);
         cmd.Parameters.AddWithValue("job", (object?)s.JobId ?? DBNull.Value);
@@ -117,7 +118,7 @@ public sealed partial class PostgresFixStore(string connectionString) : IFixStor
         cmd.Parameters.AddWithValue("status", (short)s.Status);
         cmd.Parameters.AddWithValue("branch", s.Branch);
         cmd.Parameters.AddWithValue("pr", s.PrUrl);
-        cmd.Parameters.AddWithValue("summary", s.Summary);
+        cmd.Parameters.AddWithValue("summary", StorableText.ToStorable(s.Summary));
         cmd.Parameters.AddWithValue("in", s.InputTokens);
         cmd.Parameters.AddWithValue("out", s.OutputTokens);
         cmd.Parameters.AddWithValue("reason", FixFailureColumn.ToParameter(s.FailureReason));
@@ -134,7 +135,7 @@ public sealed partial class PostgresFixStore(string connectionString) : IFixStor
         cmd.Parameters.AddWithValue("fix", fixId);
         cmd.Parameters.AddWithValue("actor", actor);
         cmd.Parameters.AddWithValue("event", eventName);
-        cmd.Parameters.AddWithValue("detail", detailJson);
+        cmd.AddJsonb("detail", detailJson);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }

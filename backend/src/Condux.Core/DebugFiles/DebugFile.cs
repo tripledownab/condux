@@ -16,3 +16,13 @@ public sealed record DebugFile(
     long ByteSize,
     DateTimeOffset CreatedAt,
     string? Sha256);
+
+/// <summary>A debug file's identity: the build it belongs to, as the file names it (an ELF GNU build ID, or a
+/// Mach-O <c>LC_UUID</c>, in lowercase hex), and the <c>debug_id</c> an event carries for the same build.
+/// </summary>
+public sealed record DebugBuild(string BuildId, string DebugId);
+
+/// <summary>One build an uploaded file holds, and where its bytes lie in the upload: the whole file for ELF
+/// and for a thin Mach-O file, one architecture's slice of a universal one. <see cref="Architecture"/> is
+/// named for Mach-O, where one upload can hold several, and null for ELF, which holds one.</summary>
+public sealed record DebugFileSlice(DebugBuild Build, string? Architecture, int Offset, int Length);

@@ -3,7 +3,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import {
   getGetSsoConfigQueryKey,
   useDeleteSsoConfig,
@@ -19,6 +18,7 @@ import {
 } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
+import { readErrorCode, readErrorStatus } from "@/src/lib/api-errors";
 import { OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 import { SsoDomainVerification } from "./sso-domain-verification";
 
@@ -31,20 +31,21 @@ enum SsoProtocol {
 // Map a save failure to a message key. email_domain_taken and sso_requires_upgrade are both 409, so key on
 // the error code first; then the feature-off (404), a rejected field (400) and the role gap (403).
 function saveErrorKey(error: unknown): string {
-  const e = error as ConduxApiError | null;
-  if (e?.code === "email_domain_taken") {
+  const code = readErrorCode(error);
+  const status = readErrorStatus(error);
+  if (code === "email_domain_taken") {
     return "domainTaken";
   }
-  if (e?.code === "sso_requires_upgrade" || e?.status === 409) {
+  if (code === "sso_requires_upgrade" || status === 409) {
     return "requiresUpgrade";
   }
-  if (e?.status === 404) {
+  if (status === 404) {
     return "notConfigured";
   }
-  if (e?.status === 400) {
+  if (status === 400) {
     return "invalidRequest";
   }
-  if (e?.status === 403) {
+  if (status === 403) {
     return "ownerOnly";
   }
   return "failed";

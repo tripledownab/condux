@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Condux.Core.Http;
 
 namespace Condux.Core.Ingest;
 
@@ -15,10 +16,12 @@ internal static class SentryEnvelopeReader
 {
     private const byte NewLine = (byte)'\n';
 
-    /// <summary>Finds the payload of the envelope's first <c>event</c> item.</summary>
-    internal static ParseOutcome TryFindEventPayload(ReadOnlySpan<byte> body, out byte[] payload)
+    /// <summary>Finds the payload of the envelope's first <c>event</c> item, and the envelope's own
+    /// header line.</summary>
+    internal static ParseOutcome TryFindEventPayload(ReadOnlySpan<byte> body, out byte[] payload, out byte[] header)
     {
         payload = [];
+        header = [];
         var cursor = 0;
 
         // Line 0 is the envelope header; a body not starting with one is not an envelope at all.
@@ -26,6 +29,7 @@ internal static class SentryEnvelopeReader
         {
             return ParseOutcome.Malformed;
         }
+        header = envelopeHeader.ToArray();
 
         while (cursor < body.Length)
         {
@@ -83,15 +87,15 @@ internal static class SentryEnvelopeReader
         try
         {
             using var doc = JsonDocument.Parse(header.ToArray());
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !JsonStrings.AreText(header))
             {
                 return false;
             }
-            if (doc.RootElement.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String)
+            if (doc.RootElement.TryGetMember("type", out var t) && t.ValueKind == JsonValueKind.String)
             {
                 type = t.GetString();
             }
-            if (doc.RootElement.TryGetProperty("length", out var l) && l.ValueKind == JsonValueKind.Number
+            if (doc.RootElement.TryGetMember("length", out var l) && l.ValueKind == JsonValueKind.Number
                 && l.TryGetInt32(out var declared))
             {
                 length = declared;
@@ -116,9 +120,15 @@ internal static class SentryEnvelopeReader
 
         // A correct length always lands on the separator before the next item, or on the end of the
         // body. When it does not the header is lying, and trusting it would swallow the following
-        // items, so fall back to newline scanning rather than silently losing them.
+        // items, so fall back to newline scanning rather than silently losing them. The length is compared
+        // with what is left before it is added to the cursor: the sender chooses it, and near int.MaxValue
+        // the sum wraps below zero.
+        if (declared < 0 || declared > body.Length - cursor)
+        {
+            return TryReadLine(body, ref cursor, out payload);
+        }
         var end = cursor + declared;
-        if (declared < 0 || end > body.Length || (end < body.Length && body[end] != NewLine))
+        if (end < body.Length && body[end] != NewLine)
         {
             return TryReadLine(body, ref cursor, out payload);
         }
@@ -128,12 +138,13 @@ internal static class SentryEnvelopeReader
         return true;
     }
 
+    // The envelope header is read again later for its sent_at, so its text is checked here, once.
     private static bool IsJsonObject(ReadOnlySpan<byte> line)
     {
         try
         {
             using var doc = JsonDocument.Parse(line.ToArray());
-            return doc.RootElement.ValueKind == JsonValueKind.Object;
+            return doc.RootElement.ValueKind == JsonValueKind.Object && JsonStrings.AreText(line);
         }
         catch (JsonException)
         {

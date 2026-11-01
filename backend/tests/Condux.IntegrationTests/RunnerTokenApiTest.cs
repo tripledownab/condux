@@ -70,7 +70,7 @@ public sealed class RunnerTokenApiTest(PostgresFixture pg) : IClassFixture<Postg
         // Revoked, and the same token stops leasing immediately.
         var tokenId = row.GetProperty("id").GetString()!;
         var revokeResp = await client.DeleteAsync($"/api/orgs/{orgId}/runner-tokens/{tokenId}");
-        Assert.True(revokeResp.IsSuccessStatusCode);
+        await revokeResp.EnsureSuccessAsync();
 
         var afterRevoke = await BearerClient(rawToken).PostAsync("/api/runner/lease", content: null);
         Assert.Equal(HttpStatusCode.Unauthorized, afterRevoke.StatusCode);

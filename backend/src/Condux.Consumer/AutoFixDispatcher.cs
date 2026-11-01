@@ -27,6 +27,11 @@ public sealed class AutoFixDispatcher(
 {
     private const string AutoActor = "auto"; // distinguishes an auto-requested run from a user id in the audit
 
+    // How long a new issue's fix context waits for symbols. The drain handles one event at a time, so every
+    // second here holds up ingest for every project; a fix built from the stored frames is still a fix, and
+    // the issue page, which has no such hurry, keeps its own longer wait.
+    private static readonly TimeSpan SymbolicationBudget = TimeSpan.FromSeconds(2);
+
     public async Task DispatchAsync(
         long projectId, UpsertResult upsert, Event sampleEvent, CancellationToken cancellationToken = default)
     {
@@ -95,6 +100,19 @@ public sealed class AutoFixDispatcher(
             }
 
             var (context, job) = built;
+            // No app frame resolved to a repo-relative path (a failed agent span carries none, a library's frames
+            // are not the app's, and an absolute build path needs a code mapping), so an unattended run would have
+            // nothing to start from: the in-process gateway fails such a run before calling the model, and the
+            // managed agents one searches the whole repository on its own budget. A person can still ask for one.
+            // A repo-relative path is only a path's shape, so a run can still find no such file and fail.
+            if (context.ScopedPaths.Count == 0)
+            {
+                logger.LogInformation(
+                    "auto-fix skipped: no app frame with a repo-relative path org={OrgId} issue={IssueId}", org.Id, upsert.Id);
+                await quota.RefundAsync(org.Id, reservedAt, CancellationToken.None);
+                return;
+            }
+
             // Routed by the org's execution setting, exactly as the manual request is (ADR-0033 slice 4c): a
             // self-hosting org's auto-fix must land on its runner too, or turning auto on would quietly send
             // the work somewhere the customer chose not to use. Either way the run is written first, so an
@@ -148,7 +166,7 @@ public sealed class AutoFixDispatcher(
         // bug returned in, and both are the right point in history to reason from.
         var release = await ResolveReleaseAsync(projectId, sampleEvent.Release, cancellationToken);
         var symbolicated = await symbolication.SymbolicateAsync(
-            projectId, sampleEvent, cancellationToken: cancellationToken);
+            projectId, sampleEvent, SymbolicationBudget, cancellationToken);
         var context = FixContextAssembler.Assemble(symbolicated, mappings, release);
         var installs = await installations.GetByOrgAsync(orgId, cancellationToken);
         var job = new FixJob(upsert.Id, repo.RepoFullName, repo.DefaultBranch, AutoActor, ModelDefaults.Fix)

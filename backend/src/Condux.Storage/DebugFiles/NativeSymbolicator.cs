@@ -4,6 +4,7 @@ using Condux.Core.DebugFiles;
 using Condux.Core.Events;
 using Condux.Core.SourceMaps;
 using Condux.Storage.Postgres;
+using Condux.Storage.SourceMaps;
 using Microsoft.Extensions.Logging;
 
 namespace Condux.Storage.DebugFiles;
@@ -28,7 +29,7 @@ namespace Condux.Storage.DebugFiles;
 /// </summary>
 public sealed partial class NativeSymbolicator(
     DebugFileRepository files, IObjectStore objectStore, IHttpClientFactory clients, DebugFileReadGate gate,
-    SymbolizerCaches caches, SymbolizerMetrics metrics, ILogger<NativeSymbolicator> logger)
+    SymbolizerCaches caches, SymbolicationMetrics metrics, ILogger<NativeSymbolicator> logger)
 {
     public const int MaxImages = 4;
 
@@ -169,7 +170,7 @@ public sealed partial class NativeSymbolicator(
         NativeImages.IsAddressOnly(frame)
         && images.Place(frame) is { Image: { DebugId: { } id, ImageSize: long size and > 0 } } placed
         && placed.Offset < (ulong)size
-        && ElfDebugFile.ToStoredDebugId(id) is { } debugId
+        && DebugFileFormats.ToStoredDebugId(id) is { } debugId
             ? (debugId, placed.Offset)
             : null;
 }

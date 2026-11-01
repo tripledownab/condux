@@ -4,6 +4,7 @@ using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Setup;
 using Condux.Core.FixEngine;
 using Condux.GitHub;
+using Condux.Notifications;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -11,8 +12,8 @@ namespace Condux.ControlPlane.Endpoints;
 
 /// <summary>
 /// The two routes GitHub itself drives, which is why neither has a session behind it (#61): the webhook
-/// receiver, authenticated by its HMAC signature and handling the installation lifecycle plus merged
-/// pull requests, and the Setup URL redirect, authorized by our own signed connect state. What an org
+/// receiver, authenticated by its HMAC signature and handling the installation lifecycle, merged pull
+/// requests and new Dependabot alerts (<see cref="GithubAdvisoryWebhook"/>), and the Setup URL redirect, authorized by our own signed connect state. What an org
 /// reads back through its installation lives in <see cref="GithubInstallationEndpoints"/>, and starting
 /// or ending a connection in <see cref="GithubConnectEndpoints"/>. All behind the opt-in
 /// <see cref="GitHubAppConfig"/>; when the app isn't configured they return 404.
@@ -26,7 +27,8 @@ internal static class GithubEndpoints
                 async Task<Results<NoContent, UnauthorizedHttpResult, NotFound>> (
                     HttpContext http, GitHubAppConfig config, GithubInstallationRepository installations,
                     PostgresFixVerification fixVerification, PostgresCveFixVerification cveVerification,
-                    IFixStore fixes, ProjectEventNotifier projectEvents, ILoggerFactory loggerFactory) =>
+                    IFixStore fixes, ProjectEventNotifier projectEvents, ILoggerFactory loggerFactory,
+                    AdvisoryNoticeRepository advisoryNotices, AlertDispatcher alerts) =>
                 {
                     if (!config.Enabled)
                     {
@@ -37,6 +39,7 @@ internal static class GithubEndpoints
                     if (!GitHubWebhook.IsValidSignature(
                             config.Options!.WebhookSecret, body, http.Request.Headers["X-Hub-Signature-256"]))
                     {
+                        AuthChallenge.UseScheme(http, "X-Hub-Signature-256");
                         return TypedResults.Unauthorized();
                     }
 
@@ -55,6 +58,9 @@ internal static class GithubEndpoints
                                     projectEvents, loggerFactory.CreateLogger(nameof(GithubEndpoints)), projectId,
                                     http.RequestAborted);
                             }
+                            break;
+                        case "dependabot_alert":
+                            await GithubAdvisoryWebhook.HandleAsync(body, advisoryNotices, alerts);
                             break;
                     }
                     return TypedResults.NoContent();
@@ -77,7 +83,7 @@ internal static class GithubEndpoints
                         return TypedResults.NotFound();
                     }
 
-                    if (GithubConnectFlow.Verify(http, config) is not { } state)
+                    if (ConnectFlow.Verify(http, ConnectFlow.GitHub, config.Options!.WebhookSecret) is not { } state)
                     {
                         return TypedResults.BadRequest(new ErrorResponse("invalid_setup"));
                     }
@@ -87,7 +93,7 @@ internal static class GithubEndpoints
                     // user back to install it again.
                     return TypedResults.Redirect(oauth.AuthorizeUrl(
                         config.Options!.ClientId, config.OAuthRedirectUri!,
-                        GithubConnectFlow.Start(http, state.OrgId, state.ReturnPath, config, installed: true)));
+                        ConnectFlow.Start(http, ConnectFlow.GitHub, config.Options!.WebhookSecret, state.OrgId, state.ReturnPath, installed: true)));
                 })
             .WithName("githubSetup").WithTags("GitHub");
     }

@@ -7,6 +7,182 @@ with no other context, and keep production specifics, internal reasoning and com
 Because this file is tracked, the text is reviewed in a pull request like any other change rather than
 being typed into a release box at the moment everyone wants the release out.
 
+## 0.7.0
+**Five things want your attention before you upgrade.** If you run the production Compose overlay, its
+network now has IPv6 and an existing network cannot gain it in place. If a proxy sits in front of the
+relay, set `CONDUX_TRUSTED_PROXIES`. The suggested mappings endpoint returns an object instead of an
+array. Postgres migrations are now applied from a ledger. And the overlay caps Redpanda at a memory
+budget inside a 7 GB container limit.
+
+### AI agent failures from OpenTelemetry traces
+
+The relay accepts OTLP traces at `POST /api/<project>/v1/traces`, in both OTLP/HTTP encodings and with the
+same key, limits and error format as the logs endpoint. A span that ended in an error becomes an issue; a
+span that did not is answered and dropped without touching your monthly event allowance. A failure sets
+the error status on its own span and on the agent span above it, so when both arrive in one export only
+the deepest failed span is reported, once.
+
+Issues are keyed on the error type, the operation and the tool, model or agent, never on the error text.
+A failed model call is filed as a warning and any other failed span as an error, so a rate limit at your
+provider does not start an automatic fix. Of a span's attributes only a fixed list that names the
+operation becomes tags (model, provider, agent, tool, error type and the like). Prompts, completions,
+system instructions and tool arguments are dropped on arrival, and the error message is scrubbed like
+any other. The issue page shows an agent block with what failed, and the Developer guide has an
+OpenTelemetry entry. We ran the OpenAI Agents SDK, the OpenAI client and the MCP Python SDK with their
+OpenTelemetry instrumentations and test against what they sent.
+
+The agent is named from the nearest agent run above a failure in the same export, failed or not. The
+OpenTelemetry contrib OpenAI Agents instrumentation puts a placeholder agent name on every tool and model
+span, so a run that arrives in a later export leaves the placeholder on the failure. A failed agent run is keyed on its agent
+and not on the model it asked for. Traces are not stored and nothing is kept between exports.
+
+### Automatic fixes need something to start from
+
+With auto fix on, a new or regressed error starts a run only when one of its in app frames resolves to a
+repository relative path. A failed agent span usually has none, a library's frames are not the app's and
+an absolute build path needs a code mapping, so such an error gets an issue and no run, and the
+reserved allowance is handed back. Suggest fix by hand is unchanged. The check runs after
+symbolication, which can turn a bundled frame into a source path.
+
+### The relay reads bodies within a shared budget
+
+Both ingest endpoints read each body under a budget of bytes held at once, divided between organisations
+and, within one, between client addresses. A sender over its share gets `429` with `Retry-After`, and a
+body that stops arriving is cut off. Source map and native debug file uploads read under a similar budget
+and a minimum data rate. The `condux-sourcemaps` command retries a `429` or a `5xx`.
+
+**If a proxy sits in front of the relay, set `CONDUX_TRUSTED_PROXIES` to the proxy's address range.** The
+client address is the last `X-Forwarded-For` entry, and only from a peer in that list, which is empty by
+default and so trusts no one. Without it every client counts as the proxy, and one organisation's share
+is the whole of what its clients get. The production overlay trusts Docker's default address pools and
+the Helm chart exposes `relay.trustedProxies`.
+
+A body that is not the encoding it says it is, JSON that parses but cannot be read, and OTLP bodies the
+decoder cannot read now answer `400` where they answered `500`. A body past the size cap is answered in
+each endpoint's own format. The relay no longer decodes `Content-Encoding: br`: such a body is left
+undecoded and refused, and `gzip` and `deflate` are unchanged.
+
+### A NUL character no longer fails a write
+
+Postgres refuses `U+0000` in text and in `jsonb`, and it is valid JSON, so an event carrying one could
+slow the consumer's drain. An event is now kept with the character replaced by `U+FFFD`, and so is the text
+a fix run or a runner report writes. A control plane request carrying one is refused with
+`400 text_not_storable`, including on `/api/mcp`.
+
+### Postgres migrations apply from a ledger
+
+Every migration used to run on every deploy, so each had to be safe to repeat and each paid for it. The
+runner now records each file it applies with a hash of its SQL in `condux_migrations`, and an unchanged
+database runs nothing. New files that sort after every recorded one run alone. Anything else, such as an
+edited file or a new one sorting between recorded ones, replays every file from the first, as before, and
+a replay that fails part way is replayed again by the next run. **The first run after you upgrade finds no
+ledger and replays everything once.** Deploys also build, pull and migrate before they swap any service,
+so a failed migration leaves the previous release serving.
+
+If you use the Helm chart, the migrations job now accepts `GSS Encryption Mode` in your connection string
+(`Disable`, `Prefer` or `Require`) and hands it to `psql`. It used to fail on it. It still fails on a
+security setting it cannot translate, such as `SSL Negotiation` or `Require Auth`, instead of dropping it
+and connecting with `sslmode=prefer`.
+
+### Linear tickets
+
+**Opt in.** Set `CONDUX_LINEAR_CLIENT_ID`, `CONDUX_LINEAR_CLIENT_SECRET` and
+`CONDUX_LINEAR_OAUTH_REDIRECT_URI` (and `CONDUX_SECRET_KEY`, which seals the grant) and a project can open
+Linear issues from its Condux issues, by hand or when a new error arrives, with labels. Unset, the
+routes answer `404` and the dashboard shows nothing. The callback points at the API, not the dashboard.
+**Setting only some of the three stops the control plane at startup**, and so does setting them without
+`CONDUX_SECRET_KEY`. With Helm, use `linear.enabled`, `linear.clientId`, `linear.clientSecret` and
+`linear.oauthRedirectUri`.
+
+### Alerts for new dependency advisories
+
+A dependency advisory GitHub raises on a linked repository fires the project's alert rules that subscribe
+to the new advisory event, once for each repository, advisory, package and day. **Subscribe the GitHub App
+to the Dependabot alert event**, which needs its Dependabot alerts permission. The CVE findings list also
+says why it could not be read: no GitHub connection, alerts switched off for the repository, or a missing
+permission.
+
+### Flutter on Apple platforms, and obfuscated class names
+
+Upload the DWARF file inside an app's dSYM to `POST /api/debug-files` and an iOS crash resolves to Dart
+source. A universal file is stored one architecture per build. The Flutter entry in the Developer guide has
+the CI step.
+
+`POST /api/dart-symbol-maps?debugId=` takes the JSON `--save-obfuscation-map` wrote, with the same release
+token. A read then restores obfuscated exception types and the names in `Instance of '…'`. Grouping and
+the stored title stay obfuscated, so the issue list does too. A map is stored one row per name under the
+newest debug file of its debug id and counts toward the organisation's upload quota.
+
+### Source maps and symbolication
+
+A source map is read token by token and not as a JSON document, so a map padded with values it does not
+use costs what it weighs. A map's `ignoreList` marks lines that are not the app's. The consumer's automatic fix waits
+at most two seconds for symbols, so ingest is never held for long. Symbolication failures and timings are
+exported as metrics when you export telemetry.
+
+### Times, and counts that depend on them
+
+An envelope's `sent_at` corrects an event's time by the sender's clock drift, as Sentry does. An issue's
+lifecycle is timed by Condux's clock rather than the event's: the new issues badge, "new" and "regressed"
+in the weekly summary and an issue's `activated_at` no longer move when an event arrives late. The
+weekly summary's volume and top issues count by when Condux received an event. ClickHouse migration `0006`
+adds the table and backfills 15 days from the hourly counts once.
+
+### Suggest from errors, frame links and releases
+
+**`GET .../repos/{repoId}/suggested-mappings` returns `{suggestions, outcome}` instead of an array**, and
+the outcome says why a list is empty: nothing connected, no frames, no match, ambiguous, already mapped,
+conflicting, or unavailable. A frame that already names a repository file proposes the identity rule, a
+rule that would send a sampled frame to the wrong file is split down to what the sample supports, and a
+frame with two equally good matches proposes nothing.
+
+The links from stack frames to GitHub are now built by the server (`frameLinks` on the issue detail), from
+every linked repository's code mappings, and name the commit the event's release was recorded at when
+that is a valid commit id. Recording a release, by token or from the dashboard, now trims the version and
+commit, refuses a blank version and requires a commit of 7 to 64 hexadecimal digits.
+
+### Smaller changes
+
+- Every `401` carries a `WWW-Authenticate` challenge, naming what was refused.
+- The OpenAPI document's only server is the relative `/`, so a client generated from it does not send
+  credentials to an `http` address.
+- A deployed build reports the product version, not an SDK tag.
+- The Conductor's sandbox image, if you set `CONDUX_SANDBOX_IMAGE`, should name a release tag: the daemon
+  pulls it once and never again.
+
+### Operations
+
+**Network.** The production overlay sets `enable_ipv6` on its network, so an IPv6 client reaches the edge
+with its own address and not the Docker gateway's. An existing network cannot gain IPv6 in place and a
+deploy cannot recreate one while the other services hold it, so take the stack down once (never with `-v`)
+before the deploy that carries it.
+
+**Memory.** Redpanda is capped at a memory budget inside a container limit with no swap, because it
+otherwise budgets every byte it can see. The base file uses 1 GB inside 1280 MB; the production overlay
+uses 5600 MB inside 7 GB, so **lower the overlay's `--memory` and limit if your host has less than 8 GB**.
+`deploy/check-redpanda-budget.py` refuses a render where the two files differ by anything but that value.
+
+**Object storage.** Optionally give the consumer its own read only key with `CONDUX_S3_READ_ACCESS_KEY`
+and `CONDUX_S3_READ_SECRET_KEY`. It is then handed that key instead of the shared one, which can write and
+delete. Restrict the key at your provider to `s3:GetObject` and `s3:ListBucket` first. Set both or neither.
+With Helm, set `objectStore.readOnlyKey`, `objectStore.readAccessKey` and `objectStore.readSecretKey`.
+
+**Helm ingress.** The ingress now also routes `/openapi` to the control plane, beside `/api` and
+`/.well-known/mcp`, so the OpenAPI document is served from the dashboard host. If you use your own ingress
+or proxy, route it too.
+
+**Images.** Every third party image is pinned to a release, because a host never resolves a floating tag
+again after its first pull, and Dependabot proposes the bumps. The backend images are on .NET 10.0.14 and
+the dashboard on Node 22.23.4, each carrying a fix for a Brotli decoder flaw, and the dashboard on Next.js
+16.4.1 past its published advisories. Npgsql moved to 10, which tries GSSAPI unless the connection string
+says `GSS Encryption Mode=Disable`; the bundled files say it.
+
+### Migrations
+
+Postgres migrations `0065` to `0069` run on upgrade. `0065` adds the lifecycle columns, `0066` the
+obfuscation map table, `0067` and `0068` the Linear tables and `0069` the advisory notices. ClickHouse
+migration `0006` runs too.
+
 ## 0.6.0
 **Four things want your attention before you upgrade.** There is a new service, `symbolizer`, and it
 needs Docker Engine 28.0 or later under Compose and a new image under Helm. The monthly event allowance

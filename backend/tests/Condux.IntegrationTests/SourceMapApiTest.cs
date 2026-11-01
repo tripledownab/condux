@@ -12,8 +12,9 @@ namespace Condux.IntegrationTests;
 /// <summary>
 /// Source-map upload over HTTP (ADR-0028): CI mints a release token, then a cookie-less client uploads a
 /// .map with only <c>Authorization: Bearer</c>; the bytes land in the (faked) object store under the
-/// debugId-derived key, a row indexes them, and the release lists them back. Also covers a bad token (401)
-/// and the feature being off when object storage is unconfigured (404).
+/// debugId-derived key, a row indexes them, and the release lists them back. Also covers a bad token (401),
+/// an empty body (400), one past the cap (413) and the feature being off when object storage is
+/// unconfigured (404).
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<PostgresFixture>
@@ -85,14 +86,10 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
         var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
         var token = await MintTokenAsync(admin, projectId);
 
-        try
-        {
-            await Bearer(app, token).PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js&debugId=lost", MapContent());
-        }
-        catch (HttpRequestException)
-        {
-            // The test host surfaces the store's exception; what matters is what was recorded first.
-        }
+        // The store's exception reaches the test (ServerExceptions); what matters is what was recorded first.
+        var failed = await Assert.ThrowsAsync<HttpRequestException>(() => Bearer(app, token)
+            .PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js&debugId=lost", MapContent()));
+        Assert.Equal(UnreachableMapStore.Message, failed.Message);
 
         Assert.Equal(1L, await ScalarAsync(
             $"SELECT count(*) FROM sourcemap_artifacts WHERE object_key = 'sourcemaps/{projectId}/by-debug-id/lost'"));
@@ -145,6 +142,21 @@ public sealed class SourceMapApiTest(PostgresFixture pg) : IClassFixture<Postgre
         notAMap.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         var resp = await ci.PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js", notAMap);
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Upload_WithEmptyBody_Returns400_AndPastTheCap_Returns413()
+    {
+        var app = AppWithStore(pg.ConnectionString, new RecordingObjectStore());
+        var (admin, projectId) = await ProvisionAsync(app, pg.ConnectionString);
+        var ci = Bearer(app, await MintTokenAsync(admin, projectId));
+
+        var empty = await ci.PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js", new ByteArrayContent([]));
+        var tooLarge = await ci.PostAsync("/api/sourcemaps?release=1.0.0&filename=app.js",
+            new ByteArrayContent(new byte[25 * 1024 * 1024 + 1]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, tooLarge.StatusCode);
     }
 
     [Fact]

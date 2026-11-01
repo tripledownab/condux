@@ -31,7 +31,8 @@ externalStores:
 
 # Credentials. For production set `existingSecret` to a Secret you created with these keys
 # (CONDUX_POSTGRES, CONDUX_CLICKHOUSE_USER, CONDUX_CLICKHOUSE_PASSWORD, and — if used — CONDUX_SECRET_KEY,
-# CONDUX_ANTHROPIC_API_KEY, CONDUX_GITHUB_WEBHOOK_SECRET, CONDUX_GITHUB_CLIENT_SECRET, github-app.pem),
+# CONDUX_ANTHROPIC_API_KEY, CONDUX_GITHUB_WEBHOOK_SECRET, CONDUX_GITHUB_CLIENT_SECRET, github-app.pem,
+# CONDUX_LINEAR_CLIENT_SECRET, CONDUX_S3_ACCESS_KEY, CONDUX_S3_SECRET_KEY, CONDUX_S3_READ_ACCESS_KEY, CONDUX_S3_READ_SECRET_KEY),
 # and leave the inline values empty. For dev you may inline them and the chart creates the Secret.
 #
 # This list is a copy of what the deployments reference, and nothing compares the two: a key added to a
@@ -39,7 +40,7 @@ externalStores:
 # When you add one, add it here.
 secret:
   existingSecret: ""
-  postgresConnectionString: "" # e.g. Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require
+  postgresConnectionString: "" # e.g. Host=pg;Username=condux;Password=...;Database=condux;SSL Mode=Require;GSS Encryption Mode=Disable
   clickhouseUser: ""
   clickhousePassword: ""
   secretKey: ""        # base64 AES-256 master key for the BYO-key registry (#65); empty → those routes 404
@@ -123,6 +124,16 @@ github:
   clientSecret: ""
   oauthRedirectUri: ""
 
+# Linear tickets (ADR-0053), opt in. Register an OAuth application in your Linear workspace whose callback
+# is oauthRedirectUri, pointing at the API, e.g. https://app.example.com/api/linear/oauth/callback. The
+# grant is stored encrypted, so it also needs secret.secretKey (or CONDUX_SECRET_KEY in existingSecret),
+# and the control plane refuses to start without one.
+linear:
+  enabled: false
+  clientId: ""
+  clientSecret: ""          # stored in the Secret as CONDUX_LINEAR_CLIENT_SECRET
+  oauthRedirectUri: ""
+
 # Source-map object store (ADR-0028) — opt-in, BYO S3-compatible bucket. When enabled the control-plane's
 # /api/sourcemaps upload routes activate, and the control-plane and the consumer both read maps from it to
 # symbolicate the frames a fix request sends the Conductor; the access key + secret are stored in the Secret. Leave the
@@ -135,6 +146,15 @@ objectStore:
   serverSideEncryption: "" # e.g. AES256 for SSE-S3; empty relies on the bucket's default encryption
   accessKey: ""            # stored in the Secret as CONDUX_S3_ACCESS_KEY
   secretKey: ""            # stored in the Secret as CONDUX_S3_SECRET_KEY
+  # A second key for the consumer, which only reads the bucket and handles untrusted events. When true the
+  # consumer is given CONDUX_S3_READ_ACCESS_KEY and CONDUX_S3_READ_SECRET_KEY from the Secret (inlined below,
+  # or in existingSecret) INSTEAD of the shared key, which can write and delete, so it never holds that key;
+  # the control-plane keeps it. Restrict the read key to reading and listing this bucket at your
+  # provider (s3:GetObject and s3:ListBucket: without the list permission a missing object answers 403,
+  # which reads as a failure rather than as absent). False keeps the consumer on the shared key.
+  readOnlyKey: false
+  readAccessKey: ""        # stored in the Secret as CONDUX_S3_READ_ACCESS_KEY
+  readSecretKey: ""        # stored in the Secret as CONDUX_S3_READ_SECRET_KEY
 
 # A pre-install / pre-upgrade hook Job that applies the Postgres + ClickHouse migrations (baked into the
 # migrations image from the repo — single-sourced, idempotent). Disable if you apply migrations yourself.
@@ -156,6 +176,15 @@ relay:
   replicas: 3
   port: 9000
   resources: {}
+  # Comma-separated CIDR ranges your ingress connects to the relay from (CONDUX_TRUSTED_PROXIES). From a
+  # peer in these ranges the relay takes the client to be the LAST X-Forwarded-For entry, and gives each
+  # client address its own share of the memory an organisation's ingest bodies may hold. Empty trusts no
+  # one, so a client can never choose its address, but every client then counts as the ingress, and all
+  # of an organisation's senders share one share. List the ingress only if its last entry is the peer it
+  # saw. ingress-nginx writes that by default; with use-forwarded-headers or enable-real-ip it takes the
+  # client from the header it received, trusting proxy-real-ip-cidr (0.0.0.0/0 by default), so narrow
+  # that to your load balancer or a client chooses the address it is charged as.
+  trustedProxies: ""
   autoscaling:
     enabled: true
     minReplicas: 3

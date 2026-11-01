@@ -6,6 +6,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { sendEvent } from "@condux/core";
 
 /** Every `*.js.map` under `dir`, recursively. */
 export async function findSourceMaps(dir: string): Promise<string[]> {
@@ -78,8 +79,9 @@ export async function uploadOneMap(options: {
   debugId?: string;
   body: string;
   fetch?: typeof fetch;
+  /** Injectable wait between attempts, so retries are tested without real timers. */
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const doFetch = options.fetch ?? fetch;
   const query = new URLSearchParams({ release: options.release, filename: options.filename });
   if (options.dist) {
     query.set("dist", options.dist);
@@ -88,16 +90,15 @@ export async function uploadOneMap(options: {
     query.set("debugId", options.debugId);
   }
 
-  try {
-    const response = await doFetch(`${options.url.replace(/\/$/, "")}/api/sourcemaps?${query}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${options.token}`, "content-type": "application/json" },
-      body: options.body,
-    });
-    return { ok: response.status >= 200 && response.status < 300, status: response.status };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
+  // Sent the way an event is, so it is retried the same way: a 429 (the server is holding as many uploads
+  // as it will at once, and says when to come back) or a 5xx is tried again, and nothing here throws.
+  const result = await sendEvent(
+    `${options.url.replace(/\/$/, "")}/api/sourcemaps?${query}`,
+    { authorization: `Bearer ${options.token}`, "content-type": "application/json" },
+    options.body,
+    { fetch: options.fetch, sleep: options.sleep },
+  );
+  return { ok: result.ok, status: result.status, error: result.error };
 }
 
 /** The TC39 debugId a stamped map carries, when it does. Shared with the build plugin's orphan pass. */

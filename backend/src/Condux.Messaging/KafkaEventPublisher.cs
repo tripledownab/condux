@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.Messaging;
 using Confluent.Kafka;
@@ -24,20 +23,15 @@ public sealed class KafkaEventPublisher : IEventPublisher, IDisposable
     }
 
     public async Task PublishAsync(
-        string projectId, Event e, int retentionDays, CancellationToken cancellationToken = default)
+        string projectId, Event e, int retentionDays, long sentAtUnixMs, CancellationToken cancellationToken = default)
     {
-        var value = JsonSerializer.Serialize(e);
-        var message = new Message<string, string>
+        var value = EventJson.ToJson(e);
+        var headers = new Headers { { EventHeaders.RetentionDays, ToBytes(retentionDays) } };
+        if (sentAtUnixMs != 0)
         {
-            Key = projectId,
-            Value = value,
-            Headers =
-            [
-                new Header(
-                    EventHeaders.RetentionDays,
-                    Encoding.UTF8.GetBytes(retentionDays.ToString(CultureInfo.InvariantCulture))),
-            ],
-        };
+            headers.Add(EventHeaders.SentAt, ToBytes(sentAtUnixMs));
+        }
+        var message = new Message<string, string> { Key = projectId, Value = value, Headers = headers };
         await _producer.ProduceAsync(_topic, message, cancellationToken);
     }
 
@@ -63,6 +57,8 @@ public sealed class KafkaEventPublisher : IEventPublisher, IDisposable
             return false;
         }
     }
+
+    private static byte[] ToBytes(long value) => Encoding.UTF8.GetBytes(value.ToString(CultureInfo.InvariantCulture));
 
     public void Dispose() => _producer.Dispose();
 }

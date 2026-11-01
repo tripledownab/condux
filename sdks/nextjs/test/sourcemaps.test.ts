@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { findSourceMaps } from "../src/map-files.ts";
+import { findSourceMaps, uploadOneMap } from "../src/map-files.ts";
 import { uploadSourceMaps } from "../src/sourcemaps.ts";
 
 // A build-output fixture: two .js.map files nested in a chunks dir, plus non-maps that must be ignored.
@@ -75,12 +75,41 @@ test("a pointer-paired map uploads under the CHUNK's name, with the stamped debu
 
 test("uploadSourceMaps reports a failed upload without throwing", async () => {
   const dir = await buildFixture();
-  const { fetch } = recordingFetch(401);
+  const { fetch, calls } = recordingFetch(401);
   const result = await uploadSourceMaps({ dir, url: "https://x", release: "v1", token: "bad", fetch });
   assert.equal(result.uploaded, 0);
   assert.equal(result.failed, 2);
   assert.equal(result.files[0].ok, false);
   assert.equal(result.files[0].status, 401);
+  // A refusal is the caller's to fix, so it is not sent again.
+  assert.equal(calls.length, 2);
+});
+
+test("a map turned away for now is sent again once the server's Retry-After has passed", async () => {
+  const statuses = [429, 201];
+  const calls: string[] = [];
+  const fetch = (async (url: string) => {
+    calls.push(url);
+    const status = statuses.shift()!;
+    return { status, headers: { get: (name: string) => (name === "retry-after" ? "5" : null) } };
+  }) as unknown as typeof globalThis.fetch;
+  const waits: number[] = [];
+
+  const outcome = await uploadOneMap({
+    url: "https://x",
+    token: "condux_rel_x",
+    release: "v1",
+    filename: "app.js",
+    body: '{"version":3,"mappings":"AAAA"}',
+    fetch,
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+
+  assert.deepEqual(outcome, { ok: true, status: 201, error: undefined });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(waits, [5000]);
 });
 
 test("a Next build's server output uploads through the server half, never under a bare file name", async () => {

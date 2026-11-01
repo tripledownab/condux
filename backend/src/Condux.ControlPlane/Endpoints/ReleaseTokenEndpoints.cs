@@ -54,9 +54,13 @@ internal static class ReleaseTokenEndpoints
                     {
                         return TypedResults.Unauthorized();
                     }
-                    if (string.IsNullOrWhiteSpace(req.Version) || string.IsNullOrWhiteSpace(req.CommitSha))
+                    // Plain text, like this route's other refusals, since CI reads it from a curl log.
+                    var (recordable, error) = ReleaseRecords.ToRecordable(req.Version, req.CommitSha);
+                    if (recordable is null)
                     {
-                        return TypedResults.BadRequest("version and commitSha are required");
+                        return TypedResults.BadRequest(error == ReleaseRecords.InvalidVersion
+                            ? "version is required"
+                            : "commitSha must be a commit SHA: 7 to 64 hex characters");
                     }
 
                     var links = await repos.ListByProjectAsync(projectId);
@@ -67,7 +71,7 @@ internal static class ReleaseTokenEndpoints
                             : "specify repo as owner/name; this project has multiple linked repositories");
                     }
 
-                    var release = await releases.RecordAsync(projectId, link.Id, req.Version.Trim(), req.CommitSha.Trim());
+                    var release = await releases.RecordAsync(projectId, link.Id, recordable);
                     return TypedResults.Created($"/api/releases/{release.Id}", release);
                 })
             .WithName("recordReleaseViaToken").WithTags("ReleaseTokens");

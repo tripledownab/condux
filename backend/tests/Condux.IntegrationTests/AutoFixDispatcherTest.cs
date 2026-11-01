@@ -4,6 +4,7 @@ using System.Text;
 using Condux.Core.Alerting;
 using Condux.Core.Events;
 using Condux.Core.FixEngine;
+using Condux.Core.Repos;
 using Condux.Core.Grouping;
 using Condux.Core.OrgNotifications;
 using Condux.Core.Plans;
@@ -64,7 +65,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         new PostgresAiFixQuota(pg.ConnectionString), new PostgresAiFixSpend(pg.ConnectionString), publisher,
         new PostgresJobLeaseStore(pg.ConnectionString), new PostgresFixStore(pg.ConnectionString),
         PauseNotifier(pauseSink),
-        new EventSymbolication(symbolicator, native: null, NullLogger<EventSymbolication>.Instance),
+        new EventSymbolication(symbolicator, native: null, dartTypes: null, TestMetrics.ToSymbolicationMetrics(), NullLogger<EventSymbolication>.Instance),
         NullLogger<AutoFixDispatcher>.Instance);
 
     // An org at the given tier + mode, a project, and optionally a linked repo + GitHub installation.
@@ -98,6 +99,65 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         return (org.Id, project.Id, installationId);
     }
 
+    // An event whose app frame has a repo-relative path, so a run has somewhere to start. Without one the
+    // dispatcher starts nothing, and a test of any other rule would pass for that reason instead.
+    private static Event Failing(Level level, string? release = null) => new()
+    {
+        EventId = "e1",
+        Level = level,
+        Release = release,
+        Exceptions =
+        [
+            new ExceptionValue
+            {
+                Type = "ValueError",
+                Stacktrace = new Stacktrace
+                {
+                    Frames = [new Frame { InApp = true, Filename = "app/views.py", Function = "checkout", Lineno = 12 }],
+                },
+            },
+        ],
+    };
+
+    [Fact]
+    public async Task An_issue_with_nothing_in_the_repository_to_start_from_starts_no_run()
+    {
+        // A failed agent span carries no frames, and a library's own frames are not the app's. Neither names
+        // a file in the repository, so an unattended run would have nothing to read: it is not started, and
+        // the run reserved for it is handed back.
+        var (orgId, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
+        var pub = new CapturingFixPublisher();
+        var library = new Event
+        {
+            Level = Level.Error,
+            Exceptions =
+            [
+                new ExceptionValue
+                {
+                    Type = "ValueError",
+                    Stacktrace = new Stacktrace
+                    {
+                        Frames = [new Frame { InApp = false, Filename = "site-packages/lib.py", Lineno = 3 }],
+                    },
+                },
+            ],
+        };
+
+        foreach (var (fingerprint, sample) in new[]
+        {
+            ("fp-agent-span", new Event { Level = Level.Error, Exceptions = [new ExceptionValue { Type = "execute_tool boom" }] }),
+            ("fp-library-only", library),
+        })
+        {
+            var issue = await NewIssueAsync(projectId, fingerprint, Level.Error);
+            await Dispatcher(pub).DispatchAsync(projectId, issue, sample);
+            Assert.Empty(await new PostgresFixStore(pg.ConnectionString).ListByIssueAsync(issue.Id));
+        }
+
+        Assert.Empty(pub.Jobs);
+        Assert.Equal(0, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
+    }
+
     private async Task<UpsertResult> NewIssueAsync(long projectId, string fingerprint, Level level) =>
         await new IssueRepository(pg.ConnectionString).UpsertAsync(
             projectId, new Grouping(fingerprint, "Boom", "run"), level, DateTimeOffset.UtcNow);
@@ -110,7 +170,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var upsert = await NewIssueAsync(projectId, "fp-auto", Level.Error);
         var pub = new CapturingFixPublisher();
 
-        await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { EventId = "e1", Level = Level.Error });
+        await Dispatcher(pub).DispatchAsync(projectId, upsert, Failing(Level.Error));
 
         var job = Assert.Single(pub.Jobs);
         Assert.Equal(upsert.Id, job.IssueId);
@@ -129,19 +189,19 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         // Manual mode: even a new error issue is left for a human to trigger.
         var (_, manualProject, _) = await SeedAsync((int)Tier.Team, mode: 0, withRepo: true, withInstall: true);
         await Dispatcher(pub).DispatchAsync(manualProject,
-            await NewIssueAsync(manualProject, "fp-manual", Level.Error), new Event { Level = Level.Error });
+            await NewIssueAsync(manualProject, "fp-manual", Level.Error), Failing(Level.Error));
         Assert.Empty(pub.Jobs);
 
         // Auto mode but a warning (below error) — auto-fix skips low-value issues.
         var (_, autoProject, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         await Dispatcher(pub).DispatchAsync(autoProject,
-            await NewIssueAsync(autoProject, "fp-warn", Level.Warning), new Event { Level = Level.Warning });
+            await NewIssueAsync(autoProject, "fp-warn", Level.Warning), Failing(Level.Warning));
         Assert.Empty(pub.Jobs);
 
         // Auto mode + error but no repo linked — nowhere to open a PR.
         var (_, noRepoProject, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: false, withInstall: true);
         await Dispatcher(pub).DispatchAsync(noRepoProject,
-            await NewIssueAsync(noRepoProject, "fp-norepo", Level.Error), new Event { Level = Level.Error });
+            await NewIssueAsync(noRepoProject, "fp-norepo", Level.Error), Failing(Level.Error));
         Assert.Empty(pub.Jobs);
     }
 
@@ -170,7 +230,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var pub = new CapturingFixPublisher();
         var sink = new CapturingNotifier();
         await Dispatcher(pub, sink).DispatchAsync(projectId,
-            await NewIssueAsync(projectId, "fp-capped", Level.Error), new Event { Level = Level.Error });
+            await NewIssueAsync(projectId, "fp-capped", Level.Error), Failing(Level.Error));
 
         Assert.Empty(pub.Jobs); // over the cap → auto-fix skips
         var notice = Assert.Single(sink.Sent); // and the org is told why it paused
@@ -198,7 +258,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var pub = new CapturingFixPublisher();
         var sink = new CapturingNotifier();
         await Dispatcher(pub, sink).DispatchAsync(projectId,
-            await NewIssueAsync(projectId, "fp-noallowance", Level.Error), new Event { Level = Level.Error });
+            await NewIssueAsync(projectId, "fp-noallowance", Level.Error), Failing(Level.Error));
 
         Assert.Empty(pub.Jobs); // out of allowance → auto-fix skips
         var notice = Assert.Single(sink.Sent);
@@ -224,6 +284,33 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
     }
 
     [Fact]
+    public async Task A_frame_that_names_a_repository_path_only_once_symbolicated_still_starts_a_run()
+    {
+        // The raw frame is a URL, which is no repo-relative path, so the check on scoped paths has to run on
+        // the symbolicated context. Run on the stored frames, it would skip a crash its map makes fixable.
+        var (projectId, bundled) = await SeedBundledAsync();
+        var frame = bundled.Exceptions[0].Stacktrace!.Frames[0];
+        var raw = bundled with
+        {
+            Exceptions =
+            [
+                bundled.Exceptions[0] with
+                {
+                    Stacktrace = new Stacktrace { Frames = [frame with { Filename = "https://app/_next/chunk.js" }] },
+                },
+            ],
+        };
+        var pub = new CapturingFixPublisher();
+
+        await Dispatcher(pub, symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString),
+                new InMemoryMapStore(Encoding.UTF8.GetBytes(BundledMap), BundledMapKey)))
+            .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled-url", Level.Error), raw);
+
+        Assert.Equal(["web/src/cart.ts"], Assert.Single(pub.Jobs).ScopedPaths);
+    }
+
+    [Fact]
     public async Task A_map_store_that_fails_still_requests_the_fix_on_the_raw_frames()
     {
         var (projectId, bundled) = await SeedBundledAsync();
@@ -233,6 +320,26 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
                 new SourceMapArtifactRepository(pg.ConnectionString), new UnreachableMapStore()))
             .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled-down", Level.Error), bundled);
 
+        Assert.Equal(["chunk.js"], Assert.Single(pub.Jobs).ScopedPaths);
+    }
+
+    [Fact]
+    public async Task A_map_store_that_never_answers_costs_the_drain_its_own_short_wait()
+    {
+        // The drain handles one event at a time, so it waits less for maps than the issue page does (whose
+        // longer wait FrameSymbolicatorTest pins), then requests the fix on the raw frames.
+        var (projectId, bundled) = await SeedBundledAsync();
+        var store = new HangingMapStore();
+        var pub = new CapturingFixPublisher();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        await Dispatcher(pub, symbolicator: new FrameSymbolicator(
+                new SourceMapArtifactRepository(pg.ConnectionString), store))
+            .DispatchAsync(projectId, await NewIssueAsync(projectId, "fp-bundled-hung", Level.Error), bundled)
+            .WaitAsync(Bound);
+
+        Assert.True(store.Reached.Task.IsCompleted);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"the drain waited {clock.Elapsed} for a store that never answered");
         Assert.Equal(["chunk.js"], Assert.Single(pub.Jobs).ScopedPaths);
     }
 
@@ -291,7 +398,7 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
 
         var issue = await NewIssueAsync(projectId, "fp-publish-slow", Level.Error);
         var dispatch = Dispatcher(publisher).DispatchAsync(
-            projectId, issue, new Event { Level = Level.Error }, shutdown.Token);
+            projectId, issue, Failing(Level.Error), shutdown.Token);
         await publisher.Reached.Task.WaitAsync(Bound);
         await shutdown.CancelAsync();
         await dispatch.WaitAsync(Bound);
@@ -310,8 +417,8 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var upsert = await NewIssueAsync(projectId, "fp-auto-twice", Level.Error);
         var pub = new CapturingFixPublisher();
 
-        await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { Level = Level.Error });
-        await Dispatcher(pub).DispatchAsync(projectId, upsert, new Event { Level = Level.Error });
+        await Dispatcher(pub).DispatchAsync(projectId, upsert, Failing(Level.Error));
+        await Dispatcher(pub).DispatchAsync(projectId, upsert, Failing(Level.Error));
 
         Assert.Single(pub.Jobs);
         Assert.Equal(1, await new PostgresAiFixQuota(pg.ConnectionString).GetUsedAsync(orgId, DateTimeOffset.UtcNow));
@@ -379,12 +486,13 @@ public sealed class AutoFixDispatcherTest(PostgresFixture pg) : IClassFixture<Po
         var (_, projectId, _) = await SeedAsync((int)Tier.Team, mode: 1, withRepo: true, withInstall: true);
         // Record the release the event will carry → its commit, so the fix prompt gets the bisect hint (#144).
         var repo = (await new RepoLinkRepository(pg.ConnectionString).ListByProjectAsync(projectId))[0];
-        await new ReleaseRepository(pg.ConnectionString).RecordAsync(projectId, repo.Id, "1.4.2", "abc123def456");
+        await new ReleaseRepository(pg.ConnectionString).RecordAsync(
+            projectId, repo.Id, ReleaseRecords.ToRecordable("1.4.2", "abc123def456").Release!);
         var upsert = await NewIssueAsync(projectId, "fp-release", Level.Error);
         var pub = new CapturingFixPublisher();
 
         await Dispatcher(pub).DispatchAsync(
-            projectId, upsert, new Event { Level = Level.Error, Release = "1.4.2" });
+            projectId, upsert, Failing(Level.Error, release: "1.4.2"));
 
         var job = Assert.Single(pub.Jobs);
         Assert.Contains("first appeared in release 1.4.2, built from commit abc123def456", job.Prompt);

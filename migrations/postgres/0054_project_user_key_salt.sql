@@ -24,7 +24,7 @@
 -- Per-tier retention expires the old rows within 30 days on Free and 90 on paid, so it resolves itself.
 --
 -- REPLAY-SAFE WITHOUT A GUARD, unlike the backfill in 0052, and for a reason worth stating because the
--- two look alike. 0052 backfilled with an explicit UPDATE, which run.sh would re-run on every deploy,
+-- two look alike. 0052 backfilled with an explicit UPDATE, which a replay of the file would run again,
 -- so it needed guarding. This backfills through the column DEFAULT instead, and ADD COLUMN IF NOT
 -- EXISTS skips the whole subcommand once the column is there, so a replay cannot re-salt a row. A
 -- project that kept its salt keeps every user key it has already derived.

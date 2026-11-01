@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Xunit;
 
 namespace Condux.IntegrationTests.Fixtures;
 
@@ -27,7 +26,7 @@ internal static class McpRpc
     {
         var resp = await client.PostAsJsonAsync("/api/mcp",
             new { jsonrpc = "2.0", id = 1, method, @params = prms });
-        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        await resp.EnsureStatusAsync(HttpStatusCode.OK);
         return await resp.Content.ReadFromJsonAsync<JsonElement>();
     }
 

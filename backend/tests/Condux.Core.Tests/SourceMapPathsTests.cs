@@ -18,6 +18,9 @@ public class SourceMapPathsTests
     [InlineData("webpack://_N_E/?1234", "webpack://_N_E/?1234")]
     [InlineData("src/already/clean.ts", "src/already/clean.ts")]
     [InlineData("https://cdn.example/app.js", "https://cdn.example/app.js")]
+    // Vite 8.3.4, read from a real build: sources relative to the map in dist/assets/. Left as they are, since
+    // which directory the climb ends in is the build's layout, which a code mapping states.
+    [InlineData("../../src/App.tsx", "../../src/App.tsx")]
     public void A_bundler_source_becomes_the_repository_path_it_names(string source, string expected)
     {
         Assert.Equal(expected, SourceMapPaths.ToRepoPath(source));
@@ -35,6 +38,21 @@ public class SourceMapPathsTests
     [InlineData("turbopack:///[project]/web/src/components/form.tsx", false)]
     [InlineData("webpack://_N_E/./src/lib/db.ts", false)]
     [InlineData("webpack:///./webpack/config.ts", false)] // an app folder that happens to be called webpack
+    // webpack 5, read from builds: an external Next's own list leaves out, a module aliased to false, and the
+    // startup modules written when the runtime is its own chunk.
+    [InlineData("webpack://@condux/web/external commonjs2 \"fs\"", true)]
+    [InlineData("webpack:///ignored|/tmp/app/src|fs", true)]
+    [InlineData("webpack:///webpack/startup", true)]
+    [InlineData("webpack:///webpack/before-startup", true)]
+    [InlineData("webpack:///webpack/after-startup", true)]
+    [InlineData("webpack:///./webpack/startup.ts", false)]
+    // webpack 4 names a file in its own package (webpack)/..., per its RequestShortener.
+    [InlineData("webpack:///(webpack)/buildin/global.js", true)]
+    [InlineData("webpack:///./external/client.ts", false)]
+    [InlineData("webpack:///./src/ignored.ts", false)]
+    // Vite 8.3.4's map-relative sources: installed code still reads as installed after the climb.
+    [InlineData("../../node_modules/react/cjs/react.production.js", true)]
+    [InlineData("../../src/App.tsx", false)]
     public void Installed_and_bundler_runtime_code_is_not_the_apps_own(string source, bool dependency)
     {
         Assert.Equal(dependency, SourceMapPaths.IsDependency(SourceMapPaths.ToRepoPath(source)));

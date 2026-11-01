@@ -54,6 +54,41 @@ public class NotifierTests
         Assert.Equal("TypeError: boom", root.GetProperty("title").GetString());
         Assert.Equal("app.py", root.GetProperty("culprit").GetString());
         Assert.Equal("acme", root.GetProperty("project").GetString());
+        Assert.Equal("0192f000-0000-7000-8000-000000000000", root.GetProperty("issueId").GetString());
+    }
+
+    // An advisory has no issue behind it, so a receiver gets null rather than an all-zero id it would
+    // try to open.
+    [Fact]
+    public async Task Webhook_AdvisoryNamesItsTriggerAndNoIssue()
+    {
+        var handler = new CapturingHandler();
+        var notifier = new WebhookNotifier(new StubHttpClientFactory(handler));
+        var channel = Target with { Channel = NotificationChannel.Webhook, Target = "https://hooks.test/w" };
+
+        await notifier.SendAsync(channel, Notification(AlertEventType.Advisory) with { IssuePublicId = Guid.Empty });
+
+        using var doc = JsonDocument.Parse(handler.Body!);
+        Assert.Equal("advisory", doc.RootElement.GetProperty("trigger").GetString());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("issueId").ValueKind);
+        Assert.StartsWith("New advisory", doc.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task Email_AdvisoryCarriesNoIssueLine()
+    {
+        var options = new SmtpOptions("smtp.test", 587, "alerts@condux.test", null, null, UseSsl: true);
+        var issueSender = new CapturingSmtpSender();
+        await new EmailNotifier(issueSender, options).SendAsync(
+            Target with { Channel = NotificationChannel.Email, Target = "ops@acme.test" }, Notification());
+        var advisorySender = new CapturingSmtpSender();
+        await new EmailNotifier(advisorySender, options).SendAsync(
+            Target with { Channel = NotificationChannel.Email, Target = "ops@acme.test" },
+            Notification(AlertEventType.Advisory) with { IssuePublicId = Guid.Empty });
+
+        Assert.Contains("0192f000-0000-7000-8000-000000000000", issueSender.HtmlBody);
+        Assert.DoesNotContain(Guid.Empty.ToString(), advisorySender.HtmlBody);
+        Assert.Contains("New advisory", advisorySender.HtmlBody);
     }
 
     [Fact]

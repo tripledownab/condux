@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Condux.Core.Auth;
 using Condux.GitHub;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.Postgres;
@@ -39,7 +40,7 @@ public sealed class GithubInstallFlowTest(PostgresFixture pg) : IClassFixture<Po
         await ApiAuth.SignUpAsync(client);
         var orgId = await CreateOrgAsync(client);
 
-        var state = GithubConnectState.Create(
+        var state = ConnectState.Create(ConnectState.GitHub,
             orgId, "/onboarding", false, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
 
         var landed = await SetupAsync(app, 555, state, state);
@@ -51,7 +52,7 @@ public sealed class GithubInstallFlowTest(PostgresFixture pg) : IClassFixture<Po
         // The onward state says an install just happened, so the callback can tell an installation still
         // awaiting an owner's approval from one that was never installed.
         var onward = Uri.UnescapeDataString(landed.Headers.Location!.ToString().Split("state=")[1]);
-        var verified = GithubConnectState.Validate(onward, DateTimeOffset.UtcNow, WebhookSecret);
+        var verified = ConnectState.Validate(ConnectState.GitHub, onward, DateTimeOffset.UtcNow, WebhookSecret);
         Assert.True(verified!.Installed);
         Assert.Equal(orgId, verified.OrgId);
         Assert.Equal("/onboarding", verified.ReturnPath);
@@ -71,7 +72,7 @@ public sealed class GithubInstallFlowTest(PostgresFixture pg) : IClassFixture<Po
 
         // A real state without the cookie the connect leg set is refused too: the state proves only which
         // org minted it, so on its own it would let anyone finish someone else's install.
-        var state = GithubConnectState.Create(
+        var state = ConnectState.Create(ConnectState.GitHub,
             orgId, "/onboarding", false, DateTimeOffset.UtcNow.AddMinutes(10), WebhookSecret);
         var uncookied = await SetupAsync(app, 778, state, cookieState: null);
         Assert.Equal(HttpStatusCode.BadRequest, uncookied.StatusCode);
@@ -143,6 +144,8 @@ public sealed class GithubInstallFlowTest(PostgresFixture pg) : IClassFixture<Po
         await repo.LinkAsync(1000, orgId);
         var bad = await SendWebhookAsync(app, payload, "sha256=deadbeef");
         Assert.Equal(HttpStatusCode.Unauthorized, bad.StatusCode);
+        // RFC 9110 15.5.2: the 401 carries a challenge, naming the header the signature travels in.
+        Assert.Equal("X-Hub-Signature-256", Assert.Single(bad.Headers.WwwAuthenticate).Scheme);
         Assert.Contains(await repo.GetByOrgAsync(orgId), i => i.InstallationId == 1000);
     }
 

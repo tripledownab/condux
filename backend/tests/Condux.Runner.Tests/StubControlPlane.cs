@@ -43,8 +43,16 @@ internal sealed class StubControlPlane : HttpMessageHandler
     /// as a control plane behind a partition does. Null answers them all.</summary>
     public int? AnswerHeartbeatsThenHang { get; set; }
 
-    /// <summary>When the last answered heartbeat arrived, on <see cref="Clock"/>. It was sent no later.</summary>
+    /// <summary>When the last answered heartbeat was answered, on <see cref="Clock"/>. It was sent no later.</summary>
     public TimeSpan LastAnsweredHeartbeatAt { get; private set; }
+
+    /// <summary>How long an answered heartbeat waits before its answer, so its send and its answer differ.</summary>
+    public TimeSpan HeartbeatAnswerDelay { get; set; }
+
+    /// <summary>When the last answered heartbeat reached the stub, on <see cref="Clock"/>: just after the
+    /// runner sent it, since the stub runs in its process. Earlier than <see cref="LastAnsweredHeartbeatAt"/>
+    /// by at least <see cref="HeartbeatAnswerDelay"/>.</summary>
+    public TimeSpan LastAnsweredHeartbeatSentAt { get; private set; }
 
     /// <summary>The clock both the stub and a test read, so their times can be compared.</summary>
     public System.Diagnostics.Stopwatch Clock { get; } = System.Diagnostics.Stopwatch.StartNew();
@@ -83,6 +91,7 @@ internal sealed class StubControlPlane : HttpMessageHandler
 
         if (path.EndsWith("/heartbeat", StringComparison.Ordinal))
         {
+            var sentAt = Clock.Elapsed;
             heartbeatCalls++;
             if (AnswerHeartbeatsThenHang is { } answered && HeartbeatCount >= answered)
             {
@@ -95,8 +104,14 @@ internal sealed class StubControlPlane : HttpMessageHandler
                 return HeartbeatFailure();
             }
 
+            if (HeartbeatAnswerDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(HeartbeatAnswerDelay, cancellationToken);
+            }
+
             HeartbeatAnswered.TrySetResult();
             HeartbeatCount++;
+            LastAnsweredHeartbeatSentAt = sentAt;
             LastAnsweredHeartbeatAt = Clock.Elapsed;
             return new HttpResponseMessage(
                 LeaseHeld ? HttpStatusCode.NoContent : HttpStatusCode.Conflict);

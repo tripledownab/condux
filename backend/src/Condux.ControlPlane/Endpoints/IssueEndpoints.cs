@@ -1,10 +1,12 @@
 using System.Globalization;
 using Condux.ControlPlane.Auth;
 using Condux.ControlPlane.Contracts;
+using Condux.ControlPlane.Issues;
 using Condux.Storage.SourceMaps;
 using Condux.Core.Auth;
 using Condux.Core.Events;
 using Condux.Core.Issues;
+using Condux.Core.Repos;
 using Condux.Storage.ClickHouse;
 using Condux.Storage.Postgres;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -81,7 +83,8 @@ internal static class IssueEndpoints
         app.MapGet("/api/projects/{projectId:long}/issues/{issueId:guid}",
                 async Task<Results<Ok<IssueDetailResponse>, NotFound>> (
                     long projectId, Guid issueId, IssueRepository issues, ClickHouseEventReader events,
-                    EventSymbolication symbolication, CancellationToken cancellationToken) =>
+                    EventSymbolication symbolication, RepoLinkRepository repos, ReleaseRepository releases,
+                    CancellationToken cancellationToken) =>
                 {
                     if (await issues.GetByPublicIdAsync(projectId, issueId, cancellationToken) is not { } found)
                     {
@@ -97,7 +100,21 @@ internal static class IssueEndpoints
                             projectId.ToString(CultureInfo.InvariantCulture), (ulong)found.InternalId, limit: 1),
                         cancellationToken);
 
-                    return TypedResults.Ok(new IssueDetailResponse(found.Summary, stored));
+                    // Every linked repository's mappings, so a frame links into whichever one its mapping names.
+                    var linked = await repos.ListByProjectAsync(projectId, cancellationToken);
+                    var mappings = await repos.ListProjectCodeMappingsAsync(projectId, cancellationToken);
+                    // The release each event names, so its frames link to the commit it was recorded at.
+                    var recorded = new List<Release>();
+                    foreach (var version in FrameLinks.ToReleaseVersions(stored))
+                    {
+                        if (await releases.GetByVersionAsync(projectId, version, cancellationToken) is { } release)
+                        {
+                            recorded.Add(release);
+                        }
+                    }
+
+                    return TypedResults.Ok(new IssueDetailResponse(
+                        found.Summary, stored, FrameLinks.ToLinks(stored, linked, mappings, recorded)));
                 })
             .WithName("getIssue").WithTags("Issues")
             .RequireAuthorization().AddEndpointFilter(OrgAuthorization.RequireProjectRole(OrgRole.Member));

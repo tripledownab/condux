@@ -31,18 +31,18 @@ public sealed class ClickHouseTimezoneTest(ClickHouseTimezoneTest.OffsetServer c
     /// <summary>Without this the rest would pass against a UTC server and prove nothing.</summary>
     [Fact]
     public async Task The_server_runs_outside_UTC() =>
-        Assert.Equal(ServerTimezone, (await QueryAsync("SELECT timezone()")).Trim());
+        Assert.Equal(ServerTimezone, (await ch.QueryAsync("SELECT timezone()")).Trim());
 
     [Fact]
     public async Task An_event_keeps_its_instant_and_reads_back_as_UTC()
     {
         using var http = Client();
         var e = new Event { EventId = "tz1", Level = Level.Error, TimestampUnixMs = Instant.ToUnixTimeMilliseconds() + 123 };
-        await new ClickHouseEventWriter(http).InsertAsync([ClickHouseEventWriter.ToRow("tz-events", 1UL, e, "fp", 90)]);
+        await new ClickHouseEventWriter(http).InsertAsync([ClickHouseEventWriter.ToRow("tz-events", 1UL, e, "fp", 90, DateTimeOffset.UtcNow)]);
 
         Assert.Equal(
             (Instant.ToUnixTimeMilliseconds() + 123).ToString(CultureInfo.InvariantCulture),
-            (await QueryAsync("SELECT toUnixTimestamp64Milli(timestamp) FROM condux.events WHERE project_id = 'tz-events'")).Trim());
+            (await ch.QueryAsync("SELECT toUnixTimestamp64Milli(timestamp) FROM condux.events WHERE project_id = 'tz-events'")).Trim());
         // The issue page shows this text as it comes, so it must be the UTC wall clock.
         var stored = Assert.Single(await new ClickHouseEventReader(http).RecentByIssueAsync("tz-events", 1UL));
         Assert.Equal("2026-10-03 00:00:00.123", stored.Timestamp);
@@ -84,6 +84,41 @@ public sealed class ClickHouseTimezoneTest(ClickHouseTimezoneTest.OffsetServer c
         Assert.Equal(seconds - (seconds % 86400), Assert.Single(daily).Key);
     }
 
+    /// <summary>
+    /// The weekly digest splits its weeks on receipt time: the receipt rollup's hour buckets and the
+    /// stored events' received_at. The week boundary here sits on a UTC hour, which is half past on the
+    /// server's clock, so a receipt shifted by the server's offset lands in the other week.
+    /// </summary>
+    [Fact]
+    public async Task The_digest_splits_its_weeks_on_UTC_receipt()
+    {
+        using var http = Client();
+        var weekStart = Instant;
+        await new ClickHouseIssueStatsWriter(http).InsertReceivedAsync(
+        [
+            ClickHouseIssueStatsWriter.ToReceivedRow("tz-digest", 1UL, weekStart.AddMinutes(-10)),
+            ClickHouseIssueStatsWriter.ToReceivedRow("tz-digest", 1UL, weekStart.AddMinutes(10)),
+            ClickHouseIssueStatsWriter.ToReceivedRow("tz-digest", 1UL, weekStart.AddMinutes(20)),
+        ]);
+        var e = new Event
+        {
+            EventId = "tz-digest",
+            Level = Level.Error,
+            UserKey = "user-tz",
+            TimestampUnixMs = weekStart.AddDays(-3).ToUnixTimeMilliseconds(),
+        };
+        await new ClickHouseEventWriter(http).InsertAsync(
+            [ClickHouseEventWriter.ToRow("tz-digest", 1UL, e, "fp", 90, weekStart.AddMinutes(10))]);
+
+        var volume = Assert.Single(await new ClickHouseIssueStatsReader(http).WeeklyVolumesAsync(
+            "tz-digest", weekStart.AddDays(-7), weekStart, weekStart.AddDays(7)));
+        var users = new ClickHouseEventReader(http);
+
+        Assert.Equal((2, 1), (volume.ThisWeek, volume.PreviousWeek));
+        Assert.Equal(1, await users.CountUsersAffectedAsync("tz-digest", weekStart, weekStart.AddHours(1)));
+        Assert.Equal(0, await users.CountUsersAffectedAsync("tz-digest", weekStart.AddHours(-1), weekStart));
+    }
+
     /// <summary>A CVE bump's verification reads sightings after the merge, to the second.</summary>
     [Fact]
     public async Task A_sighting_keeps_its_instant()
@@ -107,13 +142,5 @@ public sealed class ClickHouseTimezoneTest(ClickHouseTimezoneTest.OffsetServer c
         var http = new HttpClient();
         ClickHouseRegistration.Configure(http, ch.BaseUrl, ch.ChUser, ch.ChPassword);
         return http;
-    }
-
-    private async Task<string> QueryAsync(string sql)
-    {
-        using var http = Client();
-        using var resp = await http.PostAsync("/", new StringContent(sql));
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync();
     }
 }

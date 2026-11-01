@@ -3,12 +3,14 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ITfoxtec.Identity.Saml2.MvcCore" Version="4.20.1" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
-    <!-- Pin past the vulnerable Microsoft.OpenApi 2.0.0 that AspNetCore.OpenApi 10.0.10 pulls in
-         transitively (GHSA-v5pm-xwqc-g5wc, patched in 2.7.5); NuGetAudit flags it as an error. -->
-    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <PackageReference Include="ITfoxtec.Identity.Saml2.MvcCore" Version="4.21.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
+    <!-- Referenced directly to get past the vulnerable Microsoft.OpenApi 2.0.0 that AspNetCore.OpenApi
+         10.0.10 pulled in (GHSA-v5pm-xwqc-g5wc, patched in 2.7.5). AspNetCore.OpenApi 10.0.13 requires
+         2.12.2 or later itself. A bump can rewrite the emitted document: export it and diff it against
+         contracts/openapi.json. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.0" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Condux.ControlPlane.Tests" />
@@ -18,9 +20,12 @@
   <ItemGroup>
     <ProjectReference Include="../Condux.Core/Condux.Core.csproj" />
     <ProjectReference Include="../Condux.GitHub/Condux.GitHub.csproj" />
+    <ProjectReference Include="../Condux.Linear/Condux.Linear.csproj" />
     <ProjectReference Include="../Condux.Messaging/Condux.Messaging.csproj" />
     <ProjectReference Include="../Condux.Notifications/Condux.Notifications.csproj" />
     <ProjectReference Include="../Condux.Storage/Condux.Storage.csproj" />
     <ProjectReference Include="../Condux.Telemetry/Condux.Telemetry.csproj" />
+    <!-- The SDK's caller-caused rule (ADR-0044), so self-reporting files only Condux's own faults. -->
+    <ProjectReference Include="../../../sdks/dotnet/Condux.Sdk.AspNetCore/Condux.Sdk.AspNetCore.csproj" />
   </ItemGroup>
 </Project>

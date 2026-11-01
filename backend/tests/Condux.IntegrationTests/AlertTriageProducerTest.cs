@@ -1,12 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text.Json;
 using Condux.Core.Events;
 using Condux.Core.Grouping;
 using Condux.IntegrationTests.Fixtures;
 using Condux.Storage.Postgres;
+using Condux.Tests.Shared;
 using Xunit;
 
 namespace Condux.IntegrationTests;
@@ -38,16 +38,6 @@ public sealed class AlertTriageProducerTest(PostgresFixture pg) : IClassFixture<
         return (client, projectId);
     }
 
-    // A loopback URL nothing is listening on yet, so the rule can be created before the receiver starts.
-    private static string FreeLoopbackUrl()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return $"http://127.0.0.1:{port}/hook/";
-    }
-
     // A rule firing on the Resolved event (3) at Error (4), delivering to a webhook channel (3).
     private static async Task AddResolvedRuleAsync(HttpClient client, long projectId, string url)
     {
@@ -59,25 +49,11 @@ public sealed class AlertTriageProducerTest(PostgresFixture pg) : IClassFixture<
     }
 
     // Run the resolve and return the one webhook body it produced. Fails the test if none arrives.
-    private static async Task<string> CaptureAsync(string url, Func<Task> resolve)
+    private static async Task<string> CaptureAsync(LoopbackHttpReceiver receiver, Func<Task> resolve)
     {
-        using var listener = new HttpListener();
-        listener.Prefixes.Add(url);
-        listener.Start();
-        var body = "";
-        var serverTask = Task.Run(async () =>
-        {
-            var context = await listener.GetContextAsync();
-            using var reader = new StreamReader(context.Request.InputStream);
-            body = await reader.ReadToEndAsync();
-            context.Response.StatusCode = 200;
-            context.Response.Close();
-        });
-
+        var next = receiver.NextRequestAsync();
         await resolve();
-        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
-        listener.Stop();
-        return body;
+        return (await next.WaitAsync(TimeSpan.FromSeconds(5))).Body;
     }
 
     private async Task<Guid> SeedErrorIssueAsync(long projectId, string fingerprint, string title)
@@ -91,13 +67,13 @@ public sealed class AlertTriageProducerTest(PostgresFixture pg) : IClassFixture<
     public async Task Resolving_an_issue_fires_a_Resolved_rule_to_a_real_webhook()
     {
         var (client, projectId) = await ProvisionAsync();
-        var url = FreeLoopbackUrl();
-        await AddResolvedRuleAsync(client, projectId, url);
+        using var receiver = LoopbackHttpReceiver.Start();
+        await AddResolvedRuleAsync(client, projectId, receiver.Url);
 
         // Issues come from ingest, not an API, so seed one directly and grab its public id.
         var issueId = await SeedErrorIssueAsync(projectId, "fp-triage", "TypeError: boom");
 
-        var body = await CaptureAsync(url, async () =>
+        var body = await CaptureAsync(receiver, async () =>
         {
             var patch = await client.PatchAsJsonAsync(
                 $"/api/projects/{projectId}/issues/{issueId}", new { status = 2 });
@@ -113,8 +89,8 @@ public sealed class AlertTriageProducerTest(PostgresFixture pg) : IClassFixture<
     public async Task Resolving_over_MCP_fires_the_same_Resolved_rule()
     {
         var (client, projectId) = await ProvisionAsync();
-        var url = FreeLoopbackUrl();
-        await AddResolvedRuleAsync(client, projectId, url);
+        using var receiver = LoopbackHttpReceiver.Start();
+        await AddResolvedRuleAsync(client, projectId, receiver.Url);
         var issueId = await SeedErrorIssueAsync(projectId, "fp-mcp-triage", "TypeError: agent boom");
 
         var mint = await client.PostAsJsonAsync(
@@ -123,7 +99,7 @@ public sealed class AlertTriageProducerTest(PostgresFixture pg) : IClassFixture<
         var agent = ControlPlaneApp.Create(pg.ConnectionString).CreateClient();
         agent.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", raw);
 
-        var body = await CaptureAsync(url, async () =>
+        var body = await CaptureAsync(receiver, async () =>
         {
             var resp = await agent.PostAsJsonAsync("/api/mcp", new
             {

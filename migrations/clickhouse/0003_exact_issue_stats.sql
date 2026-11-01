@@ -5,6 +5,7 @@
 -- hourly sums), before the sampling decision. Drop the view so stored events are not counted twice.
 -- Do not re-add a materialized view on condux.events for counts — it can only ever see sampled rows.
 -- Rollup rows written before this migration are approximate (they undercounted); they are left in place.
--- Idempotent, applied in filename order after 0002_per_tier_retention.sql.
+-- Idempotent, applied in filename order after 0002_per_tier_retention.sql. 0001 no longer creates the
+-- view, so this drop finds one only where an older 0001 created it and this file has not run since.
 
 DROP VIEW IF EXISTS condux.issue_stats_1h_mv;

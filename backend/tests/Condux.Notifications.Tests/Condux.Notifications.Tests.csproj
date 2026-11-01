@@ -3,11 +3,15 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Condux.Notifications/Condux.Notifications.csproj" />
+  </ItemGroup>
+  <!-- The loopback HTTP receiver the real-socket delivery tests share with the integration tests. -->
+  <ItemGroup>
+    <Compile Include="../Shared/LoopbackHttpReceiver.cs" Link="Shared/LoopbackHttpReceiver.cs" />
   </ItemGroup>
 </Project>

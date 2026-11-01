@@ -24,7 +24,7 @@ public sealed record GithubSelection(
 ///
 /// Signing is what makes the round trip safe. The installation ids come from GitHub, and the browser must
 /// not be able to add to the set or move it to another org, so the choice is only honored when it appears
-/// in a token we minted. Same construction as <see cref="GithubConnectState"/>, domain-separated from it.
+/// in a token we minted. Same construction as <see cref="Condux.Core.Auth.ConnectState"/>, domain-separated from it.
 /// </summary>
 public static class GithubSelectionToken
 {

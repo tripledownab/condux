@@ -39,7 +39,7 @@ public sealed class DebugFileRepository(string connectionString)
     private const string RecordStoredHashSql = "UPDATE debug_files SET sha256 = @sha WHERE id = @id;";
 
     public async Task<DebugFile> RecordAsync(
-        long projectId, ElfBuild build, string objectKey, long byteSize, string? sha256,
+        long projectId, DebugBuild build, string objectKey, long byteSize, string? sha256,
         CancellationToken cancellationToken = default)
     {
         await using var conn = new NpgsqlConnection(connectionString);

@@ -2,18 +2,13 @@
 
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
-import {
-  useGetIssue,
-  useListCodeMappings,
-  useListMembers,
-  useListRepos,
-  useMe,
-} from "@/src/api/generated/condux";
+import { useGetIssue, useListMembers, useMe } from "@/src/api/generated/condux";
 import type { IssueSummary } from "@/src/api/generated/model";
 import { Notice } from "@/src/components/notice";
 import { Button } from "@/src/components/ui/button";
 import { formatRelativeTime } from "@/src/lib/time";
 import { canManageOrg } from "@/src/orgs/current-org";
+import { AgentFailurePanel } from "./agent-failure-panel";
 import { ProjectStatus, useCurrentProject } from "./current-project";
 import { EventChips, EventEvidence } from "./event-detail";
 import {
@@ -25,12 +20,12 @@ import {
 import { EventsTable } from "./events-table";
 import { FacetsPanel } from "./facets-panel";
 import { FixPanel } from "./fix-panel";
-import { frameGithubUrl } from "./github-links";
 import { IssueActions } from "./issue-actions";
 import { IssueChart } from "./issue-chart";
 import { usersAffected } from "./issue-facets";
 import { statusKey } from "./issue-format";
 import { IssueNotes } from "./issue-notes";
+import { IssueTicket } from "./issue-ticket";
 import { LevelBadge } from "./level-badge";
 import { PayloadViewer } from "./payload-viewer";
 
@@ -46,21 +41,11 @@ export function IssueDetail({ issueId }: { issueId: string }) {
   const projectId = current.status === ProjectStatus.Ready ? current.project.id : 0;
   const enabled = current.status === ProjectStatus.Ready && issueId !== "";
   const query = useGetIssue(projectId, issueId, { query: { enabled } });
-  // Repo links + code mappings turn in-app frames into GitHub deep links; best-effort, resolved
-  // through the first linked repo's mappings (mappings are keyed per repo link).
-  const repos = useListRepos(projectId, { query: { enabled } });
   const orgId = current.status === ProjectStatus.Ready ? current.org.id : 0;
   const members = useListMembers(orgId, { query: { enabled } });
   // The current user + whether they can moderate (admin/owner), so a note's Delete shows for its author
   // or an admin. The backend enforces the same rule; this only gates the button.
   const me = useMe();
-  const repoList = repos.data?.data ?? [];
-  const firstRepoId = repoList[0]?.id ?? "";
-  const codeMappings = useListCodeMappings(projectId, firstRepoId, {
-    query: { enabled: enabled && firstRepoId !== "" },
-  });
-  const frameUrl = (frame: Parameters<typeof frameGithubUrl>[0]) =>
-    frameGithubUrl(frame, repoList, codeMappings.data?.data ?? []);
 
   if (current.status === ProjectStatus.Loading) {
     return (
@@ -108,6 +93,12 @@ export function IssueDetail({ issueId }: { issueId: string }) {
     (event): event is ParsedEvent => event !== null,
   );
   const latest = parsedEvents[0];
+  // The server's frame links are listed per event, beside detail.events, so they are read by the
+  // position of the event the evidence shows. Optional while a deploy still runs the previous API.
+  const latestPosition = detail.events.findIndex(
+    (event) => parsedByEventId.get(event.eventId) != null,
+  );
+  const latestLinks = detail.frameLinks?.[latestPosition] ?? [];
 
   // Layout 30's issue page: header, the latest event's chips, the chart, then the code path and
   // breadcrumbs read down the main column while the fixed right rail (actions first, then impact,
@@ -133,7 +124,7 @@ export function IssueDetail({ issueId }: { issueId: string }) {
         <IssueChart projectId={current.project.id} issueId={issueId} />
         {latest !== undefined && hasEvidence(latest) ? (
           <div className="mt-6">
-            <EventEvidence event={latest} frameUrl={frameUrl} />
+            <EventEvidence event={latest} links={latestLinks} />
           </div>
         ) : null}
         {latestStored !== undefined ? (
@@ -172,6 +163,7 @@ export function IssueDetail({ issueId }: { issueId: string }) {
               ?.email ?? null
           }
         />
+        {latest !== undefined ? <AgentFailurePanel event={latest} /> : null}
         <IssueActions
           projectId={current.project.id}
           issueId={issueId}
@@ -184,6 +176,11 @@ export function IssueDetail({ issueId }: { issueId: string }) {
           issueId={issueId}
           orgId={orgId}
           lastSeen={detail.issue.lastSeen}
+        />
+        <IssueTicket
+          projectId={current.project.id}
+          issueId={issueId}
+          issueTitle={detail.issue.title}
         />
         <IssueNotes
           projectId={current.project.id}

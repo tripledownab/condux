@@ -85,13 +85,18 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
     {
         var project = projectId.ToString(CultureInfo.InvariantCulture);
         var grouping = new Grouping(spec.Fingerprint, spec.Title, spec.Culprit);
-        var upsert = await _issues.UpsertAsync(projectId, grouping, spec.Level, now.AddDays(-spec.FirstSeenDaysAgo), spec.Release);
+        var firstSeen = now.AddDays(-spec.FirstSeenDaysAgo);
+        var upsert = await _issues.UpsertAsync(projectId, grouping, spec.Level, firstSeen, spec.Release);
         var issueId = (ulong)upsert.Id;
 
-        await _stats.InsertAsync(BuildStatRows(project, issueId, spec, now));
+        var statRows = BuildStatRows(project, issueId, spec, now);
+        await _stats.InsertAsync(statRows);
+        // The demo's events arrive on time, so the receipt rollup the weekly digest reads holds the same counts.
+        await _stats.InsertReceivedAsync([.. statRows.Select(row => ClickHouseIssueStatsWriter.ToReceivedRow(
+            project, issueId, DateTimeOffset.FromUnixTimeSeconds(row.bucket), row.count))]);
         var sampleSize = Math.Clamp(spec.WeekEvents / 8 + 4, 4, 12);
         await _events.InsertAsync(BuildEventRows(project, issueId, spec, now, sampleSize));
-        await SetEventCountAsync(upsert.Id, spec.WeekEvents + spec.PrevWeekEvents, now.AddHours(-1 - _random.Next(60)));
+        await PlaceHistoryAsync(upsert.Id, spec.WeekEvents + spec.PrevWeekEvents, firstSeen, now.AddHours(-1 - _random.Next(60)));
 
         if (spec.Status == SeedStatus.Resolved)
         {
@@ -100,7 +105,8 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
         else if (spec.Status == SeedStatus.Regressed)
         {
             await _issues.UpdateStatusAsync(projectId, upsert.PublicId, 2);
-            // Reopen with a recent event so activated_at lands in this week (a regression the digest counts).
+            // Reopen it. reopened_at takes the time of this call, not the event's, so it lands in this week
+            // (a regression the digest counts).
             await _issues.UpsertAsync(projectId, grouping, spec.Level, now.AddDays(-1), spec.Release);
         }
 
@@ -184,7 +190,7 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
         {
             var at = now.AddDays(-_random.Next(6)).AddHours(-_random.Next(24));
             var e = BuildEvent(spec, at, $"u-{spec.Fingerprint}-{i}");
-            rows.Add(ClickHouseEventWriter.ToRow(project, issueId, e, spec.Fingerprint, RetentionDays));
+            rows.Add(ClickHouseEventWriter.ToRow(project, issueId, e, spec.Fingerprint, RetentionDays, at));
         }
         return rows;
     }
@@ -232,14 +238,17 @@ internal sealed class DemoSeeder(string postgres, HttpClient clickHouse)
     }
 
     // The grouped-issue event_count is denormalized (the consumer increments it per event); set it directly to
-    // the seeded total so the issue list shows realistic counts without replaying every event.
-    private async Task SetEventCountAsync(long issueId, long eventCount, DateTimeOffset lastSeen)
+    // the seeded total so the issue list shows realistic counts without replaying every event. created_at is
+    // the time Condux first processed the issue, which the insert stamps as now; a seeded history moves it
+    // back to when the issue first occurred, as if it had arrived then.
+    private async Task PlaceHistoryAsync(long issueId, long eventCount, DateTimeOffset createdAt, DateTimeOffset lastSeen)
     {
         await using var conn = new NpgsqlConnection(postgres);
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand(
-            "UPDATE issues SET event_count = @count, last_seen = @last WHERE id = @id;", conn);
+            "UPDATE issues SET event_count = @count, created_at = @created, last_seen = @last WHERE id = @id;", conn);
         cmd.Parameters.AddWithValue("count", eventCount);
+        cmd.Parameters.AddWithValue("created", createdAt);
         cmd.Parameters.AddWithValue("last", lastSeen);
         cmd.Parameters.AddWithValue("id", issueId);
         await cmd.ExecuteNonQueryAsync();

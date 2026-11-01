@@ -21,21 +21,23 @@ public sealed class DependabotCveScanner(GitHubRepoClient repo) : ICveScanner
     {
         var list = await repo.ListDependabotAlertsAsync(token, repoFullName, cancellationToken);
 
-        var findings = CveSeverities.Normalize(list.Alerts.Select(alert => new CveFinding(
-            AdvisoryId: alert.GhsaId,
-            CveId: alert.CveId,
-            // Dependabot reports a word, not a score, and says "moderate" where CVSS says "medium".
-            Severity: CveSeverities.Parse(alert.Severity),
-            Summary: alert.Summary,
-            Package: alert.Package,
-            Ecosystem: alert.Ecosystem,
-            VulnerableRange: alert.VulnerableRange,
-            FixedVersion: alert.FixedVersion,
-            Url: alert.HtmlUrl,
-            Source: SourceName)
-        {
-            ManifestPath = alert.ManifestPath,
-        }));
-        return new CveScan(findings, list.Truncated);
+        return new CveScan(CveSeverities.Normalize(list.Alerts.Select(ToFinding)), list.Truncated);
     }
+
+    /// <summary>One Dependabot alert as a finding: a scanned one, and one a webhook reports as new.</summary>
+    public static CveFinding ToFinding(DependabotAlert alert) => new(
+        AdvisoryId: alert.GhsaId,
+        CveId: alert.CveId,
+        // Dependabot reports a word, not a score, and says "moderate" where CVSS says "medium".
+        Severity: CveSeverities.Parse(alert.Severity),
+        Summary: alert.Summary,
+        Package: alert.Package,
+        Ecosystem: alert.Ecosystem,
+        VulnerableRange: alert.VulnerableRange,
+        FixedVersion: alert.FixedVersion,
+        Url: alert.HtmlUrl,
+        Source: SourceName)
+    {
+        ManifestPath = alert.ManifestPath,
+    };
 }

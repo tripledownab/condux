@@ -18,7 +18,7 @@ namespace Condux.IntegrationTests;
 /// 2.6.0's Fetch API v12 request breaks the consumer against Redpanda.
 /// </summary>
 [Trait("Category", "Integration")]
-public class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<RedpandaFixture>
+public partial class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<RedpandaFixture>
 {
     [Fact]
     public async Task PublishedEvent_IsConsumable()
@@ -29,7 +29,8 @@ public class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<Re
         // ProduceAsync awaits delivery, so this also auto-creates the topic.
         var retentionDays = PlanCatalog.For(Tier.Free).RetentionDays;
         var published = DateTimeOffset.UtcNow;
-        await publisher.PublishAsync("proj-1", new Event { EventId = "abc", Level = Level.Error }, retentionDays);
+        var sentAt = published.AddHours(-3).ToUnixTimeMilliseconds();
+        await publisher.PublishAsync("proj-1", new Event { EventId = "abc", Level = Level.Error }, retentionDays, sentAt);
 
         using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
         {
@@ -59,6 +60,9 @@ public class MessagingRoundtripTest(RedpandaFixture redpanda) : IClassFixture<Re
         // The relay's per-tier retention rides as a header the consumer reads back.
         Assert.True(result.Message.Headers.TryGetLastBytes(EventHeaders.RetentionDays, out var retentionHeader));
         Assert.Equal(retentionDays.ToString(), Encoding.UTF8.GetString(retentionHeader));
+
+        // So does the sender's sent_at, which the consumer reads back to correct its clock drift.
+        Assert.Equal(sentAt, EventMessages.ReadSentAt(result.Message.Headers));
 
         // The producer stamps the message with the time it published, which the consumer bounds the
         // event's own claimed time to (EventMessages.ToFiledEvent). The producer runs in this process,

@@ -1,8 +1,7 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using Condux.Core.Alerting;
 using Condux.Core.Events;
+using Condux.Tests.Shared;
 using Xunit;
 
 namespace Condux.Notifications.Tests;
@@ -24,39 +23,13 @@ public class RealSocketDeliveryTest
     private static AlertChannel Channel(NotificationChannel channel, string url) =>
         new(Guid.NewGuid(), Guid.NewGuid(), channel, url);
 
-    // Stand up an HttpListener on a free loopback port, run send(url) against it, and return the captured
-    // request. HttpListener queues the request, so there is no accept/send race.
-    private static async Task<(string Method, string? ContentType, string Body)> CaptureAsync(
-        Func<string, Task> send)
+    // Run send(url) against a real loopback receiver and return the request it captured.
+    private static async Task<CapturedRequest> CaptureAsync(Func<string, Task> send)
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-
-        using var listener = new HttpListener();
-        var url = $"http://127.0.0.1:{port}/hook/";
-        listener.Prefixes.Add(url);
-        listener.Start();
-
-        var method = "";
-        string? contentType = null;
-        var body = "";
-        var serverTask = Task.Run(async () =>
-        {
-            var context = await listener.GetContextAsync();
-            method = context.Request.HttpMethod;
-            contentType = context.Request.ContentType;
-            using var reader = new StreamReader(context.Request.InputStream);
-            body = await reader.ReadToEndAsync();
-            context.Response.StatusCode = 200;
-            context.Response.Close();
-        });
-
-        await send(url);
-        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
-        listener.Stop();
-        return (method, contentType, body);
+        using var receiver = LoopbackHttpReceiver.Start();
+        var next = receiver.NextRequestAsync();
+        await send(receiver.Url);
+        return await next.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]

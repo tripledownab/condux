@@ -24,7 +24,7 @@ public sealed class ElfDebugFileTests
         var (build, rejection) = ElfDebugFile.ToBuild(SymbolsFile(FlutterBuildId, wide));
 
         Assert.Null(rejection);
-        Assert.Equal(new ElfBuild(FlutterBuildId, FlutterDebugId), build);
+        Assert.Equal(new DebugBuild(FlutterBuildId, FlutterDebugId), build);
     }
 
     [Fact]

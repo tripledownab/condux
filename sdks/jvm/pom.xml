@@ -23,8 +23,9 @@
 
   <developers>
     <developer>
-      <name>Condux</name>
-      <organization>Condux</organization>
+      <name>Triple Down AB</name>
+      <email>security@condux.ai</email>
+      <organization>Triple Down AB</organization>
       <organizationUrl>https://condux.ai</organizationUrl>
     </developer>
   </developers>
@@ -39,6 +40,23 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
+
+  <!-- The licence carries the manufacturer's name, address and contact, which the package must have with
+       it, so it goes into the jar. Declaring resources replaces Maven's default, which is restated. -->
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes>
+          <include>LICENSE</include>
+        </includes>
+        <targetPath>META-INF</targetPath>
+      </resource>
+    </resources>
+  </build>
 
   <!-- Maven Central publishing, behind a profile so it changes nothing about an ordinary build.
        CI activates it with -Pcentral; `mvn package` and the plain-javac path stay exactly as they were.

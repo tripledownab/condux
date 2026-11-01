@@ -35,6 +35,26 @@ public sealed class LlvmSymbolizerRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_mach_o_file_asks_for_names_as_the_dwarf_writes_them_and_an_elf_file_does_not()
+    {
+        // Answers each address with the arguments it was started with.
+        var path = FakeSymbolizer("""while read a; do echo "$*"; done""");
+        var macho = Path.Combine(_fakes.Directory, "app.dwarf");
+        File.WriteAllBytes(macho, Condux.Tests.Shared.MachOFiles.Dsym("E191A89D-E2C2-30C4-BF83-1D9222717212"));
+        var elf = Path.Combine(_fakes.Directory, "app.symbols");
+        File.WriteAllBytes(elf, Condux.Tests.Shared.ElfFiles.SymbolsFile("7a3ef9306827da183fa36f07eecef2fb"));
+        var runner = Runner(path, TimeSpan.FromSeconds(10));
+
+        var forMachO = await runner.RunAsync(macho, [0x10], CancellationToken.None);
+        var forElf = await runner.RunAsync(elf, [0x10], CancellationToken.None);
+
+        // Without it llvm-symbolizer drops a leading underscore from every Mach-O name, so a Dart private
+        // _Cart.total would read as Cart.total.
+        Assert.Contains("--functions=short", Assert.Single(forMachO!));
+        Assert.DoesNotContain("--functions", Assert.Single(forElf!));
+    }
+
+    [Fact]
     public async Task A_parser_that_hangs_is_stopped_at_the_timeout()
     {
         var path = FakeSymbolizer("exec sleep 300");

@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Condux.Core.SourceMaps;
 
 /// <summary>
@@ -12,26 +10,47 @@ internal static class SourceMapSections
 {
     internal readonly record struct Section(int Line, int Column, SourceMap Map);
 
-    /// <summary>Whether a "sections" array decodes within the same budget as one plain map. The upload
-    /// check asks this, so an index map over budget is refused when it is sent. One with no usable
-    /// section is accepted, though <see cref="SourceMap.Parse"/> reads nothing from it: Turbopack writes
-    /// empty index maps for its own build transforms, and the upload CLI sends every map it finds, so
-    /// refusing them failed the CLI on any such build.</summary>
-    public static bool IsDecodable(JsonElement sections) => Plan(sections) is not null;
-
-    /// <summary>The decoded sections in offset order, or null when the array cannot be decoded at all
-    /// (not an array, a section whose offset or map is not an object, or past the decode budget).</summary>
-    public static Section[]? Parse(JsonElement sections)
+    /// <summary>Whether an index map's plan decodes within the same budget as one plain map, measuring
+    /// each planned section's mappings, which throws <see cref="System.Text.Json.JsonException"/> when they
+    /// are not valid text. Only the plan the scan left is measured: that is the last "sections" array, the one
+    /// a read uses.</summary>
+    public static bool IsDecodable(byte[] json, List<PlannedSection>? plan)
     {
-        if (Plan(sections) is not { } plan)
+        if (plan is null)
+        {
+            return false;
+        }
+
+        long lines = 0, segments = 0;
+        foreach (var section in plan)
+        {
+            var (sectionLines, sectionSegments) = SourceMapJson.MeasureMappings(json, section.Map.Mappings!.Value);
+            lines += sectionLines;
+            segments += sectionSegments;
+            if (!SourceMapMappings.Fits((lines, segments)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The decoded sections in offset order, or null when the index map cannot be decoded at all
+    /// (not an array, a section whose offset or map is not an object, more sections or more mappings than
+    /// the decode budget). Throws <see cref="System.Text.Json.JsonException"/> as
+    /// <see cref="IsDecodable"/> does.</summary>
+    public static Section[]? Parse(byte[] json, List<PlannedSection>? plan)
+    {
+        if (!IsDecodable(json, plan))
         {
             return null;
         }
 
-        var decoded = new List<Section>(plan.Count);
+        var decoded = new List<Section>(plan!.Count);
         foreach (var (line, column, map) in plan)
         {
-            if (SourceMap.ToPlain(map) is { } plain)
+            if (SourceMap.ToPlain(json, map) is { } plain)
             {
                 decoded.Add(new Section(line, column, plain));
             }
@@ -70,68 +89,63 @@ internal static class SourceMapSections
         return section.Map.OriginalPositionFor(localLine, localLine == 0 ? column - section.Column : column);
     }
 
-    // The sections a decode would read, with their offsets, measured but not decoded. Following the
-    // specification: a section that is not an object is skipped, an offset or map that is not an object
-    // fails the whole map, an offset field that is not an integral number reads as 0, and a section whose
-    // map has no "mappings" string (a nested index map among them) is skipped, as DecodeSourceMap
-    // refuses it. A section that starts before the previous one is skipped too: the specification lets
-    // a consumer report that, and the binary search in Find is only right over ordered offsets.
-    private static List<(int Line, int Column, JsonElement Map)>? Plan(JsonElement sections)
+    /// <summary>
+    /// Chooses the sections a decode would read as the scan offers them, by their shape alone: nothing is
+    /// measured or read here, so an array a later "sections" key replaces fails nothing, and costs no more
+    /// than the plan it held, which the line budget bounds.
+    /// Following the specification: a section that is not an object is skipped (the scan offers only
+    /// objects), an offset or map that is not an object fails the whole map, an offset field that is not an
+    /// integral number reads as 0, and a section whose map has no "mappings" string (a nested index map
+    /// among them) is skipped, as DecodeSourceMap refuses it. A section that starts before the previous one
+    /// is skipped too: the specification lets a consumer report that, and the binary search in Find is only
+    /// right over ordered offsets. Every section kept adds at least one generated line, so a plan with more
+    /// sections than the line budget allows is refused as it grows, which bounds it without measuring.
+    /// </summary>
+    internal sealed class Planner
     {
-        if (sections.ValueKind != JsonValueKind.Array)
+        private readonly List<PlannedSection> planned = [];
+        private int previousLine, previousColumn;
+
+        /// <summary>Whether the index map cannot be decoded at all, after which nothing more is offered.</summary>
+        public bool Refused { get; private set; }
+
+        /// <summary>The sections to decode, in offset order, or null once refused.</summary>
+        public List<PlannedSection>? Plan => Refused ? null : planned;
+
+        /// <summary>Starts the plan again for a "sections" array that replaces an earlier one in the same map,
+        /// reusing what the earlier plan held, so a key repeated however often costs one plan.</summary>
+        public void Restart()
         {
-            return null;
+            planned.Clear();
+            (previousLine, previousColumn) = (0, 0);
+            Refused = false;
         }
 
-        var plan = new List<(int, int, JsonElement)>();
-        long lines = 0, segments = 0;
-        int previousLine = 0, previousColumn = 0;
-        foreach (var section in sections.EnumerateArray())
+        /// <summary>One section, with a null map when its offset or map is missing or not an object.</summary>
+        public void Offer(int line, int column, SourceMapFields? map)
         {
-            if (section.ValueKind != JsonValueKind.Object)
+            if (map is not { } fields)
             {
-                continue;
+                Refused = true;
+                return;
             }
 
-            if (!section.TryGetProperty("offset", out var offset) || offset.ValueKind != JsonValueKind.Object
-                || !section.TryGetProperty("map", out var map) || map.ValueKind != JsonValueKind.Object)
+            if (Compare(line, column, previousLine, previousColumn) < 0 || fields.Mappings is null)
             {
-                return null;
+                return;
             }
 
-            var line = ReadOffset(offset, "line");
-            var column = ReadOffset(offset, "column");
-            if (Compare(line, column, previousLine, previousColumn) < 0
-                || !map.TryGetProperty("mappings", out var mappings) || mappings.ValueKind != JsonValueKind.String)
+            // A section past the budget's count would add a line past the budget, so the plan is over it.
+            if (planned.Count == SourceMapMappings.MaxGeneratedLines)
             {
-                continue;
+                Refused = true;
+                return;
             }
 
-            var (sectionLines, sectionSegments) = SourceMapMappings.Measure(mappings.GetString()!);
-            lines += sectionLines;
-            segments += sectionSegments;
-            if (!SourceMapMappings.Fits((lines, segments)))
-            {
-                return null;
-            }
-
-            plan.Add((line, column, map));
+            planned.Add(new PlannedSection(line, column, fields));
             (previousLine, previousColumn) = (line, column);
         }
-
-        return plan;
     }
-
-    // Integral as the specification reads it, so 3.0 is 3, and 2.5 or an infinity read as 0 as it says.
-    // A negative one is read as 0 as well, since no generated position precedes the start of the file,
-    // and a finite one past what a position can hold is kept at the largest, out of reach of every
-    // frame, rather than wrapped or read as 0.
-    private static int ReadOffset(JsonElement offset, string name) =>
-        offset.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
-            && value.TryGetDouble(out var number) && double.IsFinite(number)
-            && number == Math.Floor(number) && number >= 0
-            ? (int)Math.Min(number, int.MaxValue)
-            : 0;
 
     private static int Compare(int line, int column, int otherLine, int otherColumn) =>
         line != otherLine ? line.CompareTo(otherLine) : column.CompareTo(otherColumn);

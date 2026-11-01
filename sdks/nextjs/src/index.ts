@@ -102,13 +102,32 @@ export async function captureRequestError(
   context?: NextErrorContext,
 ): Promise<void> {
   // Next fires onRequestError regardless of configuration; stay silent (never throw) until register ran.
-  if (!serverInitialized) {
+  if (!serverInitialized || isCallerCaused(error, context)) {
     return;
   }
   await captureException(error, false, {
     ...requestFields(request),
     ...routeTags(context),
   });
+}
+
+/**
+ * Next 16.4.1 throws an InvariantError ("Invariant: Expected RSC response, got ...") rendering its not-found
+ * page for a POST that asks for an RSC payload (the RSC header, or a `.rsc` path) and that Next takes for a
+ * possible Server Action: a Next-Action header, or a form body. Its own client never sends that, and
+ * anyone else can, so reporting it would let a stranger fill the app's issue list.
+ *
+ * It is matched by Next's own message, because the request does not separate it from the app's defects: a
+ * real client's action on a custom not-found page arrives with the same route, and its failures (a page
+ * module that cannot load, say) must still report. The message is Next's, never the app's ("This is a bug
+ * in Next.js"), and a release that rewords it makes the skip stop matching, so the events report again.
+ */
+function isCallerCaused(error: unknown, context?: NextErrorContext): boolean {
+  return (
+    error instanceof Error
+    && error.message.startsWith("Invariant: Expected RSC response")
+    && (context?.routePath?.startsWith("/_not-found") ?? false)
+  );
 }
 
 /**

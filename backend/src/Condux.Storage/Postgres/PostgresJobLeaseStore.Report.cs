@@ -1,3 +1,4 @@
+using Condux.Core.Text;
 using Condux.Core.FixEngine;
 using Npgsql;
 
@@ -62,10 +63,12 @@ public sealed partial class PostgresJobLeaseStore
         cmd.Parameters.AddWithValue("fix", fixId);
         cmd.Parameters.AddWithValue("runner", leaseId);
         cmd.Parameters.AddWithValue("status", (short)status);
-        cmd.Parameters.AddWithValue("branch", branch);
-        cmd.Parameters.AddWithValue("model", model);
-        cmd.Parameters.AddWithValue("pr", prUrl);
-        cmd.Parameters.AddWithValue("summary", summary);
+        // Every text a runner reports is its own, so it is made storable rather than refused: a refused
+        // report is retried until the lease lapses, and the run is then recorded nowhere.
+        cmd.Parameters.AddWithValue("branch", StorableText.ToStorable(branch));
+        cmd.Parameters.AddWithValue("model", StorableText.ToStorable(model));
+        cmd.Parameters.AddWithValue("pr", StorableText.ToStorable(prUrl));
+        cmd.Parameters.AddWithValue("summary", StorableText.ToStorable(summary));
         cmd.Parameters.AddWithValue("inputTokens", inputTokens);
         cmd.Parameters.AddWithValue("outputTokens", outputTokens);
         cmd.Parameters.AddWithValue("now", now);

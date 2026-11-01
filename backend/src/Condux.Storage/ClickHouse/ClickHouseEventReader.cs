@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Condux.Core.Events;
 
 namespace Condux.Storage.ClickHouse;
 
@@ -11,7 +12,24 @@ public sealed record StoredEvent(
     string Message,
     string ExceptionType,
     string ExceptionValue,
-    string Payload);
+    string Payload)
+{
+    /// <summary>The stored payload read back as the event it was written from, or null when it does not
+    /// read as one. Read through <c>EventJson</c>, as the writer stores it (PascalCase, integer enums, every
+    /// U+0000 replaced, including in payloads stored before that). Every reader of a stored payload on the
+    /// server goes through here, so they agree on what an unreadable one means.</summary>
+    public Event? ToEvent()
+    {
+        try
+        {
+            return EventJson.ToEvent(Payload);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+}
 
 /// <summary>
 /// Reads raw events back from ClickHouse for the issue-detail view, over the HTTP interface the
@@ -85,12 +103,15 @@ public sealed class ClickHouseEventReader(HttpClient http)
 
     // Distinct pseudonymous users (user_key, #105) affected in a project over a window — the weekly digest's
     // "users affected" (ADR-0031). Approximate: events are sampled and expire, so this counts distinct users
-    // among the stored sample, not every user. Empty user_key rows (no identifier) are excluded.
+    // among the stored sample, not every user. Empty user_key rows (no identifier) are excluded. The window
+    // is on received_at, when Condux received the event, the clock the rest of the digest uses. A row
+    // written before the consumer set that column holds its insert time instead, later than its receipt by
+    // however long the consumer took to write it.
     private const string UsersAffectedSql = """
         SELECT uniqExact(user_key) AS c
         FROM condux.events
         WHERE project_id = {pid:String} AND user_key != ''
-          AND timestamp >= toDateTime({start:Int64}, 'UTC') AND timestamp < toDateTime({end:Int64}, 'UTC')
+          AND received_at >= toDateTime({start:Int64}, 'UTC') AND received_at < toDateTime({end:Int64}, 'UTC')
         FORMAT JSON
         """;
 

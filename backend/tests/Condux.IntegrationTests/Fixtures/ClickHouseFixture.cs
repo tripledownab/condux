@@ -25,8 +25,7 @@ public class ClickHouseFixture : IAsyncLifetime
     /// <summary>A server whose own timezone is <paramref name="timezone"/>; null keeps the image's UTC.</summary>
     protected ClickHouseFixture(string? timezone)
     {
-        var builder = new ContainerBuilder()
-            .WithImage("clickhouse/clickhouse-server:24.8")
+        var builder = new ContainerBuilder(ComposeImages.For("clickhouse/clickhouse-server"))
             .WithEnvironment("CLICKHOUSE_USER", User)
             .WithEnvironment("CLICKHOUSE_PASSWORD", Password)
             .WithPortBinding(8123, true)
@@ -47,20 +46,25 @@ public class ClickHouseFixture : IAsyncLifetime
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
 
-    // Apply every ClickHouse migration in filename order, one statement at a time (the HTTP interface
-    // runs a single statement per request, unlike clickhouse-client --multiquery).
+    /// <summary>Every ClickHouse migration, in the filename order every deploy applies them in.</summary>
+    public static IReadOnlyList<string> MigrationFiles() =>
+        Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "migrations-clickhouse"), "*.sql")
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToList();
+
     private async Task ApplySchemaAsync()
     {
-        var dir = Path.Combine(AppContext.BaseDirectory, "migrations-clickhouse");
-        using var http = new HttpClient();
-        foreach (var file in Directory.GetFiles(dir, "*.sql").OrderBy(f => f, StringComparer.Ordinal))
+        foreach (var file in MigrationFiles())
         {
-            await ApplyFileAsync(http, file);
+            await ApplyMigrationAsync(file);
         }
     }
 
-    private async Task ApplyFileAsync(HttpClient http, string file)
+    /// <summary>Applies one migration file, one statement at a time (the HTTP interface runs a single
+    /// statement per request, unlike clickhouse-client --multiquery).</summary>
+    public async Task ApplyMigrationAsync(string file)
     {
+        using var http = new HttpClient();
         var sql = await File.ReadAllTextAsync(file);
 
         // Strip `--` comments first: the migrations have semicolons inside comments, so splitting the raw
@@ -73,12 +77,7 @@ public class ClickHouseFixture : IAsyncLifetime
 
         foreach (var statement in stripped.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/")
-            {
-                Content = new StringContent(statement),
-            };
-            req.Headers.Add("X-ClickHouse-User", User);
-            req.Headers.Add("X-ClickHouse-Key", Password);
+            using var req = Request(statement);
             using var resp = await http.SendAsync(req);
             if (!resp.IsSuccessStatusCode)
             {
@@ -88,5 +87,23 @@ public class ClickHouseFixture : IAsyncLifetime
                     + $"\n--- statement ---\n{statement}");
             }
         }
+    }
+
+    /// <summary>Runs one statement and returns its answer as text, failing with the server's error.</summary>
+    public async Task<string> QueryAsync(string sql)
+    {
+        using var http = new HttpClient();
+        using var req = Request(sql);
+        using var resp = await http.SendAsync(req);
+        await resp.EnsureSuccessAsync();
+        return await resp.Content.ReadAsStringAsync();
+    }
+
+    private HttpRequestMessage Request(string sql)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/") { Content = new StringContent(sql) };
+        req.Headers.Add("X-ClickHouse-User", User);
+        req.Headers.Add("X-ClickHouse-Key", Password);
+        return req;
     }
 }

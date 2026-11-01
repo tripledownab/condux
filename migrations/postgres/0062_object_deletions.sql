@@ -24,8 +24,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Dropped and created in one transaction, because every deploy replays this file while the previous
--- release is still serving, and a project deleted between the two statements would queue nothing.
+-- Dropped and created in one transaction, because a deploy runs this file while the previous release is
+-- still serving (on first apply, and again whenever the migration files change other than by new ones
+-- sorting last), and a project deleted between the two statements would queue nothing.
 BEGIN;
 DROP TRIGGER IF EXISTS projects_queue_objects ON projects;
 CREATE TRIGGER projects_queue_objects AFTER DELETE ON projects

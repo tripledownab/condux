@@ -14,7 +14,7 @@ internal static class SourceMapMappings
     // map: the second-largest by segments holds 195,113 of them on 71 lines, which is exactly what a
     // line bound alone would wave through. Both counts come from separators in an uploaded string, so
     // without them a map built to be expensive turns a 25MiB upload into an object per few bytes.
-    private const int MaxGeneratedLines = 100_000;
+    internal const int MaxGeneratedLines = 100_000;
     private const int MaxSegments = 500_000;
 
     // Fields 2..5 of a segment persist across the whole file; a source index of -1 marks a "gap" segment
@@ -22,21 +22,24 @@ internal static class SourceMapMappings
     internal readonly record struct Segment(
         int GeneratedColumn, int SourceIndex, int OriginalLine, int OriginalColumn, int NameIndex);
 
-    /// <summary>Whether a mappings string decodes to as many lines and segments as a real build
-    /// produces. Counted rather than split, because the separators bound everything the decode would
-    /// then allocate and reading them costs two passes and no objects.</summary>
-    public static bool IsDecodable(string mappings) => Fits(Measure(mappings));
-
     /// <summary>What a mappings string would decode to: its generated lines, and an upper bound on its
-    /// segments, since every segment is followed by a separator or the end. An index map sums these
-    /// across its sections, so the bound holds for the whole map rather than per section.</summary>
-    public static (long Lines, long Segments) Measure(string mappings)
-    {
-        var span = mappings.AsSpan();
-        long lines = span.Count(';') + 1;
-        return (lines, lines + span.Count(','));
-    }
+    /// segments, since every segment is followed by a separator or the end. Counted rather than split,
+    /// because the separators bound everything the decode would then allocate and reading them costs two
+    /// passes and no objects. An index map sums these across its sections, so the bound holds for the
+    /// whole map rather than per section.</summary>
+    public static (long Lines, long Segments) Measure(ReadOnlySpan<char> mappings) =>
+        ToSize(mappings.Count(';'), mappings.Count(','));
 
+    /// <summary>The same, counted in the string's UTF-8 bytes as they lie in the document, for a string
+    /// with no escapes: the separators are ASCII, so each is one byte there.</summary>
+    public static (long Lines, long Segments) Measure(ReadOnlySpan<byte> utf8) =>
+        ToSize(utf8.Count((byte)';'), utf8.Count((byte)','));
+
+    private static (long Lines, long Segments) ToSize(long semicolons, long commas) =>
+        (semicolons + 1, semicolons + 1 + commas);
+
+    /// <summary>Whether a map of that size decodes to no more lines and segments than a real build
+    /// produces.</summary>
     public static bool Fits((long Lines, long Segments) size) =>
         size.Lines <= MaxGeneratedLines && size.Segments <= MaxSegments;
 

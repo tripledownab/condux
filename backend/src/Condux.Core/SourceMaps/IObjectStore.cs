@@ -8,7 +8,8 @@ namespace Condux.Core.SourceMaps;
 /// </summary>
 public interface IObjectStore
 {
-    Task PutAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken = default);
+    Task PutAsync(
+        string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken = default);
 
     /// <summary>The stored bytes, or null when no object exists at that key.</summary>
     Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default);

@@ -123,7 +123,7 @@ public sealed partial class PostgresJobLeaseStore(string connectionString)
         cmd.Parameters.AddWithValue("repo", repoFullName);
         cmd.Parameters.AddWithValue("provider", RunnerProvider);
         cmd.Parameters.AddWithValue("now", now);
-        cmd.Parameters.AddWithValue("context", JsonSerializer.Serialize(context, ContextJson));
+        cmd.AddJsonb("context", JsonSerializer.Serialize(context, ContextJson));
         return await cmd.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 

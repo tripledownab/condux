@@ -6,8 +6,8 @@ import { CONTROL_ROW_CLASS } from "@/src/components/form";
 import { cn } from "@/src/lib/utils";
 import { EVENT_OPTIONS } from "./alert-format";
 
-// The per-event picker: a checkbox per issue event a rule can fire on (new issue, regression, resolved,
-// assigned), toggling its membership in `events`. A rule fires on exactly the checked events.
+// The per-event picker: a checkbox per event a rule can fire on (new issue, regression, resolved,
+// assigned, new advisory), toggling its membership in `events`. A rule fires on exactly the checked events.
 export function EventCheckboxes({
   events,
   onChange,

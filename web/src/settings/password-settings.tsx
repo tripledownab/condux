@@ -2,9 +2,9 @@
 
 import { useTranslations } from "next-intl";
 import { type FormEvent, useId, useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import { useChangePassword } from "@/src/api/generated/condux";
 import { FIELD_CLASS, PRIMARY_BUTTON_CLASS } from "@/src/components/form";
+import { readErrorStatus } from "@/src/lib/api-errors";
 
 /**
  * Changing the signed-in user's own password. Account-level like the MFA panel beside it, not
@@ -50,8 +50,11 @@ export function PasswordSettings() {
     );
   };
 
-  const status = change.error as ConduxApiError | null;
-  const errorKey = change.isError ? (status?.status === 401 ? "wrongPassword" : "failed") : null;
+  const errorKey = change.isError
+    ? readErrorStatus(change.error) === 401
+      ? "wrongPassword"
+      : "failed"
+    : null;
 
   return (
     <section className="rounded-lg border border-border bg-card p-6">

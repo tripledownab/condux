@@ -13,7 +13,7 @@ namespace Condux.Storage.Postgres;
 public sealed class UploadStorage(string connectionString)
 {
     // Both kinds, across every project of the org, in one ordering, newest first, so the running total
-    // says which artifacts fit. The quota is the org's because an org may create any number of projects,
+    // says which artifacts fit. A debug file counts its obfuscation map's cost too. The quota is the org's because an org may create any number of projects,
     // so a per-project quota multiplied with each one. The id breaks ties, and is time-ordered (UUIDv7),
     // so one upload's order is stable.
     private const string ArtifactsSql = """
@@ -22,7 +22,7 @@ public sealed class UploadStorage(string connectionString)
             SELECT 's' AS kind, id, byte_size, created_at FROM sourcemap_artifacts
             WHERE project_id IN (SELECT id FROM org_projects)
             UNION ALL
-            SELECT 'd', id, byte_size, created_at FROM debug_files
+            SELECT 'd', id, byte_size + dart_symbol_map_bytes, created_at FROM debug_files
             WHERE project_id IN (SELECT id FROM org_projects)),
         victims AS (
             SELECT kind, id, created_at FROM (

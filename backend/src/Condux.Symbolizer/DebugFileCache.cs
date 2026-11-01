@@ -60,10 +60,12 @@ internal sealed partial class DebugFileCache(SymbolizerOptions options)
         {
             return "the file's SHA-256 differs from the one it was sent under";
         }
-        var (build, rejection) = ElfDebugFile.ToBuild(content);
-        if (build is null)
+        // One build covering the whole file: the control plane stores each architecture of a universal
+        // Mach-O file on its own, and llvm-symbolizer refuses a universal file it is not told the arch of.
+        var (slices, rejection) = DebugFileFormats.Read(content);
+        if (slices is not [{ Offset: 0 } slice] || slice.Length != content.Length)
         {
-            return $"not a usable debug file: {rejection}";
+            return $"not a usable debug file: {rejection ?? "a universal file, send one architecture"}";
         }
 
         Directory.CreateDirectory(options.CacheDirectory);

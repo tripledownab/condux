@@ -9,7 +9,7 @@ namespace Condux.IntegrationTests.Fixtures;
 /// Ephemeral S3-compatible server (RustFS) for exercising the real <c>S3ObjectStore</c> over the S3 API.
 /// The source-map bucket is created here through the SDK because the store does not manage buckets (prod
 /// provisions the BYO bucket; dev compose pre-creates it). Uses the generic container builder, like the
-/// ClickHouse fixture, and the same pinned image the compose stack uses (pinned by S3FixtureImageTest).
+/// ClickHouse fixture, and the image the compose stack pins (<see cref="ComposeImages"/>).
 /// Pinned rather than floating because a moving tag on a third-party image turns their publishing
 /// decisions into our outage, and pulled from ghcr.io because Docker Hub rate-limits anonymous pulls.
 /// RustFS replaced MinIO once no registry would serve MinIO to an anonymous pull, and it was chosen over
@@ -21,10 +21,8 @@ public sealed class S3Fixture : IAsyncLifetime
     private const string User = "condux";
     private const string Password = "conduxsecret";
     public const string Bucket = "condux-sourcemaps";
-    public const string Image = "ghcr.io/rustfs/rustfs:1.0.0";
 
-    private readonly IContainer _container = new ContainerBuilder()
-        .WithImage(Image)
+    private readonly IContainer _container = new ContainerBuilder(ComposeImages.For("ghcr.io/rustfs/rustfs"))
         .WithEnvironment("RUSTFS_ACCESS_KEY", User)
         .WithEnvironment("RUSTFS_SECRET_KEY", Password)
         .WithPortBinding(9000, true)

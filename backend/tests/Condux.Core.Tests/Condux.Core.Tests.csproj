@@ -3,8 +3,8 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
@@ -17,6 +17,7 @@
   <!-- One ELF builder for the parser's unit tests and the upload endpoint's integration tests. -->
   <ItemGroup>
     <Compile Include="../Shared/ElfFiles.cs" Link="Shared/ElfFiles.cs" />
+    <Compile Include="../Shared/MachOFiles.cs" Link="Shared/MachOFiles.cs" />
   </ItemGroup>
 
 </Project>

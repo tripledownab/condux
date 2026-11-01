@@ -15,7 +15,9 @@ public enum AiFixMode
 
 /// <summary>The pure decision for whether a newly-grouped issue should auto-trigger a Conductor fix
 /// (#101), clock- and I/O-free so it unit-tests without a database. The caller still atomically reserves
-/// the monthly allowance (a stateful reservation, not a pure check) after this returns true.</summary>
+/// the monthly allowance (a stateful reservation, not a pure check) after this returns true, and then
+/// starts nothing when no app frame resolved to a repo-relative path: that is known only once the event
+/// has been symbolicated, which can make a frame the app's, so it cannot be decided here.</summary>
 public static class AutoFixPolicy
 {
     /// <summary>Auto-fix fires only when the org opted in, the plan allows auto-fix, a repo is linked

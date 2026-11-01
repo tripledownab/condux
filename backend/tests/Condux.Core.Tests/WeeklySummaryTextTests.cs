@@ -1,3 +1,4 @@
+using Condux.Core.Issues;
 using Condux.Core.WeeklySummaries;
 using Xunit;
 
@@ -132,7 +133,7 @@ public class WeeklySummaryTextTests
     public void IssueUrl_IsStableWhetherOrNotTheBaseUrlHasATrailingSlash(string baseUrl)
     {
         var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        Assert.Equal($"https://app.condux.ai/issues/{id}", WeeklySummaryFormat.IssueUrl(baseUrl, id));
+        Assert.Equal($"https://app.condux.ai/issues/{id}", IssueLinks.ToIssueUrl(baseUrl, id));
     }
 
     [Theory]
@@ -141,6 +142,6 @@ public class WeeklySummaryTextTests
     [InlineData("   ")]
     public void IssueUrl_IsNull_WhenThereIsNoBaseUrl(string? baseUrl)
     {
-        Assert.Null(WeeklySummaryFormat.IssueUrl(baseUrl, Guid.NewGuid()));
+        Assert.Null(IssueLinks.ToIssueUrl(baseUrl, Guid.NewGuid()));
     }
 }

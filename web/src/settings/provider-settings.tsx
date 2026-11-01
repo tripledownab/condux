@@ -3,7 +3,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
-import type { ConduxApiError } from "@/src/api/fetcher";
 import {
   getGetLlmConfigQueryKey,
   useDeleteLlmConfig,
@@ -20,6 +19,7 @@ import {
 } from "@/src/components/form";
 import { Notice } from "@/src/components/notice";
 import { Combobox } from "@/src/components/ui/combobox";
+import { readErrorStatus } from "@/src/lib/api-errors";
 import { canManageOrg, OrgStatus, useCurrentOrg } from "@/src/orgs/current-org";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
@@ -34,7 +34,7 @@ const PROVIDERS = ["anthropic", "openai-compat"] as const;
 // Shared because both calls on this tab can now return 409: listing models applies the same plan gate
 // the save does, and mapping that in one place only would have told a Free org to check its API key.
 function requestErrorKey(error: unknown, fallback: string, keyRejected?: string): string {
-  const status = (error as ConduxApiError | null)?.status;
+  const status = readErrorStatus(error);
   if (status === 409) {
     return "requiresUpgrade";
   }
